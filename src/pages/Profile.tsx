@@ -329,6 +329,7 @@ const Profile: React.FC = () => {
 
     try {
       setIsLoading(true);
+      setError(null);
       const file = e.target.files[0];
       
       // Validate file type
@@ -343,15 +344,21 @@ const Profile: React.FC = () => {
         return;
       }
 
+      // Create a unique filename with timestamp
+      const timestamp = Date.now();
+      const fileExtension = file.name.split('.').pop();
+      const fileName = `profile_${timestamp}.${fileExtension}`;
+      
       // Upload image to Firebase Storage
-      const storageRef = ref(storage, `profile_pictures/${currentUser.uid}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(storageRef);
+      const storageRef = ref(storage, `profile_pictures/${currentUser.uid}/${fileName}`);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
 
       // Update user profile in Firestore
       const userRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userRef, {
-        profilePic: downloadURL
+        profilePic: downloadURL,
+        updatedAt: serverTimestamp()
       });
 
       // Update local state
@@ -359,11 +366,19 @@ const Profile: React.FC = () => {
       
       // Update auth context
       if (userProfile) {
-        userProfile.profilePic = downloadURL;
+        setUserProfile({
+          ...userProfile,
+          profilePic: downloadURL
+        });
+      }
+
+      // Clear the file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
     } catch (error) {
       console.error('Error updating profile picture:', error);
-      setError('Failed to update profile picture');
+      setError('Failed to update profile picture. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -839,13 +854,15 @@ const Profile: React.FC = () => {
                   <Box sx={{ display: 'flex', gap: 2, mb: 2, mt: 2 }}>
                     <Button
                       variant="outlined"
-                      onClick={() => setShowConnectionsDialog(true)}
+                      component={Link}
+                      to={`/profile/${userId}/followers`}
                     >
                       {followers.length} Followers
                     </Button>
                     <Button
                       variant="outlined"
-                      onClick={() => setShowConnectionsDialog(true)}
+                      component={Link}
+                      to={`/profile/${userId}/following`}
                     >
                       {connections.length} Following
                     </Button>

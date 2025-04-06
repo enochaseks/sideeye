@@ -23,6 +23,8 @@ import EmailVerification from './pages/EmailVerification';
 import TwoFactorAuth from './pages/TwoFactorAuth';
 import SearchResults from './pages/SearchResults';
 import TrashPage from './pages/TrashPage';
+import FollowersList from './pages/FollowersList';
+import FollowingList from './pages/FollowingList';
 import './App.css';
 
 const App: React.FC = () => {
@@ -39,6 +41,8 @@ const App: React.FC = () => {
             <Route path="/register" element={<Register />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:userId" element={<Profile />} />
+            <Route path="/profile/:userId/followers" element={<FollowersList />} />
+            <Route path="/profile/:userId/following" element={<FollowingList />} />
             <Route path="/search" element={<SearchResults />} />
             <Route path="/forums" element={<Forums />} />
             <Route path="/side-rooms" element={<SideRoomList />} />
@@ -51,7 +55,7 @@ const App: React.FC = () => {
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/cookies" element={<CookiePolicy />} />
             <Route path="/verify-email" element={<EmailVerification />} />
-            <Route path="/setup-2fa" element={<TwoFactorAuth />} />
+            <Route path="/2fa" element={<TwoFactorAuth />} />
             <Route path="/trash" element={<TrashPage />} />
             <Route path="*" element={<HomePage />} />
           </Routes>
