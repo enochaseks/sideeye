@@ -36,7 +36,29 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isOwner(userId);
-      allow update: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && (
+        // Allow users to update their own profile
+        isOwner(userId) ||
+        // Allow users to update followers/connections arrays
+        (
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['followers', 'connections']) &&
+          (
+            // Allow adding self to followers
+            (request.resource.data.followers.hasAny([request.auth.uid]) && 
+             !resource.data.followers.hasAny([request.auth.uid])) ||
+            // Allow removing self from followers
+            (!request.resource.data.followers.hasAny([request.auth.uid]) && 
+             resource.data.followers.hasAny([request.auth.uid])) ||
+            // Allow adding self to connections
+            (request.resource.data.connections.hasAny([request.auth.uid]) && 
+             !resource.data.connections.hasAny([request.auth.uid])) ||
+            // Allow removing self from connections
+            (!request.resource.data.connections.hasAny([request.auth.uid]) && 
+             resource.data.connections.hasAny([request.auth.uid]))
+          )
+        )
+      );
       allow delete: if isAuthenticated() && isOwner(userId);
 
       // User's private subcollections
@@ -46,6 +68,15 @@ service cloud.firestore {
       
       match /friends/{friendId} {
         allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+
+      // Allow reading connections and followers
+      match /connections/{connectionId} {
+        allow read: if isAuthenticated();
+      }
+      
+      match /followers/{followerId} {
+        allow read: if isAuthenticated();
       }
     }
 

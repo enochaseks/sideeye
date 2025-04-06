@@ -119,7 +119,7 @@ const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { userId: urlUserId } = useParams<{ userId: string }>();
-  const { currentUser, userProfile, loading: authLoading } = useAuth();
+  const { currentUser, userProfile, loading: authLoading, setUserProfile } = useAuth();
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -143,9 +143,11 @@ const Profile: React.FC = () => {
   const [deletedItems, setDeletedItems] = useState<DeletedItem[]>([]);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [followersList, setFollowersList] = useState<UserProfile[]>([]);
+  const [followingList, setFollowingList] = useState<UserProfile[]>([]);
   
   // Get the user ID from URL params or current user
-  const userId = urlUserId || currentUser?.uid;
+  const userId = urlUserId || currentUser?.uid || '';
 
   const fetchUserData = useCallback(async () => {
     if (!userId) {
@@ -282,6 +284,34 @@ const Profile: React.FC = () => {
     fetchUserData();
   }, [fetchUserData]);
 
+  useEffect(() => {
+    const fetchUserLists = async () => {
+      if (!userId) return;
+
+      try {
+        // Fetch followers
+        const followersPromises = followers.map(async (followerId) => {
+          const followerDoc = await getDoc(doc(db, 'users', followerId));
+          return followerDoc.exists() ? followerDoc.data() as UserProfile : null;
+        });
+        const followersData = await Promise.all(followersPromises);
+        setFollowersList(followersData.filter(Boolean) as UserProfile[]);
+
+        // Fetch following
+        const followingPromises = connections.map(async (followingId) => {
+          const followingDoc = await getDoc(doc(db, 'users', followingId));
+          return followingDoc.exists() ? followingDoc.data() as UserProfile : null;
+        });
+        const followingData = await Promise.all(followingPromises);
+        setFollowingList(followingData.filter(Boolean) as UserProfile[]);
+      } catch (error) {
+        console.error('Error fetching user lists:', error);
+      }
+    };
+
+    fetchUserLists();
+  }, [userId, followers, connections]);
+
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentUser || !e.target.files || !e.target.files[0]) return;
 
@@ -342,46 +372,107 @@ const Profile: React.FC = () => {
     }
   };
 
-  const handleFollow = async (userId: string) => {
-    if (!auth.currentUser) return;
+  // Update the follow button condition
+  const isFollowing = currentUser?.uid ? userProfile?.connections?.includes(userId) : false;
+
+  const handleFollow = async () => {
+    if (!currentUser || !userId) return;
 
     try {
-      const userRef = doc(db, 'users', auth.currentUser.uid);
+      setIsLoading(true);
+      const userRef = doc(db, 'users', currentUser.uid);
       const targetUserRef = doc(db, 'users', userId);
 
+      // Add to current user's following
       await updateDoc(userRef, {
         connections: arrayUnion(userId)
       });
 
+      // Add to target user's followers
       await updateDoc(targetUserRef, {
-        followers: arrayUnion(auth.currentUser.uid)
+        followers: arrayUnion(currentUser.uid)
       });
 
-      setConnections(prev => [...prev, userId]);
+      // Update local state
+      if (userProfile) {
+        setUserProfile({
+          ...userProfile,
+          connections: [...(userProfile.connections || []), userId]
+        });
+      }
+
+      // Refresh the user data to ensure consistency
+      const updatedUserDoc = await getDoc(doc(db, 'users', userId));
+      if (updatedUserDoc.exists()) {
+        const updatedUserData = updatedUserDoc.data() as UserProfile;
+        setConnections(updatedUserData.connections || []);
+        setFollowers(updatedUserData.followers || []);
+      }
     } catch (error) {
       console.error('Error following user:', error);
+      setError('Failed to follow user');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleUnfollow = async (userId: string) => {
-    if (!auth.currentUser) return;
+  const handleUnfollow = async (targetUserId?: string) => {
+    if (!currentUser || !userId) return;
+    const userToUnfollow = targetUserId || userId;
 
     try {
-      const userRef = doc(db, 'users', auth.currentUser.uid);
-      const targetUserRef = doc(db, 'users', userId);
+      setIsLoading(true);
+      const userRef = doc(db, 'users', currentUser.uid);
+      const targetUserRef = doc(db, 'users', userToUnfollow);
 
+      // Remove from current user's following
       await updateDoc(userRef, {
-        connections: arrayRemove(userId)
+        connections: arrayRemove(userToUnfollow)
       });
 
+      // Remove from target user's followers
       await updateDoc(targetUserRef, {
-        followers: arrayRemove(auth.currentUser.uid)
+        followers: arrayRemove(currentUser.uid)
       });
 
-      setConnections(prev => prev.filter(id => id !== userId));
+      // Update local state
+      if (userProfile) {
+        setUserProfile({
+          ...userProfile,
+          connections: (userProfile.connections || []).filter(id => id !== userToUnfollow)
+        });
+      }
+
+      // Refresh the user data to ensure consistency
+      const updatedUserDoc = await getDoc(doc(db, 'users', userId));
+      if (updatedUserDoc.exists()) {
+        const updatedUserData = updatedUserDoc.data() as UserProfile;
+        setConnections(updatedUserData.connections || []);
+        setFollowers(updatedUserData.followers || []);
+      }
     } catch (error) {
       console.error('Error unfollowing user:', error);
+      setError('Failed to unfollow user');
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  // Update the follow button in the UI
+  const renderFollowButton = () => {
+    if (currentUser?.uid === userId || !userId) return null;
+
+    return (
+      <Button
+        variant={isFollowing ? "outlined" : "contained"}
+        color={isFollowing ? "error" : "primary"}
+        startIcon={isFollowing ? <PersonRemoveIcon /> : <PersonAddIcon />}
+        onClick={isFollowing ? () => handleUnfollow(userId) : handleFollow}
+        disabled={isLoading}
+      >
+        {isLoading ? 'Loading...' : isFollowing ? 'Unfollow' : 'Follow'}
+      </Button>
+    );
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -616,28 +707,7 @@ const Profile: React.FC = () => {
                     >
                       {connections.length} Following
                     </Button>
-                    {auth.currentUser?.uid !== userId && userId && (
-                      <>
-                        {connections.includes(userId) ? (
-                          <Button
-                            variant="outlined"
-                            color="error"
-                            startIcon={<PersonRemoveIcon />}
-                            onClick={() => handleUnfollow(userId)}
-                          >
-                            Unfollow
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="contained"
-                            startIcon={<PersonAddIcon />}
-                            onClick={() => handleFollow(userId)}
-                          >
-                            Follow
-                          </Button>
-                        )}
-                      </>
-                    )}
+                    {renderFollowButton()}
                   </Box>
                 </Box>
               </Box>
@@ -647,7 +717,7 @@ const Profile: React.FC = () => {
                   startIcon={<MessageIcon />}
                   onClick={() => setShowMessagesDialog(true)}
                 >
-                  {auth.currentUser?.uid === userId ? (
+                  {currentUser?.uid === userId ? (
                     <Badge badgeContent={unreadCount} color="error">
                       Messages
                     </Badge>
@@ -655,21 +725,23 @@ const Profile: React.FC = () => {
                     'Message'
                   )}
                 </Button>
-                <Button
-                  variant="outlined"
-                  startIcon={<EditIcon />}
-                  onClick={() => setIsEditing(true)}
-                >
-                  Edit Profile
-                </Button>
-                {auth.currentUser?.uid === userId && (
-                  <IconButton 
-                    component={Link} 
-                    to="/trash"
-                    color="error"
-                  >
-                    <DeleteIcon />
-                  </IconButton>
+                {currentUser?.uid === userId && (
+                  <>
+                    <Button
+                      variant="outlined"
+                      startIcon={<EditIcon />}
+                      onClick={() => setIsEditing(true)}
+                    >
+                      Edit Profile
+                    </Button>
+                    <IconButton 
+                      component={Link} 
+                      to="/trash"
+                      color="error"
+                    >
+                      <DeleteIcon />
+                    </IconButton>
+                  </>
                 )}
               </Box>
             </Paper>
@@ -898,42 +970,55 @@ const Profile: React.FC = () => {
       )}
 
       {/* Connections Dialog */}
-      <Dialog open={showConnectionsDialog} onClose={() => setShowConnectionsDialog(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={showConnectionsDialog}
+        onClose={() => setShowConnectionsDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle>Connections</DialogTitle>
         <DialogContent>
           <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-            <Tab label="Following" />
-            <Tab label="Followers" />
+            <Tab label={`Following (${followingList.length})`} />
+            <Tab label={`Followers (${followersList.length})`} />
           </Tabs>
           <Box sx={{ mt: 2 }}>
             {activeTab === 0 && (
               <List>
-                {connections.map((userId) => (
-                  <ListItem key={userId}>
+                {followingList.map((user) => (
+                  <ListItem key={user.uid}>
                     <ListItemAvatar>
-                      <Avatar />
+                      <Avatar src={user.profilePic} />
                     </ListItemAvatar>
-                    <ListItemText primary={userId} />
-                    <ListItemSecondaryAction>
-                      <IconButton onClick={() => handleUnfollow(userId)}>
-                        <PersonRemoveIcon />
-                      </IconButton>
-                    </ListItemSecondaryAction>
+                    <ListItemText
+                      primary={user.name}
+                      secondary={`@${user.username}`}
+                    />
+                    {currentUser?.uid === userId && (
+                      <ListItemSecondaryAction>
+                        <IconButton onClick={() => handleUnfollow(user.uid)}>
+                          <PersonRemoveIcon />
+                        </IconButton>
+                      </ListItemSecondaryAction>
+                    )}
                   </ListItem>
                 ))}
               </List>
             )}
             {activeTab === 1 && (
               <List>
-                {followers.map((userId) => (
-                  <ListItem key={userId}>
+                {followersList.map((user) => (
+                  <ListItem key={user.uid}>
                     <ListItemAvatar>
-                      <Avatar />
+                      <Avatar src={user.profilePic} />
                     </ListItemAvatar>
-                    <ListItemText primary={userId} />
-                    {!connections.includes(userId) && (
+                    <ListItemText
+                      primary={user.name}
+                      secondary={`@${user.username}`}
+                    />
+                    {currentUser?.uid === userId && !connections.includes(user.uid) && (
                       <ListItemSecondaryAction>
-                        <IconButton onClick={() => handleFollow(userId)}>
+                        <IconButton onClick={() => handleFollow()}>
                           <PersonAddIcon />
                         </IconButton>
                       </ListItemSecondaryAction>
@@ -942,7 +1027,7 @@ const Profile: React.FC = () => {
                 ))}
               </List>
             )}
-              </Box>
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowConnectionsDialog(false)}>Close</Button>

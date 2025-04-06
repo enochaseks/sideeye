@@ -20,6 +20,7 @@ interface AuthContextType {
   verifyEmail: (code: string) => Promise<void>;
   setupTwoFactorAuth: () => Promise<void>;
   verifyTwoFactorAuth: (code: string) => Promise<void>;
+  setUserProfile: (profile: UserProfile | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -37,6 +38,7 @@ const AuthContext = createContext<AuthContextType>({
   verifyEmail: async () => {},
   setupTwoFactorAuth: async () => {},
   verifyTwoFactorAuth: async () => {},
+  setUserProfile: () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -164,6 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     verifyEmail: async () => {}, // Implement if needed
     setupTwoFactorAuth: async () => {}, // Implement if needed
     verifyTwoFactorAuth: async () => {}, // Implement if needed
+    setUserProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
