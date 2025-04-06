@@ -283,21 +283,47 @@ const Profile: React.FC = () => {
   }, [fetchUserData]);
 
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!auth.currentUser || !e.target.files?.[0]) return;
+    if (!currentUser || !e.target.files || !e.target.files[0]) return;
 
     try {
+      setIsLoading(true);
       const file = e.target.files[0];
-      const storageRef = ref(storage, `profilePics/${auth.currentUser.uid}/${Date.now()}_${file.name}`);
+      
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        setError('Please upload an image file');
+        return;
+      }
+
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setError('Image size should be less than 5MB');
+        return;
+      }
+
+      // Upload image to Firebase Storage
+      const storageRef = ref(storage, `profile_pictures/${currentUser.uid}/${Date.now()}_${file.name}`);
       await uploadBytes(storageRef, file);
       const downloadURL = await getDownloadURL(storageRef);
-      
-      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+
+      // Update user profile in Firestore
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
         profilePic: downloadURL
       });
-      
+
+      // Update local state
       setProfilePic(downloadURL);
+      
+      // Update auth context
+      if (userProfile) {
+        userProfile.profilePic = downloadURL;
+      }
     } catch (error) {
-      console.error('Error uploading profile picture:', error);
+      console.error('Error updating profile picture:', error);
+      setError('Failed to update profile picture');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -535,10 +561,38 @@ const Profile: React.FC = () => {
           <Box>
             <Paper elevation={0} sx={{ p: 3, textAlign: 'center' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                <Avatar
-                  src={profilePic || undefined}
-                  sx={{ width: 100, height: 100 }}
-                />
+                <Box sx={{ position: 'relative' }}>
+                  <Badge
+                    overlap="circular"
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                    badgeContent={
+                      currentUser?.uid === userId && (
+                        <IconButton
+                          size="small"
+                          onClick={() => fileInputRef.current?.click()}
+                          sx={{
+                            bgcolor: 'background.paper',
+                            '&:hover': { bgcolor: 'background.paper' }
+                          }}
+                        >
+                          <PhotoCamera fontSize="small" />
+                        </IconButton>
+                      )
+                    }
+                  >
+                    <Avatar
+                      src={profilePic || undefined}
+                      sx={{ width: 100, height: 100 }}
+                    />
+                  </Badge>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    ref={fileInputRef}
+                    style={{ display: 'none' }}
+                    onChange={handleProfilePicChange}
+                  />
+                </Box>
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="h4" component="h1">
                     {name}

@@ -26,6 +26,7 @@ interface PostData {
   authorId: string;
   authorName: string;
   authorAvatar: string;
+  username: string;
   timestamp: any;
   likes: number;
   likedBy: string[];
@@ -156,8 +157,9 @@ const HomePage: React.FC = () => {
           authorId: data.authorId || '',
           authorName: authorData?.name || 'Anonymous',
           authorAvatar: authorData?.profilePic || '',
+          username: authorData?.username || 'anonymous',
           timestamp: data.timestamp?.toDate() || new Date(),
-          likes: data.likes || 0,
+          likes: data.likes || [],
           likedBy: data.likedBy || [],
           comments: (data.comments || []).map((comment: any) => ({
             ...comment,
@@ -228,6 +230,7 @@ const HomePage: React.FC = () => {
         authorId: currentUser.uid,
         authorName: userProfile?.name || currentUser?.displayName || 'Anonymous',
         authorAvatar: userProfile?.profilePic || currentUser?.photoURL || 'https://ui-avatars.com/api/?name=Anonymous&background=random',
+        username: userProfile?.username || 'anonymous',
         content,
         timestamp: new Date(),
         likes: 0,
@@ -646,6 +649,7 @@ const HomePage: React.FC = () => {
             authorId: postData.userId,
             authorName: authorData.name || 'Unknown User',
             authorAvatar: authorData.avatar || '',
+            username: authorData.username || 'anonymous',
             timestamp: postData.timestamp,
             likes: postData.likes || 0,
             likedBy: postData.likedBy || [],
@@ -718,6 +722,7 @@ const HomePage: React.FC = () => {
               authorId: postData.userId,
               authorName: authorData.name || 'Unknown User',
               authorAvatar: authorData.avatar || '',
+              username: authorData.username || 'anonymous',
               timestamp: postData.timestamp,
               likes: postData.likes || 0,
               likedBy: postData.likedBy || [],

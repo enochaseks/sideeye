@@ -104,10 +104,25 @@ const Forums: React.FC = () => {
 
   React.useEffect(() => {
     const q = query(collection(db, 'posts'), orderBy('timestamp', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const newPosts = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const newPosts = await Promise.all(snapshot.docs.map(async (postDoc) => {
+        const data = postDoc.data();
+        // Fetch author information
+        const authorRef = doc(db, 'users', data.authorId);
+        const authorDoc = await getDoc(authorRef);
+        const authorData = authorDoc.exists() ? authorDoc.data() as UserProfile : null;
+        
+        return {
+          id: postDoc.id,
+          content: data.content || '',
+          authorId: data.authorId || '',
+          authorName: authorData?.name || 'Anonymous',
+          authorAvatar: authorData?.profilePic || '',
+          username: authorData?.username || 'anonymous',
+          timestamp: data.timestamp?.toDate() || new Date(),
+          likes: data.likes || [],
+          comments: data.comments || 0
+        };
       }));
       setPosts(newPosts);
     });
@@ -133,7 +148,11 @@ const Forums: React.FC = () => {
             <Card sx={{ mb: 3 }}>
               <CardContent>
                 <Box sx={{ display: 'flex', gap: 2 }}>
-                  <Avatar src={userProfile?.profilePic || undefined} />
+                  <Avatar 
+                    src={userProfile?.profilePic || undefined}
+                    onClick={() => navigate(`/profile/${user.uid}`)}
+                    sx={{ cursor: 'pointer' }}
+                  />
                   <TextField
                     fullWidth
                     multiline
@@ -156,10 +175,17 @@ const Forums: React.FC = () => {
             <Card key={post.id} sx={{ mb: 3 }}>
               <CardContent>
                 <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-                  <Avatar src={post.profilePic} />
+                  <Avatar 
+                    src={post.authorAvatar} 
+                    onClick={() => navigate(`/profile/${post.authorId}`)}
+                    sx={{ cursor: 'pointer' }}
+                  />
                   <Box>
                     <Typography variant="subtitle1" fontWeight="bold">
-                      {post.username}
+                      {post.authorName}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      @{post.username}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       {new Date(post.timestamp).toLocaleDateString()}
@@ -167,6 +193,23 @@ const Forums: React.FC = () => {
                   </Box>
                 </Box>
                 <Typography>{post.content}</Typography>
+                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                  <IconButton size="small">
+                    <Favorite />
+                    <Typography variant="body2" sx={{ ml: 1 }}>
+                      {post.likes.length}
+                    </Typography>
+                  </IconButton>
+                  <IconButton size="small">
+                    <Comment />
+                    <Typography variant="body2" sx={{ ml: 1 }}>
+                      {post.comments}
+                    </Typography>
+                  </IconButton>
+                  <IconButton size="small">
+                    <Share />
+                  </IconButton>
+                </Box>
               </CardContent>
             </Card>
           ))}
