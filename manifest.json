@@ -21,8 +21,8 @@
       "purpose": "any maskable"
     }
   ],
-  "start_url": "https://sideeye.uk",
-  "scope": "https://sideeye.uk",
+  "start_url": "https://www.sideeye.uk",
+  "scope": "https://www.sideeye.uk",
   "display": "standalone",
   "theme_color": "#1976d2",
   "background_color": "#ffffff",
