@@ -414,46 +414,59 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
           {/* Profile Header */}
           <Box>
             <Paper elevation={0} sx={{ p: 3, textAlign: 'center' }}>
-              <Box sx={{ position: 'relative', display: 'inline-block' }}>
-        <Avatar
-                  src={profilePic || ''}
-                  sx={{ width: 120, height: 120, mx: 'auto', mb: 2 }}
-          alt={username}
-                >
-                  {username.charAt(0)}
-                </Avatar>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleProfilePicChange}
-                  style={{ display: 'none' }}
-                  ref={fileInputRef}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+                <Avatar
+                  src={profilePic || undefined}
+                  sx={{ width: 100, height: 100 }}
                 />
-                <IconButton
-                  onClick={() => fileInputRef.current?.click()}
-                  sx={{
-                    position: 'absolute',
-                    bottom: 0,
-                    right: 0,
-                    backgroundColor: 'primary.main',
-                    color: 'white',
-                    '&:hover': {
-                      backgroundColor: 'primary.dark',
-                    },
-                  }}
-                >
-                  <PhotoCamera />
-                </IconButton>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="h4" component="h1">
+                    {name}
+                  </Typography>
+                  <Typography variant="subtitle1" color="text.secondary">
+                    @{username}
+                  </Typography>
+                  <Typography variant="body1" sx={{ mt: 1 }}>
+                    {bio}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                    <Button
+                      variant="outlined"
+                      onClick={() => setShowConnectionsDialog(true)}
+                    >
+                      {followers.length} Followers
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      onClick={() => setShowConnectionsDialog(true)}
+                    >
+                      {connections.length} Following
+                    </Button>
+                    {auth.currentUser?.uid !== userId && userId && (
+                      <>
+                        {connections.includes(userId) ? (
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            startIcon={<PersonRemoveIcon />}
+                            onClick={() => handleUnfollow(userId)}
+                          >
+                            Unfollow
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="contained"
+                            startIcon={<PersonAddIcon />}
+                            onClick={() => handleFollow(userId)}
+                          >
+                            Follow
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </Box>
+                </Box>
               </Box>
-              <Typography variant="h5" gutterBottom>
-                {username}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" gutterBottom>
-                {email}
-              </Typography>
-              <Typography variant="body2" sx={{ mb: 2 }}>
-                {bio}
-              </Typography>
               <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2 }}>
                 <Button
                   variant="contained"
