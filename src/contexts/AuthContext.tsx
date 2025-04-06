@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { auth } from '../services/firebase';
-import { User, signOut as firebaseSignOut } from 'firebase/auth';
+import { User, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification } from 'firebase/auth';
 import { UserProfile } from '../types/index';
-import { getDoc, doc } from 'firebase/firestore';
+import { getDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 interface AuthContextType {
   currentUser: User | null;
   user: User | null;
+  userProfile: UserProfile | null;
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
@@ -24,6 +25,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   currentUser: null,
   user: null,
+  userProfile: null,
   loading: true,
   error: null,
   login: async () => {},
@@ -41,6 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
@@ -60,28 +63,107 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return unsubscribe;
   }, []);
 
-  const signOut = async () => {
+  const login = async (email: string, password: string) => {
+    try {
+      setLoading(true);
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      setError(error.message);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const register = async (email: string, password: string, username: string) => {
+    try {
+      setLoading(true);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      
+      // Create initial user profile in Firestore
+      await setDoc(doc(db, 'users', userCredential.user.uid), {
+        username,
+        email,
+        name: username,
+        bio: '',
+        profilePic: null,
+        createdAt: new Date(),
+        isVerified: false,
+        has2FA: false,
+        connections: [],
+        followers: [],
+        following: [],
+      });
+
+      // Send email verification
+      await firebaseSendEmailVerification(userCredential.user);
+    } catch (error: any) {
+      setError(error.message);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const logout = async () => {
     try {
       await firebaseSignOut(auth);
-    } catch (error) {
-      console.error('Error signing out:', error);
+    } catch (error: any) {
+      setError(error.message);
+      throw error;
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (error: any) {
+      setError(error.message);
+      throw error;
+    }
+  };
+
+  const updateProfile = async (data: { displayName?: string; photoURL?: string }) => {
+    if (!currentUser) throw new Error('No user logged in');
+    try {
+      await firebaseUpdateProfile(currentUser, data);
+      // Also update Firestore profile
+      if (data.displayName) {
+        await setDoc(doc(db, 'users', currentUser.uid), {
+          name: data.displayName,
+        }, { merge: true });
+      }
+    } catch (error: any) {
+      setError(error.message);
+      throw error;
+    }
+  };
+
+  const sendEmailVerification = async () => {
+    if (!currentUser) throw new Error('No user logged in');
+    try {
+      await firebaseSendEmailVerification(currentUser);
+    } catch (error: any) {
+      setError(error.message);
+      throw error;
     }
   };
 
   const value = {
     currentUser,
     user: currentUser,
+    userProfile,
     loading,
-    error: null,
-    login: async () => {},
-    register: async () => {},
-    logout: signOut,
-    resetPassword: async () => {},
-    updateProfile: async () => {},
-    sendEmailVerification: async () => {},
-    verifyEmail: async () => {},
-    setupTwoFactorAuth: async () => {},
-    verifyTwoFactorAuth: async () => {},
+    error,
+    login,
+    register,
+    logout,
+    resetPassword,
+    updateProfile,
+    sendEmailVerification,
+    verifyEmail: async () => {}, // Implement if needed
+    setupTwoFactorAuth: async () => {}, // Implement if needed
+    verifyTwoFactorAuth: async () => {}, // Implement if needed
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

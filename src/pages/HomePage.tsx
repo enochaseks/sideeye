@@ -95,27 +95,25 @@ const HomePage: React.FC = () => {
           console.log('User profile loaded:', userData);
           setUserProfile(userData as UserProfile);
         } else {
-          // Create user profile if it doesn't exist
-          const newUserProfile = {
+          // Create a new user profile document
+          const newUserProfile: UserProfile = {
             uid: user.uid,
             email: user.email || '',
-            name: user.displayName || 'Anonymous',
-            username: user.email?.split('@')[0] || 'anonymous',
+            name: user.displayName || '',
+            username: user.displayName?.toLowerCase().replace(/\s+/g, '') || '',
             avatar: user.photoURL || '',
             profilePic: user.photoURL || '',
             bio: '',
-            isVerified: user.emailVerified || false,
-            followers: 0,
+            isVerified: false,
+            followers: [], // Changed from number to string[]
             following: 0,
             posts: 0,
             createdAt: new Date()
           };
-          await setDoc(doc(db, 'users', user.uid), {
-            ...newUserProfile,
-            createdAt: serverTimestamp()
-          });
+
+          await setDoc(doc(db, 'users', user.uid), newUserProfile);
           console.log('Created new user profile:', newUserProfile);
-          setUserProfile(newUserProfile as UserProfile);
+          setUserProfile(newUserProfile);
         }
       } else {
         console.log('Auth state changed - No user');
@@ -144,19 +142,39 @@ const HomePage: React.FC = () => {
       collection(db, 'posts'),
       orderBy('timestamp', 'desc')
     );
-    const unsubscribePosts = onSnapshot(postsQuery, (snapshot) => {
-      const newPosts = snapshot.docs.map(doc => {
-        const data = doc.data();
+    const unsubscribePosts = onSnapshot(postsQuery, async (snapshot) => {
+      const newPosts = await Promise.all(snapshot.docs.map(async (postDoc) => {
+        const data = postDoc.data();
+        // Fetch author information
+        const authorRef = doc(db, 'users', data.authorId);
+        const authorDoc = await getDoc(authorRef);
+        const authorData = authorDoc.exists() ? authorDoc.data() as UserProfile : null;
+        
         return {
-          id: doc.id,
-          ...data,
+          id: postDoc.id,
+          content: data.content || '',
+          authorId: data.authorId || '',
+          authorName: authorData?.name || 'Anonymous',
+          authorAvatar: authorData?.profilePic || '',
           timestamp: data.timestamp?.toDate() || new Date(),
+          likes: data.likes || 0,
+          likedBy: data.likedBy || [],
           comments: (data.comments || []).map((comment: any) => ({
             ...comment,
             timestamp: comment.timestamp?.toDate() || new Date()
-          }))
+          })),
+          commentCount: data.commentCount || 0,
+          imageUrl: data.imageUrl || '',
+          userId: data.userId || '',
+          tags: data.tags || [],
+          isPrivate: data.isPrivate || false,
+          isPinned: data.isPinned || false,
+          isEdited: data.isEdited || false,
+          reposts: data.reposts || 0,
+          views: data.views || 0,
+          isArchived: data.isArchived || false
         } as PostData;
-      });
+      }));
       setPosts(newPosts);
       setLoading(false);
     });

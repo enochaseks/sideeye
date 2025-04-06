@@ -207,13 +207,13 @@ const SideRoom: React.FC = (): ReactElement => {
           guestSpeakerLimit: roomData.guestSpeakerLimit || 2
         };
         setRoom(roomWithDefaults);
-      } else {
-        setError('Room not found');
-      }
+        } else {
+          setError('Room not found');
+        }
       setLoading(false);
     }, (err) => {
       setError('Error loading room: ' + err.message);
-      setLoading(false);
+        setLoading(false);
     });
 
     return () => unsubscribe();
@@ -336,7 +336,7 @@ const SideRoom: React.FC = (): ReactElement => {
         });
         cleanupAudio();
       } else {
-        await updateDoc(doc(db, 'sideRooms', room.id), {
+      await updateDoc(doc(db, 'sideRooms', room.id), {
           isLive: true,
           liveParticipants: arrayUnion(currentUser.uid)
         });
@@ -425,7 +425,7 @@ const SideRoom: React.FC = (): ReactElement => {
 
       await updateDoc(doc(db, 'sideRooms', room.id), roomData);
       setEditDialogOpen(false);
-    } catch (err) {
+      } catch (err) {
       setError('Error updating room: ' + (err as Error).message);
     }
   };
@@ -572,14 +572,14 @@ const SideRoom: React.FC = (): ReactElement => {
               </>
             )}
             {isMember ? (
-              <Button
+                <Button
                 variant="contained"
-                color="error"
-                onClick={handleLeaveRoom}
+                  color="error"
+                  onClick={handleLeaveRoom}
                 startIcon={<Close />}
-              >
-                Leave Room
-              </Button>
+                >
+                  Leave Room
+                </Button>
             ) : (
               <Button
                 variant="contained"
@@ -635,15 +635,15 @@ const SideRoom: React.FC = (): ReactElement => {
 
         <Box display="flex" gap={3}>
           <Box flex={1}>
-            <Typography variant="h6" gutterBottom>
+              <Typography variant="h6" gutterBottom>
               Members ({room?.memberCount || 0})
-            </Typography>
-            <List>
-              <ListItem>
-                <ListItemAvatar>
+              </Typography>
+              <List>
+                    <ListItem>
+                      <ListItemAvatar>
                   <Avatar src={getUserAvatar(room?.owner)} />
-                </ListItemAvatar>
-                <ListItemText
+                      </ListItemAvatar>
+                      <ListItemText
                   primary={`${getUserDisplayName(room?.owner)} (Owner)`}
                   secondary={`Joined ${formatDate(room?.createdAt)}`}
                 />
@@ -667,11 +667,11 @@ const SideRoom: React.FC = (): ReactElement => {
                     {room?.liveParticipants?.includes(member.userId) && (
                       <Box sx={{ color: 'success.main' }}>
                         <Mic />
-                      </Box>
-                    )}
-                  </ListItem>
+                          </Box>
+                      )}
+                    </ListItem>
                 ))}
-            </List>
+              </List>
           </Box>
 
           <Box flex={2}>
@@ -712,16 +712,16 @@ const SideRoom: React.FC = (): ReactElement => {
           </Box>
 
           <Box flex={1}>
-            <Typography variant="h6" gutterBottom>
-              Room Rules
-            </Typography>
-            <List>
+              <Typography variant="h6" gutterBottom>
+                Room Rules
+              </Typography>
+              <List>
               {room.rules.map((rule, index) => (
-                <ListItem key={index}>
-                  <ListItemText primary={rule} />
-                </ListItem>
-              ))}
-            </List>
+                  <ListItem key={index}>
+                    <ListItemText primary={rule} />
+                  </ListItem>
+                ))}
+              </List>
           </Box>
         </Box>
       </Paper>
@@ -941,8 +941,8 @@ const SideRoom: React.FC = (): ReactElement => {
                   helperText="Maximum number of guest speakers allowed in a session"
                 />
               )}
-            </>
-          )}
+          </>
+        )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>

@@ -26,7 +26,8 @@ import {
   DialogContent,
   DialogActions,
   Divider,
-  Badge
+  Badge,
+  Alert
 } from '@mui/material';
 import { 
   Edit as EditIcon,
@@ -118,7 +119,7 @@ const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { userId: urlUserId } = useParams<{ userId: string }>();
-  const { currentUser, loading: authLoading } = useAuth();
+  const { currentUser, userProfile, loading: authLoading } = useAuth();
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -157,19 +158,30 @@ const Profile: React.FC = () => {
       setIsLoading(true);
       setError(null);
 
-      // Fetch user profile
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        setUsername(userData.username || '');
-        setName(userData.name || '');
-        setEmail(userData.email || '');
-        setBio(userData.bio || '');
-        setProfilePic(userData.profilePic || null);
-        setConnections(userData.connections || []);
-        setFollowers(userData.followers || []);
+      // If viewing own profile, use data from auth context
+      if (userId === currentUser?.uid && userProfile) {
+        setUsername(userProfile.username || '');
+        setName(userProfile.name || '');
+        setEmail(userProfile.email || '');
+        setBio(userProfile.bio || '');
+        setProfilePic(userProfile.profilePic || null);
+        setConnections(userProfile.connections || []);
+        setFollowers(userProfile.followers || []);
       } else {
-        setError('User not found');
+        // Fetch user profile for other users
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        if (userDoc.exists()) {
+          const userData = userDoc.data() as UserProfile;
+          setUsername(userData.username || '');
+          setName(userData.name || '');
+          setEmail(userData.email || '');
+          setBio(userData.bio || '');
+          setProfilePic(userData.profilePic || null);
+          setConnections(userData.connections || []);
+          setFollowers(userData.followers || []);
+        } else {
+          setError('User not found');
+        }
       }
 
       // Set up real-time listeners for all collections
@@ -178,7 +190,11 @@ const Profile: React.FC = () => {
         (snapshot) => {
           setPosts(snapshot.docs.map(doc => ({
             id: doc.id,
-            ...doc.data()
+            content: doc.data().content || '',
+            authorId: doc.data().authorId || '',
+            timestamp: doc.data().timestamp || new Date(),
+            likes: doc.data().likes || [],
+            comments: doc.data().comments || 0
           })) as Post[]);
         }
       );
@@ -188,7 +204,11 @@ const Profile: React.FC = () => {
         (snapshot) => {
           setForums(snapshot.docs.map(doc => ({
             id: doc.id,
-            ...doc.data()
+            title: doc.data().title || '',
+            description: doc.data().description || '',
+            members: doc.data().members || [],
+            memberCount: doc.data().memberCount || 0,
+            ownerId: doc.data().ownerId || ''
           })) as Forum[]);
         }
       );
@@ -198,7 +218,18 @@ const Profile: React.FC = () => {
         (snapshot) => {
           setSideRooms(snapshot.docs.map(doc => ({
             id: doc.id,
-            ...doc.data()
+            name: doc.data().name || '',
+            description: doc.data().description || '',
+            ownerId: doc.data().ownerId || '',
+            members: doc.data().members || [],
+            memberCount: doc.data().memberCount || 0,
+            createdAt: doc.data().createdAt || new Date(),
+            isPrivate: doc.data().isPrivate || false,
+            isLive: doc.data().isLive || false,
+            liveParticipants: doc.data().liveParticipants || [],
+            category: doc.data().category || '',
+            scheduledReveals: doc.data().scheduledReveals || [],
+            activeUsers: doc.data().activeUsers || 0
           })) as SideRoom[]);
         }
       );
@@ -208,7 +239,11 @@ const Profile: React.FC = () => {
         (snapshot) => {
           setLikedPosts(snapshot.docs.map(doc => ({
             id: doc.id,
-            ...doc.data()
+            content: doc.data().content || '',
+            authorId: doc.data().authorId || '',
+            timestamp: doc.data().timestamp || new Date(),
+            likes: doc.data().likes || [],
+            comments: doc.data().comments || 0
           })) as Post[]);
         }
       );
@@ -218,7 +253,9 @@ const Profile: React.FC = () => {
         (snapshot) => {
           setDeletedItems(snapshot.docs.map(doc => ({
             id: doc.id,
-            ...doc.data()
+            type: doc.data().type || '',
+            content: doc.data().content || {},
+            deletedAt: doc.data().deletedAt || new Date()
           })) as DeletedItem[]);
         }
       );
@@ -239,22 +276,10 @@ const Profile: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [userId, currentUser, userProfile]);
 
   useEffect(() => {
-    let isActive = true;
-
-    const loadData = async () => {
-      if (isActive) {
-        await fetchUserData();
-      }
-    };
-
-    loadData();
-
-    return () => {
-      isActive = false;
-    };
+    fetchUserData();
   }, [fetchUserData]);
 
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -482,18 +507,22 @@ const Profile: React.FC = () => {
     }
   };
 
-  if (isLoading) {
+  if (authLoading || isLoading) {
     return (
-      <Container sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-        <CircularProgress />
+      <Container maxWidth="lg">
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+          <CircularProgress />
+        </Box>
       </Container>
     );
   }
 
   if (error) {
     return (
-      <Container sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-        <Typography color="error">{error}</Typography>
+      <Container maxWidth="lg">
+        <Box sx={{ mt: 4 }}>
+          <Alert severity="error">{error}</Alert>
+        </Box>
       </Container>
     );
   }
@@ -506,7 +535,7 @@ const Profile: React.FC = () => {
           <Box>
             <Paper elevation={0} sx={{ p: 3, textAlign: 'center' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-        <Avatar
+                <Avatar
                   src={profilePic || undefined}
                   sx={{ width: 100, height: 100 }}
                 />
@@ -605,7 +634,7 @@ const Profile: React.FC = () => {
                 <Tab label="Forums" />
                 <Tab label="Side Rooms" />
                 <Tab label="Liked Posts" />
-                <Tab label="Trash" />
+                {auth.currentUser?.uid === userId && <Tab label="Deleted Items" />}
               </Tabs>
 
               {/* Posts Tab */}
@@ -711,7 +740,7 @@ const Profile: React.FC = () => {
                             <FavoriteIcon />
                             <Typography variant="body2" sx={{ ml: 1 }}>
                               {post.likes.length}
-        </Typography>
+                            </Typography>
                           </IconButton>
                         </ListItemSecondaryAction>
                       </ListItem>
@@ -720,48 +749,50 @@ const Profile: React.FC = () => {
                 )}
               </TabPanel>
 
-              {/* Trash Tab */}
-              <TabPanel value={activeTab} index={4}>
-                {deletedItems.length === 0 ? (
-                  <Typography>No deleted items</Typography>
-                ) : (
-                  <List>
-                    {deletedItems.map((item) => (
-                      <ListItem key={item.id} divider>
-                        <ListItemText
-                          primary={
-                            <Box>
-                              <Typography variant="subtitle1">
-                                {item.type === 'post' ? 'Post' : item.type === 'room' ? 'Side Room' : 'Forum'}
-                              </Typography>
-                              <Typography variant="body1">
-                                {item.type === 'post' ? item.content.content : item.content.name}
-                              </Typography>
-                            </Box>
-                          }
-                          secondary={`Deleted ${formatDistanceToNow(item.deletedAt.toDate())} ago`}
-                        />
-                        <ListItemSecondaryAction>
-                          <Button 
-                            variant="outlined"
-                            onClick={() => handleRestoreItem(item.id, item.type)}
-                          >
-                            Restore
-                          </Button>
-                          <Button 
-                            variant="outlined" 
-                            color="error"
-                            onClick={() => handlePermanentDelete(item.id)}
-                            sx={{ ml: 1 }}
-                          >
-                            Delete Permanently
-                          </Button>
-                        </ListItemSecondaryAction>
-                      </ListItem>
-                    ))}
-                  </List>
-                )}
-              </TabPanel>
+              {/* Deleted Items Tab */}
+              {auth.currentUser?.uid === userId && (
+                <TabPanel value={activeTab} index={4}>
+                  {deletedItems.length === 0 ? (
+                    <Typography>No deleted items</Typography>
+                  ) : (
+                    <List>
+                      {deletedItems.map((item) => (
+                        <ListItem key={item.id} divider>
+                          <ListItemText
+                            primary={
+                              <Box>
+                                <Typography variant="subtitle1">
+                                  {item.type === 'post' ? 'Post' : item.type === 'room' ? 'Side Room' : 'Forum'}
+                                </Typography>
+                                <Typography variant="body1">
+                                  {item.type === 'post' ? item.content.content : item.content.name}
+                                </Typography>
+                              </Box>
+                            }
+                            secondary={`Deleted ${formatDistanceToNow(item.deletedAt.toDate())} ago`}
+                          />
+                          <ListItemSecondaryAction>
+                            <Button 
+                              variant="outlined"
+                              onClick={() => handleRestoreItem(item.id, item.type)}
+                            >
+                              Restore
+                            </Button>
+                            <Button 
+                              variant="outlined" 
+                              color="error"
+                              onClick={() => handlePermanentDelete(item.id)}
+                              sx={{ ml: 1 }}
+                            >
+                              Delete Permanently
+                            </Button>
+                          </ListItemSecondaryAction>
+                        </ListItem>
+                      ))}
+                    </List>
+                  )}
+                </TabPanel>
+              )}
             </Paper>
           </Box>
         </Box>

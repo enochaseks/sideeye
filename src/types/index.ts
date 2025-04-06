@@ -186,7 +186,7 @@ export interface UserProfile {
   profilePic: string;
   bio?: string;
   isVerified: boolean;
-  followers: number;
+  followers: string[];
   following: number;
   posts: number;
   shadePoints?: number;
@@ -194,6 +194,7 @@ export interface UserProfile {
   badges?: Badge[];
   truthScore?: number;
   createdAt?: any;
+  connections?: string[];
 }
 
 export interface TrendingTopic {

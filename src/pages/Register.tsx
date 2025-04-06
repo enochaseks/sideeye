@@ -14,9 +14,7 @@ import {
   Paper,
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
-import { auth, db } from '../services/firebase';
-import { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { useAuth } from '../contexts/AuthContext';
 
 interface FormErrors {
   username?: string;
@@ -31,14 +29,13 @@ const Register: React.FC = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    displayName: '',
-    bio: '',
   });
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { register } = useAuth();
 
   const validateForm = (): boolean => {
     const newErrors: FormErrors = {};
@@ -92,24 +89,7 @@ const Register: React.FC = () => {
 
     try {
       setLoading(true);
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        formData.email,
-        formData.password
-      );
-
-      // Send email verification
-      await sendEmailVerification(userCredential.user);
-
-      // Create user profile in Firestore
-      await setDoc(doc(db, 'users', userCredential.user.uid), {
-        username: formData.username,
-        email: formData.email,
-        createdAt: new Date(),
-        isVerified: false,
-        has2FA: false,
-      });
-
+      await register(formData.email, formData.password, formData.username);
       // Redirect to email verification page
       navigate('/verify-email');
     } catch (error: any) {
