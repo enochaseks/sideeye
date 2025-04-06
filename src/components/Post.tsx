@@ -32,13 +32,14 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { PostData, Comment, PostProps } from '../types';
+import { PostData, Comment, Author, PostProps } from '../types/index';
 import { doc, getDoc, updateDoc, increment, Timestamp, setDoc, deleteDoc, serverTimestamp, addDoc, collection } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { ref, deleteObject } from 'firebase/storage';
 import { storage } from '../services/firebase';
 import { formatDate, convertTimestampToDate, compareTimestamps } from '../utils/dateUtils';
+import { toast } from 'react-hot-toast';
 
 const Post: React.FC<PostProps> = ({
   id,
@@ -78,7 +79,7 @@ const Post: React.FC<PostProps> = ({
   const [replyText, setReplyText] = useState('');
   const [isReplying, setIsReplying] = useState(false);
   const navigate = useNavigate();
-  const { currentUser, userProfile } = useAuth();
+  const { currentUser } = useAuth();
 
   const handleProfileClick = (username: string) => {
     navigate(`/profile/${username}`);
@@ -126,7 +127,7 @@ const Post: React.FC<PostProps> = ({
   };
 
   const handleComment = async () => {
-    if (!currentUser || !userProfile || !commentText.trim() || isCommenting) return;
+    if (!currentUser || !commentText.trim() || isCommenting) return;
     setIsCommenting(true);
 
     try {

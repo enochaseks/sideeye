@@ -38,13 +38,96 @@ export interface Badge {
   level: 'bronze' | 'silver' | 'gold' | 'platinum';
 }
 
-export interface TeaRoom {
+export interface SideRoom {
   id: string;
   name: string;
+  description: string;
+  ownerId: string;
+  members: RoomMember[];
+  memberCount: number;
+  createdAt: Date;
+  isPrivate: boolean;
+  password?: string;
+  tags?: string[];
+  imageUrl?: string;
+  isLive: boolean;
+  liveParticipants: string[];
   category: string;
-  temperature: number; // 0-100 scale
+  scheduledReveals: SideReveal[];
   activeUsers: number;
-  scheduledReveals: TeaReveal[];
+  maxParticipants?: number;
+  rules?: string[];
+  bannedUsers?: string[];
+}
+
+export interface RoomMember {
+  userId: string;
+  username: string;
+  avatar: string;
+  role: 'owner' | 'admin' | 'moderator' | 'member';
+  joinedAt: Date;
+}
+
+export interface SideReveal {
+  id: string;
+  content: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  timestamp: Date;
+  roomId: string;
+  likes: number;
+  comments: Comment[];
+  isAnonymous: boolean;
+}
+
+export interface Comment {
+  id: string;
+  content: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  timestamp: any;
+  likes: number;
+  likedBy: string[];
+  isEdited: boolean;
+  lastEdited?: any;
+  replies?: Comment[];
+}
+
+export interface Author {
+  id: string;
+  name: string;
+  avatar: string;
+}
+
+export interface PostData {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  content: string;
+  imageUrl?: string;
+  timestamp: any;
+  likes: number;
+  likedBy: string[];
+  comments: Comment[];
+  originalPostId?: string;
+  originalAuthor?: Author;
+  tags?: string[];
+  location?: string;
+  isPrivate?: boolean;
+}
+
+export interface PostProps extends Omit<PostData, 'comments'> {
+  comments: Comment[];
+  commentCount: number;
+  onDelete: (id: string) => Promise<void>;
+  onEdit?: (id: string, newContent: string) => Promise<void>;
+  onLike?: (id: string) => Promise<void>;
+  onComment?: (id: string, content: string) => Promise<void>;
+  onShare?: (id: string) => Promise<void>;
+  isOwnPost: boolean;
 }
 
 export interface TeaReveal {

@@ -2,19 +2,166 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow users to read and write their own profile
-    match /users/{userId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update, delete: if request.auth != null && request.auth.uid == userId;
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isRoomOwner(roomId) {
+      let room = get(/databases/$(database)/documents/sideRooms/$(roomId));
+      return room != null && (
+        (room.data.owner.userId == request.auth.uid) || 
+        (room.data.owner == request.auth.uid) ||
+        (room.data.members != null && 
+         room.data.members.hasAny([{'userId': request.auth.uid, 'role': 'owner'}]))
+      );
+    }
+    
+    function isRoomMember(roomId) {
+      let room = get(/databases/$(database)/documents/sideRooms/$(roomId));
+      return room != null && (
+        isRoomOwner(roomId) ||
+        (room.data.members != null && (
+          room.data.members.hasAny([request.auth.uid]) ||
+          room.data.members.hasAny([{'userId': request.auth.uid}])
+        ))
+      );
     }
 
-    // Allow users to read and write posts
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+      allow delete: if isAuthenticated() && isOwner(userId);
+
+      // User's private subcollections
+      match /notifications/{notificationId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+      
+      match /friends/{friendId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+    }
+
+    // Posts collection
     match /posts/{postId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null && (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
-      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        resource.data.authorId == request.auth.uid ||
+        // Allow users to update likes and comments
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['likes', 'comments', 'commentCount', 'likeCount'])
+      );
+      allow delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
+
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        allow delete: if isAuthenticated() && (
+          resource.data.userId == request.auth.uid ||
+          get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid
+        );
+      }
+    }
+
+    // SideRooms collection
+    match /sideRooms/{roomId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isRoomOwner(roomId) || 
+        // Allow members to update specific fields only
+        (isRoomMember(roomId) && (
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['messages', 'liveParticipants', 'isLive', 'activeUsers']) ||
+          // Allow adding/removing members
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['members', 'memberCount'])
+        ))
+      );
+      allow delete: if isAuthenticated() && (
+        isRoomOwner(roomId) ||
+        // Allow deletion if the user is the owner (even if stored as string)
+        (resource.data.owner == request.auth.uid)
+      );
+      
+      // Messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && isRoomMember(roomId);
+        allow create: if isAuthenticated() && isRoomMember(roomId);
+        allow update: if isAuthenticated() && isRoomMember(roomId);
+        allow delete: if isAuthenticated() && (
+          isRoomOwner(roomId) || 
+          resource.data.userId == request.auth.uid
+        );
+      }
+    }
+
+    // Stories collection
+    match /stories/{storyId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Forums collection
+    match /forums/{forumId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        resource.data.creatorId == request.auth.uid ||
+        // Allow users to update participation-related fields
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['participants', 'participantCount', 'lastActivity'])
+      );
+      allow delete: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
+
+      // Forum posts subcollection
+      match /posts/{postId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow update: if isAuthenticated() && resource.data.authorId == request.auth.uid;
+        allow delete: if isAuthenticated() && (
+          resource.data.authorId == request.auth.uid ||
+          get(/databases/$(database)/documents/forums/$(forumId)).data.creatorId == request.auth.uid
+        );
+      }
+    }
+
+    // Chat collection
+    match /chats/{chatId} {
+      allow read: if isAuthenticated() && (
+        resource.data.participants.hasAny([request.auth.uid])
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        resource.data.participants.hasAny([request.auth.uid])
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.createdBy == request.auth.uid
+      );
+
+      // Chat messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (
+          get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid])
+        );
+        allow create: if isAuthenticated() && (
+          get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid])
+        );
+        allow update: if isAuthenticated() && resource.data.senderId == request.auth.uid;
+        allow delete: if isAuthenticated() && resource.data.senderId == request.auth.uid;
+      }
     }
 
     // Allow users to manage reposts
@@ -33,18 +180,18 @@ service cloud.firestore {
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // Allow users to read and write comments
-    match /comments/{commentId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update, delete: if request.auth != null;
-    }
-
-    // Allow users to read and write notifications
-    match /notifications/{notificationId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update, delete: if request.auth != null;
+    // Allow users to manage trash
+    match /trash/{itemId} {
+      allow read: if isAuthenticated() && (
+        resource.data.deletedBy == request.auth.uid ||
+        isRoomOwner(itemId)
+      );
+      allow create: if isAuthenticated();
+      allow update: if false; // Trash items should not be modified
+      allow delete: if isAuthenticated() && (
+        resource.data.deletedBy == request.auth.uid ||
+        isRoomOwner(itemId)
+      );
     }
 
     // Allow users to read and write trending topics
@@ -55,14 +202,6 @@ service cloud.firestore {
 
     // Allow users to read forums and join them
     match /forums/{forumId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
-    }
-
-    // Allow users to read tea rooms and join them
-    match /teaRooms/{roomId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
       allow update: if request.auth != null;

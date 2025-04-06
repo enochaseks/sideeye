@@ -52,13 +52,13 @@ import {
   Settings as SettingsIcon,
   Logout as LogoutIcon,
   Tag as TagIcon,
-  LocalCafe as TeaRoomIcon
+  LocalCafe as SideRoomIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 
 interface SearchResult {
   id: string;
-  type: 'user' | 'post' | 'forum' | 'teaRoom';
+  type: 'user' | 'post' | 'forum' | 'sideRoom';
   title: string;
   subtitle?: string;
   avatar?: string;
@@ -83,7 +83,7 @@ interface ForumData {
   description: string;
 }
 
-interface TeaRoomData {
+interface SideRoomData {
   name: string;
   description: string;
 }
@@ -137,8 +137,8 @@ const Navbar: React.FC = () => {
       case 'forum':
         navigate(`/forum/${result.id}`);
         break;
-      case 'teaRoom':
-        navigate(`/tea-room/${result.id}`);
+      case 'sideRoom':
+        navigate(`/side-room/${result.id}`);
         break;
     }
   };
@@ -201,224 +201,226 @@ const Navbar: React.FC = () => {
   };
 
   return (
-    <AppBar 
-      position="static" 
-      elevation={0}
-      sx={{
-        backgroundColor: 'transparent',
-        backgroundImage: 'none',
-        boxShadow: 'none',
-        borderBottom: 'none',
-        padding: '0 24px',
-      }}
-    >
-      <Toolbar 
-        sx={{ 
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '16px 0',
-          minHeight: 'auto',
+    <>
+      <AppBar 
+        position="static" 
+        elevation={0}
+        sx={{
+          backgroundColor: 'transparent',
+          backgroundImage: 'none',
+          boxShadow: 'none',
+          borderBottom: 'none',
+          padding: '0 24px',
         }}
-        disableGutters
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <Avatar
-            src="/logo.png"
-            alt="Side Eye"
-            sx={{ 
-              width: 40, 
-              height: 40, 
-              cursor: 'pointer',
-              '&:hover': {
-                opacity: 0.8,
-              },
-            }}
-            onClick={() => navigate('/')}
-          />
-          <Typography
-            variant="h5"
-            component="div"
-            sx={{ 
-              fontWeight: 'bold',
-              cursor: 'pointer',
-              color: 'primary.main',
-              '&:hover': {
-                opacity: 0.8,
-              },
-            }}
-            onClick={() => navigate('/')}
-          >
-            SideEye
-          </Typography>
-        </Box>
-
-        <Box sx={{ flexGrow: 1, position: 'relative', maxWidth: 600, mx: 4 }}>
-          <TextField
-            fullWidth
-            size="small"
-            placeholder="Search users, posts, forums..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter') {
-                handleSearch(searchQuery);
-              }
-            }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
-            }}
-          />
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          {user ? (
-            <>
-              <IconButton
-                color="inherit"
-                onClick={() => navigate('/')}
-                sx={{ 
-                  color: 'text.primary',
-                  '&:hover': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                  },
-                }}
-              >
-                <HomeIcon />
-              </IconButton>
-              <IconButton
-                color="inherit"
-                sx={{ 
-                  color: 'text.primary',
-                  '&:hover': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                  },
-                }}
-              >
-                <NotificationsIcon />
-              </IconButton>
-              <IconButton
-                color="inherit"
-                onClick={handleMenuOpen}
-                sx={{ 
-                  color: 'text.primary',
-                  '&:hover': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                  },
-                }}
-              >
-                <MenuIcon />
-              </IconButton>
-            </>
-          ) : (
-            <>
-              <Button
-                color="inherit"
-                onClick={() => navigate('/login')}
-                sx={{ 
-                  color: 'text.primary',
-                  '&:hover': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                  },
-                }}
-              >
-                Login
-              </Button>
-              <Button
-                color="inherit"
-                onClick={() => navigate('/register')}
-                sx={{ 
-                  color: 'text.primary',
-                  '&:hover': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                  },
-                }}
-              >
-                Register
-              </Button>
-            </>
-          )}
-        </Box>
-
-        <Menu
-          anchorEl={anchorEl}
-          open={Boolean(anchorEl)}
-          onClose={handleMenuClose}
-          sx={{
-            '& .MuiPaper-root': {
-              borderRadius: 2,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-              minWidth: 200,
-              border: 'none',
-            },
+        <Toolbar 
+          sx={{ 
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 0',
+            minHeight: 'auto',
           }}
+          disableGutters
         >
-          <MenuItem onClick={() => handleNavigation('/tea-rooms')}>
-            <ListItemIcon>
-              <LocalCafe />
-            </ListItemIcon>
-            <ListItemText primary="Tea Rooms" />
-          </MenuItem>
-          <MenuItem onClick={() => handleNavigation('/forums')}>
-            <ListItemIcon>
-              <ForumIcon />
-            </ListItemIcon>
-            <ListItemText primary="Forums" />
-          </MenuItem>
-          <MenuItem onClick={() => handleNavigation('/safety')}>
-            <ListItemIcon>
-              <SecurityIcon />
-            </ListItemIcon>
-            <ListItemText primary="Safety" />
-          </MenuItem>
-          <MenuItem onClick={() => handleNavigation('/about')}>
-            <ListItemIcon>
-              <InfoIcon />
-            </ListItemIcon>
-            <ListItemText>About</ListItemText>
-          </MenuItem>
-          <MenuItem onClick={() => handleNavigation('/privacy-policy')}>
-            <ListItemIcon>
-              <PolicyIcon />
-            </ListItemIcon>
-            <ListItemText>Privacy Policy</ListItemText>
-          </MenuItem>
-          <MenuItem onClick={() => handleNavigation('/terms')}>
-            <ListItemIcon>
-              <PolicyIcon />
-            </ListItemIcon>
-            <ListItemText>Terms of Service</ListItemText>
-          </MenuItem>
-          <MenuItem onClick={() => handleNavigation('/cookies')}>
-            <ListItemIcon>
-              <CookieIcon />
-            </ListItemIcon>
-            <ListItemText>Cookie Policy</ListItemText>
-          </MenuItem>
-          {user && (
-            <>
-              <Divider />
-              <MenuItem onClick={() => handleNavigation('/profile')}>
-                <ListItemIcon>
-                  <Person />
-                </ListItemIcon>
-                <ListItemText>Profile</ListItemText>
-              </MenuItem>
-              <MenuItem onClick={handleSignOut}>
-                <ListItemIcon>
-                  <Person />
-                </ListItemIcon>
-                <ListItemText>Logout</ListItemText>
-              </MenuItem>
-            </>
-          )}
-        </Menu>
-      </Toolbar>
-    </AppBar>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <Avatar
+              src="/logo.png"
+              alt="Side Eye"
+              sx={{ 
+                width: 40, 
+                height: 40, 
+                cursor: 'pointer',
+                '&:hover': {
+                  opacity: 0.8,
+                },
+              }}
+              onClick={() => navigate('/')}
+            />
+            <Typography
+              variant="h5"
+              component="div"
+              sx={{ 
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                color: 'primary.main',
+                '&:hover': {
+                  opacity: 0.8,
+                },
+              }}
+              onClick={() => navigate('/')}
+            >
+              SideEye
+            </Typography>
+          </Box>
+
+          <Box sx={{ flexGrow: 1, position: 'relative', maxWidth: 600, mx: 4 }}>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="Search users, posts, forums..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleSearch(searchQuery);
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Box>
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {user ? (
+              <>
+                <IconButton
+                  color="inherit"
+                  onClick={() => navigate('/')}
+                  sx={{ 
+                    color: 'text.primary',
+                    '&:hover': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  <HomeIcon />
+                </IconButton>
+                <IconButton
+                  color="inherit"
+                  sx={{ 
+                    color: 'text.primary',
+                    '&:hover': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  <NotificationsIcon />
+                </IconButton>
+                <IconButton
+                  color="inherit"
+                  onClick={handleMenuOpen}
+                  sx={{ 
+                    color: 'text.primary',
+                    '&:hover': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  <MenuIcon />
+                </IconButton>
+              </>
+            ) : (
+              <>
+                <Button
+                  color="inherit"
+                  onClick={() => navigate('/login')}
+                  sx={{ 
+                    color: 'text.primary',
+                    '&:hover': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  Login
+                </Button>
+                <Button
+                  color="inherit"
+                  onClick={() => navigate('/register')}
+                  sx={{ 
+                    color: 'text.primary',
+                    '&:hover': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  Register
+                </Button>
+              </>
+            )}
+          </Box>
+
+          <Menu
+            anchorEl={anchorEl}
+            open={Boolean(anchorEl)}
+            onClose={handleMenuClose}
+            sx={{
+              '& .MuiPaper-root': {
+                borderRadius: 2,
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                minWidth: 200,
+                border: 'none',
+              },
+            }}
+          >
+            <MenuItem onClick={() => handleNavigation('/side-rooms')}>
+              <ListItemIcon>
+                <LocalCafe />
+              </ListItemIcon>
+              <ListItemText primary="Side Rooms" />
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/forums')}>
+              <ListItemIcon>
+                <ForumIcon />
+              </ListItemIcon>
+              <ListItemText primary="Forums" />
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/safety')}>
+              <ListItemIcon>
+                <SecurityIcon />
+              </ListItemIcon>
+              <ListItemText primary="Safety" />
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/about')}>
+              <ListItemIcon>
+                <InfoIcon />
+              </ListItemIcon>
+              <ListItemText>About</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/privacy-policy')}>
+              <ListItemIcon>
+                <PolicyIcon />
+              </ListItemIcon>
+              <ListItemText>Privacy Policy</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/terms')}>
+              <ListItemIcon>
+                <PolicyIcon />
+              </ListItemIcon>
+              <ListItemText>Terms of Service</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/cookies')}>
+              <ListItemIcon>
+                <CookieIcon />
+              </ListItemIcon>
+              <ListItemText>Cookie Policy</ListItemText>
+            </MenuItem>
+            {user && (
+              <>
+                <Divider />
+                <MenuItem onClick={() => handleNavigation('/profile')}>
+                  <ListItemIcon>
+                    <Person />
+                  </ListItemIcon>
+                  <ListItemText>Profile</ListItemText>
+                </MenuItem>
+                <MenuItem onClick={handleSignOut}>
+                  <ListItemIcon>
+                    <Person />
+                  </ListItemIcon>
+                  <ListItemText>Logout</ListItemText>
+                </MenuItem>
+              </>
+            )}
+          </Menu>
+        </Toolbar>
+      </AppBar>
+    </>
   );
 };
 

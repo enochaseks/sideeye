@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { onAuthStateChanged } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from '../services/firebase';
-import { UserProfile } from '../types';
+import { UserProfile } from '../types/index';
 import { Send as SendIcon } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 

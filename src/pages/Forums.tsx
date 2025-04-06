@@ -21,7 +21,7 @@ import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db } from '../services/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-import { User, UserProfile } from '../types';
+import { User, UserProfile } from '../types/index';
 
 interface TabPanelProps {
   children?: React.ReactNode;

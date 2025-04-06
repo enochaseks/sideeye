@@ -1,22 +1,40 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { auth } from '../services/firebase';
 import { User, signOut as firebaseSignOut } from 'firebase/auth';
-import { UserProfile } from '../types';
+import { UserProfile } from '../types/index';
 import { getDoc, doc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 interface AuthContextType {
   currentUser: User | null;
-  userProfile: UserProfile | null;
+  user: User | null;
   loading: boolean;
-  signOut: () => Promise<void>;
+  error: string | null;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, username: string) => Promise<void>;
+  logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  updateProfile: (data: { displayName?: string; photoURL?: string }) => Promise<void>;
+  sendEmailVerification: () => Promise<void>;
+  verifyEmail: (code: string) => Promise<void>;
+  setupTwoFactorAuth: () => Promise<void>;
+  verifyTwoFactorAuth: (code: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   currentUser: null,
-  userProfile: null,
+  user: null,
   loading: true,
-  signOut: async () => {},
+  error: null,
+  login: async () => {},
+  register: async () => {},
+  logout: async () => {},
+  resetPassword: async () => {},
+  updateProfile: async () => {},
+  sendEmailVerification: async () => {},
+  verifyEmail: async () => {},
+  setupTwoFactorAuth: async () => {},
+  verifyTwoFactorAuth: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -52,9 +70,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const value = {
     currentUser,
-    userProfile,
+    user: currentUser,
     loading,
-    signOut,
+    error: null,
+    login: async () => {},
+    register: async () => {},
+    logout: signOut,
+    resetPassword: async () => {},
+    updateProfile: async () => {},
+    sendEmailVerification: async () => {},
+    verifyEmail: async () => {},
+    setupTwoFactorAuth: async () => {},
+    verifyTwoFactorAuth: async () => {},
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

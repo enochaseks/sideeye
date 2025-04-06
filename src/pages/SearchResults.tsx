@@ -21,18 +21,19 @@ import {
 import {
   Tag as TagIcon,
   Forum as ForumIcon,
-  LocalCafe as TeaRoomIcon,
-  Person as PersonIcon
+  LocalCafe as SideRoomIcon,
+  Group
 } from '@mui/icons-material';
 import { db } from '../services/firebase';
 import { collection, query, where, getDocs, getDoc, doc, orderBy, limit } from 'firebase/firestore';
+import { SideRoom } from '../types/index';
 
 interface SearchResult {
   id: string;
-  type: 'user' | 'post' | 'forum' | 'teaRoom';
+  type: 'user' | 'post' | 'forum' | 'sideRoom';
   title: string;
-  subtitle?: string;
-  avatar?: string;
+  subtitle: string;
+  data: any;
 }
 
 interface UserData {
@@ -54,7 +55,7 @@ interface ForumData {
   description: string;
 }
 
-interface TeaRoomData {
+interface SideRoomData {
   name: string;
   description: string;
 }
@@ -65,7 +66,7 @@ const SearchResults: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
 
@@ -80,7 +81,7 @@ const SearchResults: React.FC = () => {
 
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery.trim()) {
-      setSearchResults([]);
+      setResults([]);
       setIsLoading(false);
       return;
     }
@@ -104,7 +105,7 @@ const SearchResults: React.FC = () => {
           type: 'user',
           title: userData.username,
           subtitle: userData.name || 'No name set',
-          avatar: userData.profilePic
+          data: userData
         });
       });
 
@@ -125,7 +126,8 @@ const SearchResults: React.FC = () => {
           id: postDoc.id,
           type: 'post',
           title: postData.content.substring(0, 50) + '...',
-          subtitle: `by ${authorData?.name || authorData?.username || 'Unknown'}`
+          subtitle: `by ${authorData?.name || authorData?.username || 'Unknown'}`,
+          data: postData
         });
       }
 
@@ -143,29 +145,31 @@ const SearchResults: React.FC = () => {
           id: doc.id,
           type: 'forum',
           title: forumData.title,
-          subtitle: forumData.description
+          subtitle: forumData.description,
+          data: forumData
         });
       });
 
-      // Search tea rooms
-      const teaRoomsQuery = query(
-        collection(db, 'teaRooms'),
+      // Search side rooms
+      const sideRoomsQuery = query(
+        collection(db, 'sideRooms'),
         where('name', '>=', searchQuery.toLowerCase()),
         where('name', '<=', searchQuery.toLowerCase() + '\uf8ff'),
         limit(20)
       );
-      const teaRoomsSnapshot = await getDocs(teaRoomsQuery);
-      teaRoomsSnapshot.forEach(doc => {
-        const roomData = doc.data() as TeaRoomData;
+      const sideRoomsSnapshot = await getDocs(sideRoomsQuery);
+      sideRoomsSnapshot.forEach(doc => {
+        const roomData = doc.data() as SideRoomData;
         results.push({
           id: doc.id,
-          type: 'teaRoom',
+          type: 'sideRoom',
           title: roomData.name,
-          subtitle: roomData.description
+          subtitle: roomData.description,
+          data: { id: doc.id, ...roomData } as SideRoom
         });
       });
 
-      setSearchResults(results);
+      setResults(results);
     } catch (error) {
       console.error('Error searching:', error);
     } finally {
@@ -184,21 +188,25 @@ const SearchResults: React.FC = () => {
       case 'forum':
         navigate(`/forum/${result.id}`);
         break;
-      case 'teaRoom':
-        navigate(`/tea-room/${result.id}`);
+      case 'sideRoom':
+        navigate(`/side-room/${result.id}`);
         break;
     }
   };
 
-  const filteredResults = searchResults.filter(result => {
+  const filteredResults = results.filter(result => {
     switch (activeTab) {
       case 0: return result.type === 'user';
       case 1: return result.type === 'post';
       case 2: return result.type === 'forum';
-      case 3: return result.type === 'teaRoom';
+      case 3: return result.type === 'sideRoom';
       default: return true;
     }
   });
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue);
+  };
 
   return (
     <Container maxWidth="lg">
@@ -210,14 +218,14 @@ const SearchResults: React.FC = () => {
         <Paper sx={{ mb: 4 }}>
           <Tabs
             value={activeTab}
-            onChange={(_, newValue) => setActiveTab(newValue)}
+            onChange={handleTabChange}
             variant={isMobile ? "fullWidth" : "standard"}
             sx={{ borderBottom: 1, borderColor: 'divider' }}
           >
             <Tab label="Users" />
             <Tab label="Posts" />
             <Tab label="Forums" />
-            <Tab label="Tea Rooms" />
+            <Tab label="Side Rooms" />
           </Tabs>
         </Paper>
 
@@ -239,12 +247,12 @@ const SearchResults: React.FC = () => {
                 >
                   <ListItemAvatar>
                     {result.type === 'user' ? (
-                      <Avatar src={result.avatar} />
+                      <Avatar src={result.data.profilePic} />
                     ) : (
                       <Avatar>
                         {result.type === 'post' ? <TagIcon /> :
                          result.type === 'forum' ? <ForumIcon /> :
-                         <TeaRoomIcon />}
+                         <SideRoomIcon />}
                       </Avatar>
                     )}
                   </ListItemAvatar>

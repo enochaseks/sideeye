@@ -43,8 +43,9 @@ import { auth, db, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { formatDistanceToNow } from 'date-fns';
-import { User, UserProfile } from '../types';
-import { Link } from 'react-router-dom';
+import { User, UserProfile, SideRoom } from '../types/index';
+import { Link, useParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -70,15 +71,6 @@ interface Forum {
   ownerId: string;
 }
 
-interface TeaRoom {
-  id: string;
-  name: string;
-  description: string;
-  members: string[];
-  memberCount: number;
-  ownerId: string;
-}
-
 interface Message {
   id: string;
   senderId: string;
@@ -88,6 +80,14 @@ interface Message {
   read: boolean;
   senderName: string;
   senderAvatar: string;
+}
+
+interface DeletedItem {
+  id: string;
+  type: 'post' | 'room' | 'forum';
+  content: any;
+  deletedAt: any;
+  scheduledForPermanentDeletion?: any;
 }
 
 function TabPanel(props: TabPanelProps) {
@@ -114,9 +114,11 @@ interface ProfileProps {
   userId?: string;
 }
 
-const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
+const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const { userId: urlUserId } = useParams<{ userId: string }>();
+  const { currentUser, loading: authLoading } = useAuth();
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -125,7 +127,7 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
   const [activeTab, setActiveTab] = useState(0);
   const [posts, setPosts] = useState<Post[]>([]);
   const [forums, setForums] = useState<Forum[]>([]);
-  const [teaRooms, setTeaRooms] = useState<TeaRoom[]>([]);
+  const [sideRooms, setSideRooms] = useState<SideRoom[]>([]);
   const [likedPosts, setLikedPosts] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,9 +139,12 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
-  const [deletedPosts, setDeletedPosts] = useState<any[]>([]);
+  const [deletedItems, setDeletedItems] = useState<DeletedItem[]>([]);
+  const [isSubscribed, setIsSubscribed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const userId = propUserId || auth.currentUser?.uid;
+  
+  // Get the user ID from URL params or current user
+  const userId = urlUserId || currentUser?.uid;
 
   const fetchUserData = useCallback(async () => {
     if (!userId) {
@@ -154,9 +159,9 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
 
       // Fetch user profile
       const userDoc = await getDoc(doc(db, 'users', userId));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setUsername(userData.username || '');
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        setUsername(userData.username || '');
         setName(userData.name || '');
         setEmail(userData.email || '');
         setBio(userData.bio || '');
@@ -167,68 +172,67 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
         setError('User not found');
       }
 
-      // Fetch all data in parallel
-      const [
-        postsSnapshot,
-        forumsSnapshot,
-        teaRoomsSnapshot,
-        likedPostsSnapshot
-      ] = await Promise.all([
-        getDocs(query(
-          collection(db, 'posts'),
-          where('authorId', '==', userId)
-        )),
-        getDocs(query(
-          collection(db, 'forums'),
-          where('members', 'array-contains', userId)
-        )),
-        getDocs(query(
-          collection(db, 'teaRooms'),
-          where('members', 'array-contains', userId)
-        )),
-        getDocs(query(
-          collection(db, 'posts'),
-          where('likes', 'array-contains', userId)
-        ))
-      ]);
+      // Set up real-time listeners for all collections
+      const postsUnsubscribe = onSnapshot(
+        query(collection(db, 'posts'), where('authorId', '==', userId)),
+        (snapshot) => {
+          setPosts(snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as Post[]);
+        }
+      );
 
-      // Update state with all data at once
-      setPosts(postsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        content: doc.data().content || '',
-        authorId: doc.data().authorId || '',
-        timestamp: doc.data().timestamp,
-        likes: doc.data().likes || [],
-        comments: doc.data().comments || 0
-      } as Post)));
+      const forumsUnsubscribe = onSnapshot(
+        query(collection(db, 'forums'), where('members', 'array-contains', userId)),
+        (snapshot) => {
+          setForums(snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as Forum[]);
+        }
+      );
 
-      setForums(forumsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        title: doc.data().title || '',
-        description: doc.data().description || '',
-        members: doc.data().members || [],
-        memberCount: doc.data().members?.length || 0,
-        ownerId: doc.data().ownerId || ''
-      } as Forum)));
+      const sideRoomsUnsubscribe = onSnapshot(
+        query(collection(db, 'sideRooms'), where('members', 'array-contains', userId)),
+        (snapshot) => {
+          setSideRooms(snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as SideRoom[]);
+        }
+      );
 
-      setTeaRooms(teaRoomsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        name: doc.data().name || '',
-        description: doc.data().description || '',
-        members: doc.data().members || [],
-        memberCount: doc.data().members?.length || 0,
-        ownerId: doc.data().ownerId || ''
-      } as TeaRoom)));
+      const likedPostsUnsubscribe = onSnapshot(
+        query(collection(db, 'posts'), where('likes', 'array-contains', userId)),
+        (snapshot) => {
+          setLikedPosts(snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as Post[]);
+        }
+      );
 
-      setLikedPosts(likedPostsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        content: doc.data().content || '',
-        authorId: doc.data().authorId || '',
-        timestamp: doc.data().timestamp,
-        likes: doc.data().likes || [],
-        comments: doc.data().comments || 0
-      } as Post)));
+      const deletedItemsUnsubscribe = onSnapshot(
+        query(collection(db, 'deleted_items'), where('userId', '==', userId)),
+        (snapshot) => {
+          setDeletedItems(snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as DeletedItem[]);
+        }
+      );
 
+      setIsSubscribed(true);
+
+      return () => {
+        postsUnsubscribe();
+        forumsUnsubscribe();
+        sideRoomsUnsubscribe();
+        likedPostsUnsubscribe();
+        deletedItemsUnsubscribe();
+        setIsSubscribed(false);
+      };
     } catch (err) {
       console.error('Error fetching user data:', err);
       setError('Failed to load profile data');
@@ -358,78 +362,49 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
     }
   };
 
-  const fetchDeletedPosts = async () => {
-    if (!userId) return;
-    
-    const deletedQuery = query(
-      collection(db, 'deleted_posts'),
-      where('userId', '==', userId)
-    );
-    const snapshot = await getDocs(deletedQuery);
-    setDeletedPosts(snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      deletedAt: doc.data().deletedAt?.toDate()
-    })));
-  };
-  
-  // Add to useEffect
-  useEffect(() => {
-    if (activeTab === 4) {
-      fetchDeletedPosts();
-    }
-  }, [activeTab]);
-  
-  // Add restore function
-  const handleRestorePost = async (postId: string) => {
+  const handleRestoreItem = async (itemId: string, type: 'post' | 'room' | 'forum') => {
     try {
-      // Get the deleted post
-      const deletedPostRef = doc(db, 'deleted_posts', postId);
-      const deletedPostDoc = await getDoc(deletedPostRef);
+      const deletedItemRef = doc(db, 'deleted_items', itemId);
+      const deletedItemDoc = await getDoc(deletedItemRef);
       
-      if (!deletedPostDoc.exists()) {
-        setError('Post not found in trash');
+      if (!deletedItemDoc.exists()) {
+        setError('Item not found in trash');
         return;
       }
   
-      const deletedPost = deletedPostDoc.data();
+      const deletedItem = deletedItemDoc.data();
+      const targetCollection = type === 'post' ? 'posts' : type === 'room' ? 'sideRooms' : 'forums';
       
-      // Restore to main posts collection
-      await setDoc(doc(db, 'posts', postId), {
-        ...deletedPost,
+      // Restore to main collection
+      await setDoc(doc(db, targetCollection, itemId), {
+        ...deletedItem.content,
         deletedAt: null,
         scheduledForPermanentDeletion: null
       });
   
       // Remove from deleted collection
-      await deleteDoc(deletedPostRef);
+      await deleteDoc(deletedItemRef);
   
       // Update local state
-      setDeletedPosts(prev => prev.filter(p => p.id !== postId));
+      setDeletedItems(prev => prev.filter(item => item.id !== itemId));
       
-      setError('Post restored successfully');
+      setError('Item restored successfully');
     } catch (error) {
-      console.error('Error restoring post:', error);
-      setError('Failed to restore post');
+      console.error('Error restoring item:', error);
+      setError('Failed to restore item');
     }
   };
-  
-  // Add permanent delete function
-  const handlePermanentDelete = async (postId: string) => {
+
+  const handlePermanentDelete = async (itemId: string) => {
     try {
-      // Delete from deleted_posts collection
-      await deleteDoc(doc(db, 'deleted_posts', postId));
-      
-      // Update local state
-      setDeletedPosts(prev => prev.filter(p => p.id !== postId));
-      
-      setError('Post permanently deleted');
+      await deleteDoc(doc(db, 'deleted_items', itemId));
+      setDeletedItems(prev => prev.filter(item => item.id !== itemId));
+      setError('Item permanently deleted');
     } catch (error) {
-      console.error('Error permanently deleting post:', error);
-      setError('Failed to delete post permanently');
+      console.error('Error permanently deleting item:', error);
+      setError('Failed to delete item permanently');
     }
   };
-  
 
   const fetchMessages = async () => {
     if (!auth.currentUser || !userId) return;
@@ -483,10 +458,11 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
         throw new Error('You can only delete your own posts');
       }
 
-      // Move to deleted_posts collection with 24-hour expiration
-      const deletedPostRef = doc(db, 'deleted_posts', postId);
-      await setDoc(deletedPostRef, {
-        ...postData,
+      // Move to deleted_items collection with 24-hour expiration
+      const deletedItemRef = doc(db, 'deleted_items', postId);
+      await setDoc(deletedItemRef, {
+        type: 'post',
+        content: postData,
         deletedAt: serverTimestamp(),
         scheduledForDeletion: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
       });
@@ -627,7 +603,7 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
               >
                 <Tab label="Posts" />
                 <Tab label="Forums" />
-                <Tab label="Tea Rooms" />
+                <Tab label="Side Rooms" />
                 <Tab label="Liked Posts" />
                 <Tab label="Trash" />
               </Tabs>
@@ -664,39 +640,6 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
                 )}
               </TabPanel>
 
-              <TabPanel value={activeTab} index={4}>
-  {deletedPosts.length === 0 ? (
-    <Typography>No deleted posts</Typography>
-  ) : (
-    <List>
-      {deletedPosts.map((post) => (
-        <ListItem key={post.id} divider>
-          <ListItemText
-            primary={post.content}
-            secondary={`Deleted ${formatDistanceToNow(post.deletedAt.toDate())} ago`}
-          />
-          <ListItemSecondaryAction>
-            <Button 
-              variant="outlined"
-              onClick={() => handleRestorePost(post.id)}
-            >
-              Restore
-            </Button>
-            <Button 
-              variant="outlined" 
-              color="error"
-              onClick={() => handlePermanentDelete(post.id)}
-              sx={{ ml: 1 }}
-            >
-              Delete Permanently
-            </Button>
-          </ListItemSecondaryAction>
-        </ListItem>
-      ))}
-    </List>
-  )}
-</TabPanel>
-
               {/* Forums Tab */}
               <TabPanel value={activeTab} index={1}>
                 {forums.length === 0 ? (
@@ -724,13 +667,13 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
                 )}
               </TabPanel>
 
-              {/* Tea Rooms Tab */}
+              {/* Side Rooms Tab */}
               <TabPanel value={activeTab} index={2}>
-                {teaRooms.length === 0 ? (
-                  <Typography>Not a member of any tea rooms yet</Typography>
+                {sideRooms.length === 0 ? (
+                  <Typography>Not a member of any side rooms yet</Typography>
                 ) : (
                   <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-                    {teaRooms.map((room) => (
+                    {sideRooms.map((room) => (
                       <Box key={room.id}>
                         <Card>
                           <CardContent>
@@ -770,6 +713,49 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
                               {post.likes.length}
         </Typography>
                           </IconButton>
+                        </ListItemSecondaryAction>
+                      </ListItem>
+                    ))}
+                  </List>
+                )}
+              </TabPanel>
+
+              {/* Trash Tab */}
+              <TabPanel value={activeTab} index={4}>
+                {deletedItems.length === 0 ? (
+                  <Typography>No deleted items</Typography>
+                ) : (
+                  <List>
+                    {deletedItems.map((item) => (
+                      <ListItem key={item.id} divider>
+                        <ListItemText
+                          primary={
+                            <Box>
+                              <Typography variant="subtitle1">
+                                {item.type === 'post' ? 'Post' : item.type === 'room' ? 'Side Room' : 'Forum'}
+                              </Typography>
+                              <Typography variant="body1">
+                                {item.type === 'post' ? item.content.content : item.content.name}
+                              </Typography>
+                            </Box>
+                          }
+                          secondary={`Deleted ${formatDistanceToNow(item.deletedAt.toDate())} ago`}
+                        />
+                        <ListItemSecondaryAction>
+                          <Button 
+                            variant="outlined"
+                            onClick={() => handleRestoreItem(item.id, item.type)}
+                          >
+                            Restore
+                          </Button>
+                          <Button 
+                            variant="outlined" 
+                            color="error"
+                            onClick={() => handlePermanentDelete(item.id)}
+                            sx={{ ml: 1 }}
+                          >
+                            Delete Permanently
+                          </Button>
                         </ListItemSecondaryAction>
                       </ListItem>
                     ))}
