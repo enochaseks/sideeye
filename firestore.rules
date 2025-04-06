@@ -80,6 +80,39 @@ service cloud.firestore {
       }
     }
 
+    // Messages collection
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (
+        // Allow reading messages where user is sender or receiver
+        resource.data.senderId == request.auth.uid ||
+        resource.data.receiverId == request.auth.uid
+      );
+      
+      allow create: if isAuthenticated() && (
+        // Allow creating messages where user is sender
+        request.resource.data.senderId == request.auth.uid &&
+        // Ensure required fields are present
+        request.resource.data.keys().hasAll(['senderId', 'receiverId', 'content', 'timestamp', 'read']) &&
+        // Ensure read status is false for new messages
+        request.resource.data.read == false
+      );
+      
+      allow update: if isAuthenticated() && (
+        // Allow updating read status
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
+        // Only allow marking messages as read
+        request.resource.data.read == true &&
+        // Only allow receiver to mark messages as read
+        resource.data.receiverId == request.auth.uid
+      );
+      
+      allow delete: if isAuthenticated() && (
+        // Allow sender or receiver to delete messages
+        resource.data.senderId == request.auth.uid ||
+        resource.data.receiverId == request.auth.uid
+      );
+    }
+
     // Posts collection
     match /posts/{postId} {
       allow read: if isAuthenticated();
@@ -104,37 +137,26 @@ service cloud.firestore {
       }
     }
 
-    // SideRooms collection
-    match /sideRooms/{roomId} {
+    // Forums collection
+    match /forums/{forumId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
       allow update: if isAuthenticated() && (
-        isRoomOwner(roomId) || 
-        // Allow members to update specific fields only
-        (isRoomMember(roomId) && (
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['messages', 'liveParticipants', 'isLive', 'activeUsers']) ||
-          // Allow adding/removing members
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['members', 'memberCount'])
-        ))
+        resource.data.ownerId == request.auth.uid ||
+        // Allow members to update certain fields
+        (resource.data.members.hasAny([request.auth.uid]) &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['members', 'memberCount', 'lastActivity']))
       );
-      allow delete: if isAuthenticated() && (
-        isRoomOwner(roomId) ||
-        // Allow deletion if the user is the owner (even if stored as string)
-        (resource.data.owner == request.auth.uid)
-      );
-      
-      // Messages subcollection
-      match /messages/{messageId} {
-        allow read: if isAuthenticated() && isRoomMember(roomId);
-        allow create: if isAuthenticated() && isRoomMember(roomId);
-        allow update: if isAuthenticated() && isRoomMember(roomId);
-        allow delete: if isAuthenticated() && (
-          isRoomOwner(roomId) || 
-          resource.data.userId == request.auth.uid
-        );
-      }
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Side Rooms collection
+    match /sideRooms/{roomId} {
+      allow read: if isAuthenticated() && isRoomMember(roomId);
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && isRoomOwner(roomId);
+      allow delete: if isAuthenticated() && isRoomOwner(roomId);
     }
 
     // Stories collection
@@ -143,30 +165,6 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
-    }
-
-    // Forums collection
-    match /forums/{forumId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && (
-        resource.data.creatorId == request.auth.uid ||
-        // Allow users to update participation-related fields
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['participants', 'participantCount', 'lastActivity'])
-      );
-      allow delete: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
-
-      // Forum posts subcollection
-      match /posts/{postId} {
-        allow read: if isAuthenticated();
-        allow create: if isAuthenticated();
-        allow update: if isAuthenticated() && resource.data.authorId == request.auth.uid;
-        allow delete: if isAuthenticated() && (
-          resource.data.authorId == request.auth.uid ||
-          get(/databases/$(database)/documents/forums/$(forumId)).data.creatorId == request.auth.uid
-        );
-      }
     }
 
     // Chat collection

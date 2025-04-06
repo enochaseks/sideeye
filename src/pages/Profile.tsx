@@ -145,6 +145,10 @@ const Profile: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [followersList, setFollowersList] = useState<UserProfile[]>([]);
   const [followingList, setFollowingList] = useState<UserProfile[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [editedName, setEditedName] = useState('');
+  const [editedBio, setEditedBio] = useState('');
+  const [editedUsername, setEditedUsername] = useState('');
   
   // Get the user ID from URL params or current user
   const userId = urlUserId || currentUser?.uid || '';
@@ -312,6 +316,14 @@ const Profile: React.FC = () => {
     fetchUserLists();
   }, [userId, followers, connections]);
 
+  useEffect(() => {
+    if (userProfile) {
+      setEditedName(userProfile.name || '');
+      setEditedBio(userProfile.bio || '');
+      setEditedUsername(userProfile.username || '');
+    }
+  }, [userProfile]);
+
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentUser || !e.target.files || !e.target.files[0]) return;
 
@@ -357,18 +369,34 @@ const Profile: React.FC = () => {
     }
   };
 
-  const handleSave = async () => {
-    if (!auth.currentUser) return;
+  const handleSaveProfile = async () => {
+    if (!currentUser) return;
 
     try {
-      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-        username,
-        name,
-        bio,
+      setIsLoading(true);
+      const userRef = doc(db, 'users', currentUser.uid);
+      
+      await updateDoc(userRef, {
+        name: editedName,
+        bio: editedBio,
+        username: editedUsername,
+        updatedAt: serverTimestamp()
       });
+
       setIsEditing(false);
+      if (userProfile) {
+        setUserProfile({
+          ...userProfile,
+          name: editedName,
+          bio: editedBio,
+          username: editedUsername
+        });
+      }
     } catch (error) {
       console.error('Error updating profile:', error);
+      setError('Failed to update profile');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -458,7 +486,44 @@ const Profile: React.FC = () => {
     }
   };
 
-  // Update the follow button in the UI
+  // Update the message icon button
+  const renderMessageButton = () => {
+    if (!userId) return null;
+
+    return (
+      <IconButton
+        color="primary"
+        onClick={() => {
+          setShowMessagesDialog(true);
+          // Mark all messages as read when opening dialog
+          messages.forEach(msg => {
+            if (!msg.read) {
+              handleMarkAsRead(msg.id);
+            }
+          });
+        }}
+        sx={{ 
+          border: '1px solid',
+          borderColor: 'primary.main',
+          '&:hover': {
+            backgroundColor: 'primary.light',
+            opacity: 0.8
+          },
+          width: '40px',
+          height: '40px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+      >
+        <Badge badgeContent={unreadCount} color="error">
+          <MessageIcon />
+        </Badge>
+      </IconButton>
+    );
+  };
+
+  // Update the follow button section to include the message button
   const renderFollowButton = () => {
     if (currentUser?.uid === userId || !userId) return null;
 
@@ -480,27 +545,40 @@ const Profile: React.FC = () => {
   };
 
   const handleSendMessage = async () => {
-    if (!auth.currentUser || !newMessage.trim() || !userId) return;
+    if (!currentUser || !userId || !newMessage.trim() || isSending) return;
 
     try {
-      // Get the sender's profile from Firestore
-      const senderProfileDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-      const senderProfile = senderProfileDoc.data() as UserProfile;
-
+      setIsSending(true);
       const messageData = {
-        senderId: auth.currentUser.uid,
+        senderId: currentUser.uid,
         receiverId: userId,
         content: newMessage.trim(),
         timestamp: serverTimestamp(),
         read: false,
-        senderName: auth.currentUser.displayName || 'Anonymous',
-        senderAvatar: senderProfile?.profilePic || '',
+        senderName: currentUser.displayName || 'Anonymous',
+        senderAvatar: userProfile?.profilePic || null
       };
 
       await addDoc(collection(db, 'messages'), messageData);
       setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
+      setError('Failed to send message');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleMarkAsRead = async (messageId: string) => {
+    if (!currentUser) return;
+
+    try {
+      const messageRef = doc(db, 'messages', messageId);
+      await updateDoc(messageRef, {
+        read: true
+      });
+    } catch (error) {
+      console.error('Error marking message as read:', error);
     }
   };
 
@@ -624,6 +702,73 @@ const Profile: React.FC = () => {
     }
   };
 
+  // Update the messages dialog content
+  const renderMessagesDialog = () => (
+    <Dialog
+      open={showMessagesDialog}
+      onClose={() => setShowMessagesDialog(false)}
+      maxWidth="sm"
+      fullWidth
+    >
+      <DialogTitle>
+        {currentUser?.uid === userId ? 'Your Messages' : `Message ${username}`}
+      </DialogTitle>
+      <DialogContent>
+        {currentUser?.uid === userId ? (
+          <List>
+            {messages.map((message) => (
+              <ListItem key={message.id} divider>
+                <ListItemAvatar>
+                  <Avatar src={message.senderAvatar || undefined} />
+                </ListItemAvatar>
+                <ListItemText
+                  primary={message.senderName}
+                  secondary={message.content}
+                />
+                <ListItemSecondaryAction>
+                  <Typography variant="caption" color="text.secondary">
+                    {message.timestamp?.toDate().toLocaleString()}
+                  </Typography>
+                </ListItemSecondaryAction>
+              </ListItem>
+            ))}
+          </List>
+        ) : (
+          <Box sx={{ mt: 2 }}>
+            <TextField
+              fullWidth
+              multiline
+              rows={4}
+              label="Your message"
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              variant="outlined"
+              sx={{ mb: 2 }}
+            />
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                variant="contained"
+                onClick={handleSendMessage}
+                disabled={!newMessage.trim() || isSending}
+                sx={{ 
+                  minWidth: '100px',
+                  '@media (max-width: 600px)': {
+                    width: '100%'
+                  }
+                }}
+              >
+                {isSending ? 'Sending...' : 'Send'}
+              </Button>
+            </Box>
+          </Box>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setShowMessagesDialog(false)}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -691,10 +836,7 @@ const Profile: React.FC = () => {
                   <Typography variant="subtitle1" color="text.secondary">
                     @{username}
                   </Typography>
-                  <Typography variant="body1" sx={{ mt: 1 }}>
-                    {bio}
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                  <Box sx={{ display: 'flex', gap: 2, mb: 2, mt: 2 }}>
                     <Button
                       variant="outlined"
                       onClick={() => setShowConnectionsDialog(true)}
@@ -707,45 +849,154 @@ const Profile: React.FC = () => {
                     >
                       {connections.length} Following
                     </Button>
-                    {renderFollowButton()}
+                  </Box>
+                  <Typography variant="body1" sx={{ mt: 1, mb: 2 }}>
+                    {bio}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                    {currentUser?.uid === userId ? (
+                      <>
+                        <Button
+                          variant="outlined"
+                          startIcon={<EditIcon />}
+                          onClick={() => setIsEditing(true)}
+                          sx={{ 
+                            minWidth: '120px',
+                            borderColor: 'primary.main',
+                            color: 'primary.main',
+                            '&:hover': {
+                              borderColor: 'primary.dark',
+                              color: 'primary.dark'
+                            }
+                          }}
+                        >
+                          Edit Profile
+                        </Button>
+                        {renderMessageButton()}
+                        <IconButton 
+                          component={Link} 
+                          to="/trash"
+                          color="error"
+                          sx={{ 
+                            border: '1px solid',
+                            borderColor: 'error.main',
+                            '&:hover': {
+                              backgroundColor: 'error.light',
+                              opacity: 0.8
+                            }
+                          }}
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </>
+                    ) : (
+                      <>
+                        {renderFollowButton()}
+                        {renderMessageButton()}
+                      </>
+                    )}
                   </Box>
                 </Box>
               </Box>
-              <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2 }}>
-                <Button
-                  variant="contained"
-                  startIcon={<MessageIcon />}
-                  onClick={() => setShowMessagesDialog(true)}
-                >
-                  {currentUser?.uid === userId ? (
-                    <Badge badgeContent={unreadCount} color="error">
-                      Messages
-                    </Badge>
-                  ) : (
-                    'Message'
-                  )}
-                </Button>
-                {currentUser?.uid === userId && (
-                  <>
-                    <Button
-                      variant="outlined"
-                      startIcon={<EditIcon />}
-                      onClick={() => setIsEditing(true)}
-                    >
-                      Edit Profile
-                    </Button>
-                    <IconButton 
-                      component={Link} 
-                      to="/trash"
-                      color="error"
-                    >
-                      <DeleteIcon />
-                    </IconButton>
-                  </>
-                )}
-              </Box>
             </Paper>
           </Box>
+
+          {/* Edit Profile Dialog */}
+          <Dialog 
+            open={isEditing} 
+            onClose={() => setIsEditing(false)}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle>
+              Edit Profile
+            </DialogTitle>
+            <DialogContent>
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                gap: 3,
+                mt: 2
+              }}>
+                <TextField
+                  label="Name"
+                  value={editedName}
+                  onChange={(e) => setEditedName(e.target.value)}
+                  fullWidth
+                  variant="outlined"
+                />
+                <TextField
+                  label="Username"
+                  value={editedUsername}
+                  onChange={(e) => setEditedUsername(e.target.value)}
+                  fullWidth
+                  variant="outlined"
+                  helperText="This will be your unique identifier on the platform"
+                />
+                <TextField
+                  label="Bio"
+                  value={editedBio}
+                  onChange={(e) => setEditedBio(e.target.value)}
+                  multiline
+                  rows={4}
+                  fullWidth
+                  variant="outlined"
+                  helperText="Tell others about yourself (You can use emojis!)"
+                  InputProps={{
+                    endAdornment: (
+                      <IconButton
+                        onClick={() => {
+                          const emoji = window.prompt('Enter an emoji:');
+                          if (emoji) {
+                            setEditedBio(prev => prev + emoji);
+                          }
+                        }}
+                        sx={{ 
+                          color: 'primary.main',
+                          '&:hover': {
+                            color: 'primary.dark'
+                          }
+                        }}
+                      >
+                        <span role="img" aria-label="emoji">😊</span>
+                      </IconButton>
+                    )
+                  }}
+                />
+              </Box>
+            </DialogContent>
+            <DialogActions sx={{ p: 3 }}>
+              <Button
+                variant="outlined"
+                onClick={() => setIsEditing(false)}
+                sx={{ 
+                  minWidth: '120px',
+                  borderColor: 'text.secondary',
+                  color: 'text.secondary',
+                  '&:hover': {
+                    borderColor: 'text.primary',
+                    color: 'text.primary'
+                  }
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="contained"
+                onClick={handleSaveProfile}
+                disabled={isLoading}
+                sx={{ 
+                  minWidth: '120px',
+                  bgcolor: 'primary.main',
+                  '&:hover': {
+                    bgcolor: 'primary.dark'
+                  }
+                }}
+              >
+                {isLoading ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </DialogActions>
+          </Dialog>
 
           {/* Main Content */}
           <Box>
@@ -760,7 +1011,7 @@ const Profile: React.FC = () => {
                 <Tab label="Forums" />
                 <Tab label="Side Rooms" />
                 <Tab label="Liked Posts" />
-                {auth.currentUser?.uid === userId && <Tab label="Deleted Items" />}
+                {currentUser?.uid === userId && <Tab label="Deleted Items" />}
               </Tabs>
 
               {/* Posts Tab */}
@@ -876,7 +1127,7 @@ const Profile: React.FC = () => {
               </TabPanel>
 
               {/* Deleted Items Tab */}
-              {auth.currentUser?.uid === userId && (
+              {currentUser?.uid === userId && (
                 <TabPanel value={activeTab} index={4}>
                   {deletedItems.length === 0 ? (
                     <Typography>No deleted items</Typography>
@@ -923,174 +1174,7 @@ const Profile: React.FC = () => {
           </Box>
         </Box>
       </Box>
-
-      {/* Edit Profile Dialog */}
-      {isEditing && (
-        <Dialog open={isEditing} onClose={() => setIsEditing(false)} maxWidth="sm" fullWidth>
-          <DialogTitle>Edit Profile</DialogTitle>
-          <DialogContent>
-              <TextField
-                fullWidth
-                label="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                margin="normal"
-              />
-            <TextField
-              fullWidth
-              label="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              margin="normal"
-            />
-            <TextField
-              fullWidth
-              label="Bio"
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              margin="normal"
-              multiline
-              rows={4}
-              />
-              <TextField
-                fullWidth
-                label="Email"
-                value={email}
-                disabled
-                margin="normal"
-              />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setIsEditing(false)}>Cancel</Button>
-                <Button variant="contained" onClick={handleSave}>
-                  Save
-                </Button>
-          </DialogActions>
-        </Dialog>
-      )}
-
-      {/* Connections Dialog */}
-      <Dialog
-        open={showConnectionsDialog}
-        onClose={() => setShowConnectionsDialog(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Connections</DialogTitle>
-        <DialogContent>
-          <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-            <Tab label={`Following (${followingList.length})`} />
-            <Tab label={`Followers (${followersList.length})`} />
-          </Tabs>
-          <Box sx={{ mt: 2 }}>
-            {activeTab === 0 && (
-              <List>
-                {followingList.map((user) => (
-                  <ListItem key={user.uid}>
-                    <ListItemAvatar>
-                      <Avatar src={user.profilePic} />
-                    </ListItemAvatar>
-                    <ListItemText
-                      primary={user.name}
-                      secondary={`@${user.username}`}
-                    />
-                    {currentUser?.uid === userId && (
-                      <ListItemSecondaryAction>
-                        <IconButton onClick={() => handleUnfollow(user.uid)}>
-                          <PersonRemoveIcon />
-                        </IconButton>
-                      </ListItemSecondaryAction>
-                    )}
-                  </ListItem>
-                ))}
-              </List>
-            )}
-            {activeTab === 1 && (
-              <List>
-                {followersList.map((user) => (
-                  <ListItem key={user.uid}>
-                    <ListItemAvatar>
-                      <Avatar src={user.profilePic} />
-                    </ListItemAvatar>
-                    <ListItemText
-                      primary={user.name}
-                      secondary={`@${user.username}`}
-                    />
-                    {currentUser?.uid === userId && !connections.includes(user.uid) && (
-                      <ListItemSecondaryAction>
-                        <IconButton onClick={() => handleFollow()}>
-                          <PersonAddIcon />
-                        </IconButton>
-                      </ListItemSecondaryAction>
-                    )}
-                  </ListItem>
-                ))}
-              </List>
-            )}
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowConnectionsDialog(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Messages Dialog */}
-      <Dialog
-        open={showMessagesDialog}
-        onClose={() => setShowMessagesDialog(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          {auth.currentUser?.uid === userId ? 'Your Messages' : `Message ${username}`}
-        </DialogTitle>
-        <DialogContent>
-          {auth.currentUser?.uid === userId ? (
-            <List>
-              {messages.map((message) => (
-                <ListItem key={message.id}>
-                  <ListItemAvatar>
-                    <Avatar src={message.senderAvatar} />
-                  </ListItemAvatar>
-                  <ListItemText
-                    primary={message.senderName}
-                    secondary={message.content}
-                  />
-                  <ListItemSecondaryAction>
-                    <Typography variant="caption" color="text.secondary">
-                      {message.timestamp?.toDate().toLocaleString()}
-                    </Typography>
-                  </ListItemSecondaryAction>
-                </ListItem>
-              ))}
-            </List>
-          ) : (
-            <Box sx={{ mt: 2 }}>
-              <TextField
-                fullWidth
-                multiline
-                rows={4}
-                label="Your message"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                variant="outlined"
-              />
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowMessagesDialog(false)}>Close</Button>
-          {auth.currentUser?.uid !== userId && (
-              <Button
-                variant="contained"
-              onClick={handleSendMessage}
-              disabled={!newMessage.trim()}
-              >
-              Send
-              </Button>
-          )}
-        </DialogActions>
-      </Dialog>
+      {renderMessagesDialog()}
     </Container>
   );
 };
