@@ -7,6 +7,7 @@ interface ModerationResult {
   warningLevel: 'none' | 'low' | 'medium' | 'high';
 }
 
+// Expanded patterns for harmful content
 const HARMFUL_PATTERNS = [
   /kill\s+yourself/i,
   /you\s+should\s+die/i,
@@ -20,17 +21,53 @@ const HARMFUL_PATTERNS = [
   /you're\s+a\s+loser/i,
 ];
 
+// Expanded warning words
 const WARNING_WORDS = [
-  'hate',
-  'kill',
-  'die',
-  'stupid',
-  'ugly',
-  'worthless',
-  'pathetic',
-  'loser',
-  'idiot',
-  'moron',
+  'hate', 'kill', 'die', 'stupid', 'ugly', 'worthless', 'pathetic', 'loser', 'idiot', 'moron',
+];
+
+// New patterns for misinformation detection
+const MISINFORMATION_PATTERNS = [
+  /covid\s+vaccine\s+causes\s+(autism|cancer)/i,
+  /5g\s+causes\s+(cancer|covid)/i,
+  /flat\s+earth/i,
+  /moon\s+landing\s+hoax/i,
+  /climate\s+change\s+hoax/i,
+  /vaccines\s+cause\s+autism/i,
+  /government\s+cover\s+up/i,
+  /secret\s+society/i,
+  /illuminati/i,
+  /deep\s+state/i,
+];
+
+// Patterns for fraudulent activities
+const FRAUD_PATTERNS = [
+  /send\s+money/i,
+  /bitcoin\s+investment/i,
+  /crypto\s+investment/i,
+  /get\s+rich\s+quick/i,
+  /earn\s+money\s+fast/i,
+  /work\s+from\s+home\s+scam/i,
+  /lottery\s+winner/i,
+  /inheritance\s+scam/i,
+  /prince\s+scam/i,
+  /bank\s+account\s+details/i,
+  /credit\s+card\s+number/i,
+  /social\s+security\s+number/i,
+];
+
+// Patterns for cybercrime
+const CYBERCRIME_PATTERNS = [
+  /hack\s+account/i,
+  /password\s+stealing/i,
+  /phishing\s+link/i,
+  /malware/i,
+  /ransomware/i,
+  /ddos\s+attack/i,
+  /botnet/i,
+  /exploit/i,
+  /bypass\s+security/i,
+  /crack\s+password/i,
 ];
 
 export const moderateContent = async (
@@ -44,6 +81,30 @@ export const moderateContent = async (
   for (const pattern of HARMFUL_PATTERNS) {
     if (pattern.test(content)) {
       violations.push('Harmful content detected');
+      warningLevel = 'high';
+    }
+  }
+
+  // Check for misinformation
+  for (const pattern of MISINFORMATION_PATTERNS) {
+    if (pattern.test(content)) {
+      violations.push('Potential misinformation detected');
+      warningLevel = 'medium';
+    }
+  }
+
+  // Check for fraudulent activities
+  for (const pattern of FRAUD_PATTERNS) {
+    if (pattern.test(content)) {
+      violations.push('Potential fraudulent activity detected');
+      warningLevel = 'high';
+    }
+  }
+
+  // Check for cybercrime
+  for (const pattern of CYBERCRIME_PATTERNS) {
+    if (pattern.test(content)) {
+      violations.push('Potential cybercrime detected');
       warningLevel = 'high';
     }
   }
@@ -101,6 +162,9 @@ export const getModerationGuidelines = () => ({
     'Be respectful and kind to others',
     'No hate speech or harassment',
     'No threats or violent content',
+    'No spreading of misinformation',
+    'No fraudulent activities or scams',
+    'No cybercrime or hacking attempts',
     'Keep it fun and lighthearted',
     'Report inappropriate content',
     'Respect different opinions',

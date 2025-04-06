@@ -9,28 +9,42 @@ service cloud.firestore {
       allow update, delete: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Allow users to read and write their own posts
+    // Allow users to read and write posts
     match /posts/{postId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && 
-        request.resource.data.userId == request.auth.uid &&
-        request.resource.data.author.name is string &&
-        request.resource.data.author.avatar is string &&
-        request.resource.data.author.username is string &&
-        request.resource.data.author.isVerified is bool &&
-        request.resource.data.content is string &&
-        request.resource.data.timestamp is timestamp &&
-        request.resource.data.likes is number &&
-        request.resource.data.comments is number &&
-        request.resource.data.likedBy is list;
-      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // Allow users to read and write their own comments
+    // Allow users to manage reposts
+    match /reposts/{repostId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.reposterId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.reposterId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.reposterId == request.auth.uid;
+    }
+
+    // Allow users to manage deleted posts
+    match /deleted_posts/{postId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Allow users to read and write comments
     match /comments/{commentId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null;
+    }
+
+    // Allow users to read and write notifications
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null;
     }
 
     // Allow users to read and write trending topics
@@ -43,29 +57,23 @@ service cloud.firestore {
     match /forums/{forumId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
-      allow update: if request.auth != null && (
-        resource.data.members.hasAny([request.auth.uid]) || 
-        resource.data.ownerId == request.auth.uid
-      );
-      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null;
     }
 
     // Allow users to read tea rooms and join them
     match /teaRooms/{roomId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
-      allow update: if request.auth != null && (
-        resource.data.members.hasAny([request.auth.uid]) || 
-        resource.data.ownerId == request.auth.uid
-      );
-      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null;
     }
 
     // Allow users to read and create stories
     match /stories/{storyId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null;
     }
 
     // Default deny all other access

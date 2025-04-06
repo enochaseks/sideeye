@@ -1,31 +1,61 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Box, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Paper, Chip } from '@mui/material';
+import { Container, Box, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Paper, Chip, CircularProgress, Snackbar, Alert } from '@mui/material';
 import Post from '../components/Post';
 import CreatePost from '../components/CreatePost';
 import Stories from '../components/Stories';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, setDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, setDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { onAuthStateChanged } from 'firebase/auth';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from '../services/firebase';
-import { User, UserProfile } from '../types';
+import { UserProfile } from '../types';
+import { Send as SendIcon } from '@mui/icons-material';
+import { useNavigate } from 'react-router-dom';
+
+interface UserData {
+  name: string;
+  avatar: string;
+  username: string;
+  isVerified: boolean;
+}
 
 interface PostData {
   id: string;
-  author: {
-    name: string;
-    avatar: string;
-    username: string;
-    isVerified: boolean;
-  };
   content: string;
-  timestamp: Date;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  timestamp: any;
   likes: number;
-  comments: number;
   likedBy: string[];
+  comments: Comment[];
+  commentCount: number;
   imageUrl?: string;
-  tags?: string[];
+  userId: string;
+  tags: string[];
+  location?: string;
+  isPrivate: boolean;
+  isPinned: boolean;
+  isEdited: boolean;
+  lastEdited?: any;
+  reposts: number;
+  views: number;
+  isArchived: boolean;
+}
+
+interface Comment {
+  id: string;
+  content: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  timestamp: any;
+  likes: number;
+  likedBy: string[];
+  isEdited: boolean;
+  lastEdited?: any;
+  replies?: Comment[];
 }
 
 interface TrendingTopic {
@@ -40,7 +70,7 @@ const HomePage: React.FC = () => {
   const [trendingTopics, setTrendingTopics] = useState<TrendingTopic[]>([]);
   const [loading, setLoading] = useState(true);
   const [commentDialogOpen, setCommentDialogOpen] = useState(false);
-  const [selectedPost, setSelectedPost] = useState<PostData | null>(null);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [newPostContent, setNewPostContent] = useState('');
@@ -48,10 +78,16 @@ const HomePage: React.FC = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const navigate = useNavigate();
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        console.log('Auth state changed - User logged in:', user);
         // Get user profile
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
@@ -60,7 +96,7 @@ const HomePage: React.FC = () => {
           setUserProfile(userData as UserProfile);
         } else {
           // Create user profile if it doesn't exist
-          const newUserProfile: UserProfile = {
+          const newUserProfile = {
             uid: user.uid,
             email: user.email || '',
             name: user.displayName || 'Anonymous',
@@ -68,17 +104,21 @@ const HomePage: React.FC = () => {
             avatar: user.photoURL || '',
             profilePic: user.photoURL || '',
             bio: '',
-            isVerified: false,
+            isVerified: user.emailVerified || false,
             followers: 0,
             following: 0,
             posts: 0,
-            createdAt: serverTimestamp()
+            createdAt: new Date()
           };
-          await setDoc(doc(db, 'users', user.uid), newUserProfile);
+          await setDoc(doc(db, 'users', user.uid), {
+            ...newUserProfile,
+            createdAt: serverTimestamp()
+          });
           console.log('Created new user profile:', newUserProfile);
-          setUserProfile(newUserProfile);
+          setUserProfile(newUserProfile as UserProfile);
         }
       } else {
+        console.log('Auth state changed - No user');
         setUserProfile(null);
       }
     });
@@ -105,11 +145,18 @@ const HomePage: React.FC = () => {
       orderBy('timestamp', 'desc')
     );
     const unsubscribePosts = onSnapshot(postsQuery, (snapshot) => {
-      const newPosts = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toDate() || new Date(),
-      })) as PostData[];
+      const newPosts = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          timestamp: data.timestamp?.toDate() || new Date(),
+          comments: (data.comments || []).map((comment: any) => ({
+            ...comment,
+            timestamp: comment.timestamp?.toDate() || new Date()
+          }))
+        } as PostData;
+      });
       setPosts(newPosts);
       setLoading(false);
     });
@@ -141,83 +188,69 @@ const HomePage: React.FC = () => {
     return cleanup;
   }, [setupListeners]);
 
-  const handleCreatePost = async () => {
+  const handleCreatePost = async (content: string, imageFile?: File) => {
     if (!currentUser || !userProfile) {
-      setError('You must be logged in to create a post');
+      console.error('User not authenticated or profile not loaded');
       return;
     }
-
-    if (!newPostContent.trim() && !selectedImage) {
-      setError('Please add some content or an image to your post');
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
 
     try {
-      let imageUrl = null;
-      if (selectedImage) {
-        const storageRef = ref(storage, `posts/${currentUser.uid}/${Date.now()}_${selectedImage.name}`);
-        await uploadBytes(storageRef, selectedImage);
-        imageUrl = await getDownloadURL(storageRef);
+      let imageUrl = '';
+      
+      // Upload image if provided
+      if (imageFile) {
+        const imageRef = ref(storage, `posts/${currentUser.uid}/${Date.now()}_${imageFile.name}`);
+        await uploadBytes(imageRef, imageFile);
+        imageUrl = await getDownloadURL(imageRef);
       }
 
-      const postData = {
-        userId: currentUser.uid,
-        author: {
-          name: userProfile.name,
-          avatar: userProfile.avatar,
-          username: userProfile.username,
-          isVerified: userProfile.isVerified,
-        },
-        content: newPostContent.trim(),
-        imageUrl,
-        timestamp: serverTimestamp(),
+      const tags = content.match(/#[a-zA-Z0-9_]+/g)?.map(tag => tag.slice(1)) || [];
+      
+      const newPost: Omit<PostData, 'id'> = {
+        authorId: currentUser.uid,
+        authorName: userProfile?.name || currentUser?.displayName || 'Anonymous',
+        authorAvatar: userProfile?.profilePic || currentUser?.photoURL || 'https://ui-avatars.com/api/?name=Anonymous&background=random',
+        content,
+        timestamp: new Date(),
         likes: 0,
-        comments: 0,
         likedBy: [],
-        tags: newPostContent.match(/#[a-zA-Z0-9_]+/g)?.map(tag => tag.slice(1)) || [],
+        comments: [],
+        commentCount: 0,
+        tags,
+        reposts: 0,
+        userId: currentUser.uid,
+        isPrivate: false,
+        isPinned: false,
+        isEdited: false,
+        views: 0,
+        isArchived: false
       };
 
-      console.log('Creating post with data:', JSON.stringify(postData, null, 2));
-
-      // First create the post
-      const postRef = await addDoc(collection(db, 'posts'), postData);
-
-      // Then update user's post count
-      await updateDoc(doc(db, 'users', currentUser.uid), {
-        posts: increment(1),
-      });
-
-      // Update trending topics
-      if (postData.tags.length > 0) {
-        for (const tag of postData.tags) {
-          const tagRef = doc(db, 'trending', tag);
-          const tagDoc = await getDoc(tagRef);
-          if (tagDoc.exists()) {
-            await updateDoc(tagRef, {
-              count: increment(1),
-              lastUpdated: serverTimestamp(),
-            });
-          } else {
-            await setDoc(tagRef, {
-              tag: tag,
-              count: 1,
-              lastUpdated: serverTimestamp(),
-            });
-          }
-        }
+      if (imageUrl) {
+        newPost.imageUrl = imageUrl;
       }
 
-      setNewPostContent('');
-      setSelectedImage(null);
-      setImagePreview(null);
-    } catch (err) {
-      console.error('Error creating post:', err);
-      setError('Failed to create post. Please try again.');
-    } finally {
-      setIsLoading(false);
+      // Add post to Firestore
+      const postRef = await addDoc(collection(db, 'posts'), {
+        ...newPost,
+        timestamp: serverTimestamp()
+      });
+
+      // Update local state with the new post
+      setPosts(prevPosts => [{
+        ...newPost,
+        id: postRef.id,
+        timestamp: new Date()
+      }, ...prevPosts]);
+
+      // Update user's post count
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        postCount: increment(1)
+      });
+
+      console.log('Post created successfully');
+    } catch (error) {
+      console.error('Error creating post:', error);
     }
   };
 
@@ -226,17 +259,26 @@ const HomePage: React.FC = () => {
 
     try {
       const postRef = doc(db, 'posts', postId);
-      const post = posts.find(p => p.id === postId);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) {
+        throw new Error('Post not found');
+      }
 
-      if (post?.likedBy.includes(currentUser.uid)) {
+      const postData = postDoc.data();
+      const isLiked = postData.likedBy?.includes(currentUser.uid) || false;
+
+      if (isLiked) {
+        // Unlike
         await updateDoc(postRef, {
-          likes: post.likes - 1,
-          likedBy: arrayRemove(currentUser.uid),
+          likes: increment(-1),
+          likedBy: arrayRemove(currentUser.uid)
         });
       } else {
+        // Like
         await updateDoc(postRef, {
-          likes: (post?.likes || 0) + 1,
-          likedBy: arrayUnion(currentUser.uid),
+          likes: increment(1),
+          likedBy: arrayUnion(currentUser.uid)
         });
       }
     } catch (error) {
@@ -244,60 +286,458 @@ const HomePage: React.FC = () => {
     }
   };
 
-  const handleComment = (postId: string) => {
-    const post = posts.find(p => p.id === postId);
-    if (post) {
-      setSelectedPost(post);
-      setCommentDialogOpen(true);
-    }
-  };
-
-  const handleCommentSubmit = async () => {
-    if (!currentUser || !selectedPost) return;
-
+  const handleComment = async (postId: string, content: string): Promise<void> => {
+    if (!currentUser || !userProfile) return;
+    
     try {
-      const postRef = doc(db, 'posts', selectedPost.id);
+      const postRef = doc(db, 'posts', postId);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) {
+        console.error('Post not found');
+        return;
+      }
+
+      const newComment: Comment = {
+        id: Date.now().toString(),
+        content,
+        authorId: currentUser.uid,
+        authorName: userProfile.name || currentUser.displayName || 'Anonymous',
+        authorAvatar: userProfile.profilePic || currentUser.photoURL || '',
+        timestamp: new Date(),
+        likes: 0,
+        likedBy: [],
+        isEdited: false
+      };
+
       await updateDoc(postRef, {
-        comments: selectedPost.comments + 1,
+        comments: arrayUnion(newComment)
       });
 
-      await addDoc(collection(db, 'comments'), {
-        postId: selectedPost.id,
-        author: {
-          name: currentUser.displayName || 'Anonymous',
-          avatar: currentUser.photoURL || '',
-          username: currentUser.email?.split('@')[0] || 'anonymous',
-        },
-        content: commentText,
-        timestamp: serverTimestamp(),
-      });
-
-      setCommentDialogOpen(false);
-      setCommentText('');
+      setPosts((prev: PostData[]) => prev.map((post: PostData) => {
+        if (post.id === postId) {
+          const updatedPost: PostData = {
+            ...post,
+            comments: [...post.comments, newComment]
+          };
+          return updatedPost;
+        }
+        return post;
+      }));
     } catch (error) {
       console.error('Error adding comment:', error);
     }
   };
 
+  const handleCommentSubmit = async () => {
+    if (!currentUser || !selectedPostId || !commentText.trim()) {
+      setError('Please enter a comment');
+      return;
+    }
+
+    try {
+      const postRef = doc(db, 'posts', selectedPostId);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) {
+        setError('Post not found');
+        return;
+      }
+
+      const postData = postDoc.data();
+      
+      // Create comment with all required fields from Comment interface
+      const commentData: Comment = {
+        id: Date.now().toString(),
+        content: commentText.trim(),
+        authorId: currentUser.uid,
+        authorName: userProfile?.name || currentUser.displayName || 'Anonymous',
+        authorAvatar: userProfile?.profilePic || currentUser.photoURL || '',
+        timestamp: new Date(),
+        likes: 0,
+        likedBy: [],
+        isEdited: false
+      };
+
+      // Add comment to post
+      await updateDoc(postRef, {
+        comments: arrayUnion(commentData)
+      });
+
+      // Create notification for post author if not the commenter
+      if (postData.userId !== currentUser.uid) {
+        await addDoc(collection(db, 'notifications'), {
+          type: 'comment',
+          senderId: currentUser.uid,
+          receiverId: postData.userId,
+          postId: selectedPostId,
+          content: `${currentUser.displayName || 'Someone'} commented on your post`,
+          timestamp: serverTimestamp(),
+          read: false
+        });
+      }
+
+      // Update local state
+      setPosts(prev => prev.map(post => {
+        if (post.id === selectedPostId) {
+          return {
+            ...post,
+            comments: [...post.comments, commentData]
+          };
+        }
+        return post;
+      }));
+
+      setCommentText('');
+      setCommentDialogOpen(false);
+      setSuccess('Comment added successfully');
+    } catch (error) {
+      console.error('Error adding comment:', error);
+      setError('Failed to add comment');
+    }
+  };
+
   const handleShare = async (postId: string) => {
-    // Implement share functionality
-    console.log('Sharing post:', postId);
+    if (!currentUser || !userProfile) {
+      console.error('User not authenticated or profile not loaded');
+      return;
+    }
+
+    try {
+      const post = posts.find(p => p.id === postId);
+      if (!post) {
+        throw new Error('Post not found');
+      }
+
+      // Check if user has already reposted this post
+      const repostQuery = query(
+        collection(db, 'reposts'),
+        where('originalPostId', '==', postId),
+        where('reposterId', '==', currentUser.uid)
+      );
+      const repostSnapshot = await getDocs(repostQuery);
+      
+      if (!repostSnapshot.empty) {
+        throw new Error('You have already reposted this post');
+      }
+
+      // Create a repost record
+      const repostData = {
+        originalPostId: postId,
+        reposterId: currentUser.uid,
+        reposterName: userProfile.name,
+        reposterUsername: userProfile.username,
+        reposterAvatar: userProfile.profilePic,
+        timestamp: serverTimestamp()
+      };
+
+      // Add repost to Firestore
+      await addDoc(collection(db, 'reposts'), repostData);
+
+      // Update the original post's repost count
+      const postRef = doc(db, 'posts', postId);
+      await updateDoc(postRef, {
+        reposts: increment(1)
+      });
+
+      // Create repost notification
+      if (post.userId !== currentUser.uid) {
+        const notificationRef = doc(db, 'notifications', `${post.userId}_${postId}_repost`);
+        await setDoc(notificationRef, {
+          type: 'repost',
+          postId,
+          fromUser: {
+            name: userProfile.name,
+            username: userProfile.username,
+            avatar: userProfile.profilePic
+          },
+          timestamp: serverTimestamp(),
+          read: false
+        });
+      }
+
+      // Update local state
+      setPosts(prevPosts => prevPosts.map(p => {
+        if (p.id === postId) {
+          return {
+            ...p,
+            reposts: (p.reposts || 0) + 1
+          };
+        }
+        return p;
+      }));
+
+      console.log('Post reposted successfully');
+    } catch (error) {
+      console.error('Error sharing post:', error);
+    }
   };
 
   const handleDeletePost = async (postId: string) => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      console.error('User not authenticated');
+      return;
+    }
 
     try {
+      // Create a reference to the post document
       const postRef = doc(db, 'posts', postId);
-      const post = posts.find(p => p.id === postId);
-
-      if (post?.author.username === currentUser.email?.split('@')[0]) {
-        await deleteDoc(postRef);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) {
+        throw new Error('Post not found');
       }
+
+      const postData = postDoc.data() as PostData;
+      
+      // Verify the current user is the owner of the post
+      if (postData.userId !== currentUser.uid) {
+        throw new Error('You can only delete your own posts');
+      }
+
+      // Create a reference to the deleted_posts collection
+      const deletedPostRef = doc(db, 'deleted_posts', postId);
+      
+      // Copy the post to the deleted_posts collection with all necessary properties
+      // Ensure no undefined values are passed
+      const deletedPostData = {
+        id: postId,
+        content: postData.content || '',
+        authorId: postData.authorId || '',
+        authorName: postData.authorName || 'Anonymous',
+        authorAvatar: postData.authorAvatar || '',
+        timestamp: postData.timestamp || serverTimestamp(),
+        likes: postData.likes || 0,
+        likedBy: postData.likedBy || [],
+        comments: postData.comments || [],
+        commentCount: postData.comments?.length || 0,
+        imageUrl: postData.imageUrl || null,
+        userId: postData.userId || currentUser.uid,
+        tags: postData.tags || [],
+        location: postData.location || null,
+        isPrivate: postData.isPrivate || false,
+        isPinned: postData.isPinned || false,
+        isEdited: postData.isEdited || false,
+        lastEdited: postData.lastEdited || null,
+        reposts: postData.reposts || 0,
+        views: postData.views || 0,
+        isArchived: postData.isArchived || false,
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+        scheduledForDeletion: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
+      };
+
+      await setDoc(deletedPostRef, deletedPostData);
+
+      // Delete the original post
+      await deleteDoc(postRef);
+
+      // Delete the associated image if it exists
+      if (postData.imageUrl) {
+        const imageRef = ref(storage, postData.imageUrl);
+        await deleteObject(imageRef).catch(error => {
+          console.error('Error deleting image:', error);
+        });
+      }
+
+      // Update the user's post count
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
+        postCount: increment(-1)
+      });
+
+      // Update local state
+      setPosts(prevPosts => prevPosts.filter(post => post.id !== postId));
+      
+      console.log('Post moved to trash. It will be permanently deleted after 24 hours.');
     } catch (error) {
       console.error('Error deleting post:', error);
     }
   };
+
+  // Add cleanup function
+  const cleanupOldPosts = async () => {
+    if (!currentUser) return;
+    
+    try {
+      const postsRef = collection(db, 'posts');
+      const q = query(
+        postsRef,
+        where('userId', '==', currentUser.uid),
+        orderBy('timestamp', 'desc')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const postsToDelete: string[] = [];
+      
+      querySnapshot.forEach((doc) => {
+        const postData = doc.data();
+        const postDate = postData.timestamp.toDate();
+        const now = new Date();
+        const diffInDays = Math.floor((now.getTime() - postDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        // Delete posts older than 30 days
+        if (diffInDays > 30) {
+          postsToDelete.push(doc.id);
+        }
+      });
+      
+      // Delete posts in batches to avoid overwhelming Firestore
+      const batch = writeBatch(db);
+      for (const postId of postsToDelete) {
+        const postRef = doc(db, 'posts', postId);
+        batch.delete(postRef);
+      }
+      
+      if (postsToDelete.length > 0) {
+        await batch.commit();
+        console.log(`Successfully deleted ${postsToDelete.length} old posts`);
+      }
+    } catch (error) {
+      console.error('Error cleaning up old posts:', error);
+    }
+  };
+
+  const clearCacheAndRefresh = async () => {
+    try {
+      // Clear the posts state
+      setPosts([]);
+      
+      // Force a fresh fetch of posts
+      const postsRef = collection(db, 'posts');
+      const q = query(
+        postsRef,
+        where('userId', '==', currentUser?.uid),
+        limit(50)
+      );
+
+      // Get fresh data from server
+      const querySnapshot = await getDocs(q);
+      
+      const fetchedPosts: PostData[] = [];
+      for (const postDoc of querySnapshot.docs) {
+        const postData = postDoc.data();
+        const authorDocRef = doc(db, 'users', postData.userId);
+        const authorDoc = await getDoc(authorDocRef);
+        const authorData = authorDoc.data() as UserData;
+
+        if (authorData) {
+          fetchedPosts.push({
+            id: postDoc.id,
+            content: postData.content,
+            authorId: postData.userId,
+            authorName: authorData.name || 'Unknown User',
+            authorAvatar: authorData.avatar || '',
+            timestamp: postData.timestamp,
+            likes: postData.likes || 0,
+            likedBy: postData.likedBy || [],
+            comments: postData.comments || [],
+            commentCount: postData.commentCount || 0,
+            imageUrl: postData.imageUrl || null,
+            userId: postData.userId,
+            tags: postData.tags || [],
+            location: postData.location || null,
+            isPrivate: postData.isPrivate || false,
+            isPinned: postData.isPinned || false,
+            isEdited: postData.isEdited || false,
+            lastEdited: postData.lastEdited || null,
+            reposts: postData.reposts || 0,
+            views: postData.views || 0,
+            isArchived: postData.isArchived || false
+          });
+        }
+      }
+
+      // Sort posts by timestamp in memory
+      fetchedPosts.sort((a, b) => {
+        const dateA = a.timestamp?.toDate?.() || new Date(0);
+        const dateB = b.timestamp?.toDate?.() || new Date(0);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      setPosts(fetchedPosts);
+      console.log('Cache cleared and data refreshed successfully');
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+    }
+  };
+
+  useEffect(() => {
+    const fetchPosts = async () => {
+      if (!currentUser) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+
+        // First, clean up old posts
+        await cleanupOldPosts();
+
+        // Then fetch current posts
+        const postsRef = collection(db, 'posts');
+        const q = query(
+          postsRef,
+          where('userId', '==', currentUser.uid),
+          limit(50)
+        );
+
+        const querySnapshot = await getDocs(q);
+        const fetchedPosts: PostData[] = [];
+
+        for (const postDoc of querySnapshot.docs) {
+          const postData = postDoc.data();
+          const authorDocRef = doc(db, 'users', postData.userId);
+          const authorDoc = await getDoc(authorDocRef);
+          const authorData = authorDoc.data() as UserData;
+
+          if (authorData) {
+            fetchedPosts.push({
+              id: postDoc.id,
+              content: postData.content,
+              authorId: postData.userId,
+              authorName: authorData.name || 'Unknown User',
+              authorAvatar: authorData.avatar || '',
+              timestamp: postData.timestamp,
+              likes: postData.likes || 0,
+              likedBy: postData.likedBy || [],
+              comments: postData.comments || [],
+              commentCount: postData.commentCount || 0,
+              imageUrl: postData.imageUrl || null,
+              userId: postData.userId,
+              tags: postData.tags || [],
+              location: postData.location || null,
+              isPrivate: postData.isPrivate || false,
+              isPinned: postData.isPinned || false,
+              isEdited: postData.isEdited || false,
+              lastEdited: postData.lastEdited || null,
+              reposts: postData.reposts || 0,
+              views: postData.views || 0,
+              isArchived: postData.isArchived || false
+            });
+          }
+        }
+
+        // Sort posts by timestamp in memory
+        fetchedPosts.sort((a, b) => {
+          const dateA = a.timestamp?.toDate?.() || new Date(0);
+          const dateB = b.timestamp?.toDate?.() || new Date(0);
+          return dateB.getTime() - dateA.getTime();
+        });
+
+        setPosts(fetchedPosts);
+      } catch (err) {
+        console.error('Error fetching posts:', err);
+        setError('Failed to load posts. Please try again later.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPosts();
+  }, [currentUser]);
 
   if (!currentUser) {
     return (
@@ -313,66 +753,91 @@ const HomePage: React.FC = () => {
 
   return (
     <Container maxWidth="md">
-      <Box sx={{ mt: 4 }}>
+      <Box sx={{ py: 4 }}>
         <Stories />
         
-        {/* Trending Topics Section */}
-        {trendingTopics.length > 0 && (
-          <Paper sx={{ p: 2, mb: 3, borderRadius: 2 }}>
-            <Typography variant="h6" sx={{ mb: 2 }}>
-              Trending Topics
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-              {trendingTopics.map((topic) => (
-                <Chip
-                  key={topic.tag}
-                  label={`#${topic.tag} (${topic.count})`}
-                  onClick={() => {
-                    setPosts(topic.posts);
-                  }}
-                  sx={{ cursor: 'pointer' }}
-                />
-              ))}
-            </Box>
-          </Paper>
-        )}
-
         {currentUser && userProfile && (
           <CreatePost
             user={{
               name: userProfile?.name || currentUser?.displayName || 'Anonymous',
               avatar: userProfile?.profilePic || currentUser?.photoURL || '',
+              username: userProfile?.username || currentUser?.email?.split('@')[0] || 'anonymous',
+              isVerified: userProfile?.isVerified || false
             }}
             onSubmit={handleCreatePost}
           />
         )}
         
-        {loading ? (
-          <Typography>Loading posts...</Typography>
-        ) : posts.length === 0 ? (
-          <Typography>No posts yet. Be the first to post!</Typography>
-        ) : (
-          posts.map((post) => (
-            <Post
-              key={post.id}
-              {...post}
-              isLiked={post.likedBy.includes(currentUser?.uid || '')}
-              onLike={handleLike}
-              onComment={handleComment}
-              onShare={handleShare}
-              onDelete={handleDeletePost}
-              isOwnPost={post.author.username === currentUser?.email?.split('@')[0]}
-            />
-          ))
-        )}
+        <Box sx={{ mt: 4 }}>
+          {/* Trending Topics Section */}
+          {trendingTopics.length > 0 && (
+            <Paper sx={{ p: 2, mb: 3, borderRadius: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Trending Topics
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {trendingTopics.map((topic) => (
+                  <Chip
+                    key={topic.tag}
+                    label={`#${topic.tag} (${topic.count})`}
+                    onClick={() => {
+                      setPosts(topic.posts);
+                    }}
+                    sx={{ cursor: 'pointer' }}
+                  />
+                ))}
+              </Box>
+            </Paper>
+          )}
+          
+          {loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : posts.length === 0 ? (
+            <Typography>No posts yet. Be the first to post!</Typography>
+          ) : (
+            posts.map((post) => (
+              <Post
+                key={post.id}
+                id={post.id}
+                authorId={post.authorId}
+                authorName={post.authorName || 'Anonymous'}
+                authorAvatar={post.authorAvatar || ''}
+                content={post.content}
+                timestamp={post.timestamp}
+                likes={post.likes}
+                likedBy={post.likedBy}
+                comments={post.comments}
+                commentCount={post.comments.length}
+                imageUrl={post.imageUrl}
+                tags={post.tags || []}
+                isOwnPost={post.authorId === currentUser?.uid}
+                onLike={handleLike}
+                onComment={handleComment}
+                onShare={handleShare}
+                onDelete={handleDeletePost}
+              />
+            ))
+          )}
+        </Box>
 
-        <Dialog open={commentDialogOpen} onClose={() => setCommentDialogOpen(false)}>
-          <DialogTitle>Add a Comment</DialogTitle>
+        <Dialog 
+          open={commentDialogOpen} 
+          onClose={() => {
+            setCommentDialogOpen(false);
+            setCommentText('');
+          }}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>Add Comment</DialogTitle>
           <DialogContent>
             <TextField
               autoFocus
               margin="dense"
               label="Your comment"
+              type="text"
               fullWidth
               multiline
               rows={4}
@@ -381,15 +846,40 @@ const HomePage: React.FC = () => {
             />
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setCommentDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleCommentSubmit} variant="contained">
+            <Button onClick={() => {
+              setCommentDialogOpen(false);
+              setCommentText('');
+            }}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleCommentSubmit}
+              variant="contained"
+              disabled={!commentText.trim()}
+              startIcon={<SendIcon />}
+            >
               Comment
             </Button>
           </DialogActions>
         </Dialog>
+
+        <Snackbar
+          open={!!error}
+          autoHideDuration={6000}
+          onClose={() => setError(null)}
+        >
+          <Alert severity="error">{error}</Alert>
+        </Snackbar>
+        <Snackbar
+          open={!!success}
+          autoHideDuration={6000}
+          onClose={() => setSuccess(null)}
+        >
+          <Alert severity="success">{success}</Alert>
+        </Snackbar>
       </Box>
     </Container>
   );
 };
 
-export default HomePage; 
+export default HomePage;

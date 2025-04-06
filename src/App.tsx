@@ -10,7 +10,7 @@ import Register from './pages/Register';
 import Profile from './pages/Profile';
 import Messages from './pages/Messages';
 import Forums from './pages/Forums';
-import TeaRoomList from './pages/TeaRoomList';
+import TeaRoomList from './components/TeaRooms/TeaRoomList';
 import CreateForum from './components/CreateForum';
 import CreateTeaRoom from './components/CreateTeaRoom';
 import Chat from './pages/Chat';
@@ -22,6 +22,7 @@ import CookiePolicy from './pages/CookiePolicy';
 import EmailVerification from './pages/EmailVerification';
 import TwoFactorAuth from './pages/TwoFactorAuth';
 import SearchResults from './pages/SearchResults';
+import TrashPage from './pages/TrashPage';
 import './App.css';
 
 const App: React.FC = () => {
@@ -50,6 +51,7 @@ const App: React.FC = () => {
           <Route path="/cookies" element={<CookiePolicy />} />
           <Route path="/verify-email" element={<EmailVerification />} />
           <Route path="/setup-2fa" element={<TwoFactorAuth />} />
+          <Route path="/trash" element={<TrashPage />} />
           <Route path="*" element={<HomePage />} />
         </Routes>
       </AuthProvider>

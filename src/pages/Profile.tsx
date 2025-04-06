@@ -36,13 +36,15 @@ import {
   PersonAdd as PersonAddIcon,
   PersonRemove as PersonRemoveIcon,
   PhotoCamera,
-  Message as MessageIcon
+  Message as MessageIcon,
+  Delete as DeleteIcon
 } from '@mui/icons-material';
 import { auth, db, storage } from '../services/firebase';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { formatDistanceToNow } from 'date-fns';
 import { User, UserProfile } from '../types';
+import { Link } from 'react-router-dom';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -135,6 +137,7 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
+  const [deletedPosts, setDeletedPosts] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userId = propUserId || auth.currentUser?.uid;
 
@@ -355,6 +358,79 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
     }
   };
 
+  const fetchDeletedPosts = async () => {
+    if (!userId) return;
+    
+    const deletedQuery = query(
+      collection(db, 'deleted_posts'),
+      where('userId', '==', userId)
+    );
+    const snapshot = await getDocs(deletedQuery);
+    setDeletedPosts(snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      deletedAt: doc.data().deletedAt?.toDate()
+    })));
+  };
+  
+  // Add to useEffect
+  useEffect(() => {
+    if (activeTab === 4) {
+      fetchDeletedPosts();
+    }
+  }, [activeTab]);
+  
+  // Add restore function
+  const handleRestorePost = async (postId: string) => {
+    try {
+      // Get the deleted post
+      const deletedPostRef = doc(db, 'deleted_posts', postId);
+      const deletedPostDoc = await getDoc(deletedPostRef);
+      
+      if (!deletedPostDoc.exists()) {
+        setError('Post not found in trash');
+        return;
+      }
+  
+      const deletedPost = deletedPostDoc.data();
+      
+      // Restore to main posts collection
+      await setDoc(doc(db, 'posts', postId), {
+        ...deletedPost,
+        deletedAt: null,
+        scheduledForPermanentDeletion: null
+      });
+  
+      // Remove from deleted collection
+      await deleteDoc(deletedPostRef);
+  
+      // Update local state
+      setDeletedPosts(prev => prev.filter(p => p.id !== postId));
+      
+      setError('Post restored successfully');
+    } catch (error) {
+      console.error('Error restoring post:', error);
+      setError('Failed to restore post');
+    }
+  };
+  
+  // Add permanent delete function
+  const handlePermanentDelete = async (postId: string) => {
+    try {
+      // Delete from deleted_posts collection
+      await deleteDoc(doc(db, 'deleted_posts', postId));
+      
+      // Update local state
+      setDeletedPosts(prev => prev.filter(p => p.id !== postId));
+      
+      setError('Post permanently deleted');
+    } catch (error) {
+      console.error('Error permanently deleting post:', error);
+      setError('Failed to delete post permanently');
+    }
+  };
+  
+
   const fetchMessages = async () => {
     if (!auth.currentUser || !userId) return;
 
@@ -391,6 +467,45 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
     }
   }, [showMessagesDialog]);
 
+  const handleDeletePost = async (postId: string) => {
+    if (!auth.currentUser) return;
+
+    try {
+      const postRef = doc(db, 'posts', postId);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) {
+        throw new Error('Post not found');
+      }
+
+      const postData = postDoc.data();
+      if (postData.authorId !== auth.currentUser.uid) {
+        throw new Error('You can only delete your own posts');
+      }
+
+      // Move to deleted_posts collection with 24-hour expiration
+      const deletedPostRef = doc(db, 'deleted_posts', postId);
+      await setDoc(deletedPostRef, {
+        ...postData,
+        deletedAt: serverTimestamp(),
+        scheduledForDeletion: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+      });
+
+      // Delete from main posts collection
+      await deleteDoc(postRef);
+
+      // Update user's post count
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        posts: increment(-1)
+      });
+
+      // Update local state
+      setPosts(prev => prev.filter(post => post.id !== postId));
+    } catch (error) {
+      console.error('Error deleting post:', error);
+    }
+  };
+
   if (isLoading) {
     return (
       <Container sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
@@ -415,7 +530,7 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
           <Box>
             <Paper elevation={0} sx={{ p: 3, textAlign: 'center' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                <Avatar
+        <Avatar
                   src={profilePic || undefined}
                   sx={{ width: 100, height: 100 }}
                 />
@@ -488,6 +603,15 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
                 >
                   Edit Profile
                 </Button>
+                {auth.currentUser?.uid === userId && (
+                  <IconButton 
+                    component={Link} 
+                    to="/trash"
+                    color="error"
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                )}
               </Box>
             </Paper>
           </Box>
@@ -505,6 +629,7 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
                 <Tab label="Forums" />
                 <Tab label="Tea Rooms" />
                 <Tab label="Liked Posts" />
+                <Tab label="Trash" />
               </Tabs>
 
               {/* Posts Tab */}
@@ -538,6 +663,39 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
                   </List>
                 )}
               </TabPanel>
+
+              <TabPanel value={activeTab} index={4}>
+  {deletedPosts.length === 0 ? (
+    <Typography>No deleted posts</Typography>
+  ) : (
+    <List>
+      {deletedPosts.map((post) => (
+        <ListItem key={post.id} divider>
+          <ListItemText
+            primary={post.content}
+            secondary={`Deleted ${formatDistanceToNow(post.deletedAt.toDate())} ago`}
+          />
+          <ListItemSecondaryAction>
+            <Button 
+              variant="outlined"
+              onClick={() => handleRestorePost(post.id)}
+            >
+              Restore
+            </Button>
+            <Button 
+              variant="outlined" 
+              color="error"
+              onClick={() => handlePermanentDelete(post.id)}
+              sx={{ ml: 1 }}
+            >
+              Delete Permanently
+            </Button>
+          </ListItemSecondaryAction>
+        </ListItem>
+      ))}
+    </List>
+  )}
+</TabPanel>
 
               {/* Forums Tab */}
               <TabPanel value={activeTab} index={1}>
@@ -650,7 +808,7 @@ const Profile: React.FC<ProfileProps> = ({ userId: propUserId }) => {
               margin="normal"
               multiline
               rows={4}
-            />
+              />
               <TextField
                 fullWidth
                 label="Email"

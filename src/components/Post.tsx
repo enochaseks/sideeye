@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Card,
   CardContent,
@@ -8,125 +8,302 @@ import {
   IconButton,
   Avatar,
   Chip,
-  Menu,
-  MenuItem,
+  CircularProgress,
+  Collapse,
+  Divider,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemText,
+  TextField,
+  Button,
 } from '@mui/material';
 import {
   Favorite,
   FavoriteBorder,
   ChatBubbleOutline,
   Share,
-  MoreVert,
   Delete,
+  Repeat,
+  ExpandMore,
+  ExpandLess,
+  Edit,
+  Reply,
 } from '@mui/icons-material';
-import { auth, db } from '../services/firebase';
-import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
-
-interface PostProps {
-  id: string;
-  author: {
-    name: string;
-    avatar: string;
-    username: string;
-    isVerified: boolean;
-  };
-  content: string;
-  timestamp: Date;
-  likes: number;
-  comments: number;
-  isLiked: boolean;
-  imageUrl?: string;
-  tags?: string[];
-  onLike: (id: string) => void;
-  onComment: (id: string) => void;
-  onShare: (id: string) => void;
-  onDelete?: (id: string) => void;
-  isOwnPost?: boolean;
-}
+import { useNavigate } from 'react-router-dom';
+import { formatDistanceToNow } from 'date-fns';
+import { PostData, Comment, PostProps } from '../types';
+import { doc, getDoc, updateDoc, increment, Timestamp, setDoc, deleteDoc, serverTimestamp, addDoc, collection } from 'firebase/firestore';
+import { useAuth } from '../contexts/AuthContext';
+import { db } from '../services/firebase';
+import { ref, deleteObject } from 'firebase/storage';
+import { storage } from '../services/firebase';
+import { formatDate, convertTimestampToDate, compareTimestamps } from '../utils/dateUtils';
 
 const Post: React.FC<PostProps> = ({
   id,
-  author,
+  authorId,
+  authorName,
+  authorAvatar,
   content,
+  imageUrl,
   timestamp,
   likes,
-  comments,
-  isLiked,
-  imageUrl,
-  tags,
+  likedBy,
+  comments: initialComments,
+  isOwnPost,
+  onDelete,
+  onEdit,
   onLike,
   onComment,
   onShare,
-  onDelete,
-  isOwnPost,
+  originalPostId,
+  originalAuthor,
+  tags
 }) => {
-  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+  const [isLiking, setIsLiking] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedContent, setEditedContent] = useState(content);
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [isCommenting, setIsCommenting] = useState(false);
+  const [isLikingComment, setIsLikingComment] = useState(false);
+  const [isDeletingComment, setIsDeletingComment] = useState(false);
+  const [isEditingComment, setIsEditingComment] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editedCommentText, setEditedCommentText] = useState('');
+  const [comments, setComments] = useState<Comment[]>(initialComments);
+  const [replyingToComment, setReplyingToComment] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [isReplying, setIsReplying] = useState(false);
+  const navigate = useNavigate();
+  const { currentUser, userProfile } = useAuth();
 
-  const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(event.currentTarget);
+  const handleProfileClick = (username: string) => {
+    navigate(`/profile/${username}`);
   };
 
-  const handleMenuClose = () => {
-    setAnchorEl(null);
-  };
+  const handleDelete = async () => {
+    if (!currentUser || isDeleting) return;
+    setIsDeleting(true);
 
-  const handleDelete = () => {
-    if (onDelete) {
-      onDelete(id);
+    try {
+      await onDelete(id);
+    } catch (error) {
+      console.error('Error deleting post:', error);
+    } finally {
+      setIsDeleting(false);
     }
-    handleMenuClose();
   };
 
-  const formatDate = (date: Date) => {
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-    }).format(date);
+  const handleEdit = async () => {
+    if (!currentUser || isEditing || !editedContent.trim() || !onEdit) return;
+    setIsEditing(true);
+
+    try {
+      await onEdit(id, editedContent.trim());
+    } catch (error) {
+      console.error('Error editing post:', error);
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  const handleLike = async () => {
+    if (!currentUser || isLiking) return;
+    setIsLiking(true);
+
+    try {
+      if (onLike) {
+        await onLike(id);
+      }
+    } catch (error) {
+      console.error('Error updating like:', error);
+    } finally {
+      setIsLiking(false);
+    }
+  };
+
+  const handleComment = async () => {
+    if (!currentUser || !userProfile || !commentText.trim() || isCommenting) return;
+    setIsCommenting(true);
+
+    try {
+      if (onComment) {
+        await onComment(id, commentText.trim());
+        setCommentText('');
+      }
+    } catch (error) {
+      console.error('Error adding comment:', error);
+    } finally {
+      setIsCommenting(false);
+    }
+  };
+
+  const handleShare = async () => {
+    if (!currentUser || isCommenting) return;
+
+    try {
+      if (onShare) {
+        await onShare(id);
+      }
+    } catch (error) {
+      console.error('Error sharing post:', error);
+    }
+  };
+
+  const handleCommentLike = async (comment: Comment) => {
+    if (!currentUser || isLikingComment) return;
+    setIsLikingComment(true);
+
+    try {
+      const postRef = doc(db, 'posts', id);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) return;
+
+      const postData = postDoc.data();
+      const commentIndex = postData.comments.findIndex((c: Comment) => 
+        compareTimestamps(c.timestamp, comment.timestamp) && c.authorId === comment.authorId
+      );
+
+      if (commentIndex === -1) return;
+
+      const isLiked = comment.likedBy?.includes(currentUser.uid) || false;
+      const updatedComments = [...postData.comments];
+      
+      if (isLiked) {
+        updatedComments[commentIndex] = {
+          ...updatedComments[commentIndex],
+          likes: (updatedComments[commentIndex].likes || 0) - 1,
+          likedBy: updatedComments[commentIndex].likedBy?.filter((id: string) => id !== currentUser.uid) || []
+        };
+      } else {
+        updatedComments[commentIndex] = {
+          ...updatedComments[commentIndex],
+          likes: (updatedComments[commentIndex].likes || 0) + 1,
+          likedBy: [...(updatedComments[commentIndex].likedBy || []), currentUser.uid]
+        };
+      }
+
+      await updateDoc(postRef, { comments: updatedComments });
+      setComments(updatedComments);
+    } catch (error) {
+      console.error('Error updating comment like:', error);
+    } finally {
+      setIsLikingComment(false);
+    }
+  };
+
+  const handleCommentDelete = async (comment: Comment) => {
+    if (!currentUser || isDeletingComment) return;
+    setIsDeletingComment(true);
+
+    try {
+      const postRef = doc(db, 'posts', id);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) return;
+
+      const postData = postDoc.data();
+      const updatedComments = postData.comments.filter((c: Comment) => 
+        !(compareTimestamps(c.timestamp, comment.timestamp) && c.authorId === comment.authorId)
+      );
+
+      await updateDoc(postRef, { comments: updatedComments });
+      setComments(updatedComments);
+    } catch (error) {
+      console.error('Error deleting comment:', error);
+    } finally {
+      setIsDeletingComment(false);
+    }
+  };
+
+  const handleCommentEdit = async (comment: Comment) => {
+    if (!currentUser || isEditingComment || !editedCommentText.trim()) return;
+    setIsEditingComment(true);
+
+    try {
+      const postRef = doc(db, 'posts', id);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) return;
+
+      const postData = postDoc.data();
+      const commentIndex = postData.comments.findIndex((c: Comment) => 
+        compareTimestamps(c.timestamp, comment.timestamp) && c.authorId === comment.authorId
+      );
+
+      if (commentIndex === -1) return;
+
+      const updatedComments = [...postData.comments];
+      updatedComments[commentIndex] = {
+        ...updatedComments[commentIndex],
+        content: editedCommentText.trim(),
+        isEdited: true,
+        lastEdited: new Date()
+      };
+
+      await updateDoc(postRef, { comments: updatedComments });
+      setComments(updatedComments);
+      setEditingCommentId(null);
+      setEditedCommentText('');
+    } catch (error) {
+      console.error('Error editing comment:', error);
+    } finally {
+      setIsEditingComment(false);
+    }
   };
 
   return (
     <Card sx={{ mb: 3, borderRadius: 2 }}>
       <CardContent>
+        {originalPostId && originalAuthor && (
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, color: 'text.secondary' }}>
+            <Repeat sx={{ fontSize: 16, mr: 1 }} />
+            <Typography variant="caption">
+              {originalAuthor.name} reposted
+            </Typography>
+          </Box>
+        )}
+        
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Avatar src={author.avatar} alt={author.name} sx={{ mr: 2 }}>
-              {author.name.charAt(0)}
+            <Avatar 
+              src={authorAvatar} 
+              alt={authorName} 
+              sx={{ mr: 2, cursor: 'pointer' }}
+              onClick={() => handleProfileClick(authorId)}
+            >
+              {authorName ? authorName.charAt(0) : 'A'}
             </Avatar>
             <Box>
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <Typography variant="subtitle1" fontWeight="bold">
-                  {author.name}
-                </Typography>
-                {author.isVerified && (
-                  <Box sx={{ ml: 0.5, display: 'flex', alignItems: 'center' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="#1DA1F2">
-                      <path d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.818-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.437 2.25c-.415-.165-.866-.25-1.336-.25-2.11 0-3.818 1.79-3.818 4 0 .494.083.964.237 1.4-1.272.65-2.147 2.018-2.147 3.6 0 1.495.782 2.798 1.942 3.486-.02.17-.032.34-.032.514 0 2.21 1.708 4 3.818 4 .47 0 .92-.086 1.335-.25.62 1.334 1.926 2.25 3.437 2.25 1.512 0 2.818-.916 3.437-2.25.415.163.865.248 1.336.248 2.11 0 3.818-1.79 3.818-4 0-.174-.012-.344-.033-.513 1.158-.687 1.943-1.99 1.943-3.484zm-6.616-3.334l-4.334 6.5c-.145.217-.382.334-.625.334-.143 0-.288-.04-.416-.126l-.115-.094-2.415-2.415c-.293-.293-.293-.768 0-1.06s.768-.294 1.06 0l1.77 1.767 3.825-5.74c.23-.345.696-.436 1.04-.207.346.23.44.696.21 1.04z" />
-                    </svg>
-                  </Box>
-                )}
-              </Box>
+              <Typography 
+                variant="subtitle1" 
+                fontWeight="bold"
+                onClick={() => handleProfileClick(authorId)}
+                sx={{ cursor: 'pointer' }}
+              >
+                {authorName || 'Anonymous'}
+              </Typography>
               <Typography variant="caption" color="text.secondary">
-                @{author.username} · {formatDate(timestamp)}
+                {formatDate(timestamp)}
               </Typography>
             </Box>
           </Box>
           {isOwnPost && (
-            <>
-              <IconButton onClick={handleMenuClick}>
-                <MoreVert />
-              </IconButton>
-              <Menu
-                anchorEl={anchorEl}
-                open={Boolean(anchorEl)}
-                onClose={handleMenuClose}
-              >
-                <MenuItem onClick={handleDelete}>
-                  <Delete sx={{ mr: 1 }} /> Delete
-                </MenuItem>
-              </Menu>
-            </>
+            <IconButton 
+              onClick={handleDelete} 
+              disabled={isDeleting}
+              aria-label="Delete post"
+            >
+              {isDeleting ? (
+                <CircularProgress size={24} />
+              ) : (
+                <Delete />
+              )}
+            </IconButton>
           )}
         </Box>
 
@@ -158,9 +335,16 @@ const Post: React.FC<PostProps> = ({
 
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <IconButton onClick={() => onLike(id)} size="small">
-              {isLiked ? (
-                <Favorite color="error" />
+            <IconButton 
+              onClick={handleLike} 
+              color={likedBy?.includes(currentUser?.uid || '') ? 'primary' : 'default'}
+              disabled={isDeleting || isCommenting}
+              aria-label={likedBy?.includes(currentUser?.uid || '') ? 'Unlike post' : 'Like post'}
+            >
+              {isLiking ? (
+                <CircularProgress size={24} />
+              ) : likedBy?.includes(currentUser?.uid || '') ? (
+                <Favorite />
               ) : (
                 <FavoriteBorder />
               )}
@@ -171,21 +355,174 @@ const Post: React.FC<PostProps> = ({
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <IconButton onClick={() => onComment(id)} size="small">
+            <IconButton 
+              onClick={() => setShowComments(!showComments)}
+              disabled={isDeleting || isCommenting}
+              aria-label="Toggle comments"
+            >
               <ChatBubbleOutline />
             </IconButton>
             <Typography variant="body2" color="text.secondary">
-              {comments}
+              {comments?.length || 0}
             </Typography>
           </Box>
 
-          <IconButton onClick={() => onShare(id)} size="small">
+          <IconButton 
+            onClick={handleShare}
+            disabled={isDeleting || isCommenting}
+            aria-label="Share post"
+          >
             <Share />
           </IconButton>
         </Box>
+
+        {comments && comments.length > 0 && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Box>
+              <Box 
+                sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  cursor: 'pointer',
+                  color: 'text.secondary',
+                  mb: 1
+                }}
+                onClick={() => setShowComments(!showComments)}
+              >
+                <Typography variant="caption">
+                  {showComments ? 'Hide comments' : `Show ${comments.length} comments`}
+                </Typography>
+                {showComments ? <ExpandLess /> : <ExpandMore />}
+              </Box>
+              
+              <Collapse in={showComments} timeout="auto" unmountOnExit>
+                <List>
+                  {comments.map((comment, index) => (
+                    <Box key={index} sx={{ display: 'flex', alignItems: 'flex-start', mb: 1 }}>
+                      <Avatar 
+                        src={comment.authorAvatar} 
+                        alt={comment.authorName}
+                        sx={{ width: 24, height: 24, mr: 1 }}
+                      />
+                      <Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography variant="subtitle2">{comment.authorName}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {formatDate(comment.timestamp)}
+                          </Typography>
+                        </Box>
+                        {editingCommentId === `${comment.authorId}_${convertTimestampToDate(comment.timestamp).getTime()}` ? (
+                          <Box sx={{ mt: 1 }}>
+                            <TextField
+                              fullWidth
+                              multiline
+                              size="small"
+                              value={editedCommentText}
+                              onChange={(e) => setEditedCommentText(e.target.value)}
+                              disabled={isEditingComment}
+                            />
+                            <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                onClick={() => handleCommentEdit(comment)}
+                                disabled={isEditingComment || !editedCommentText.trim()}
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => {
+                                  setEditingCommentId(null);
+                                  setEditedCommentText('');
+                                }}
+                                disabled={isEditingComment}
+                              >
+                                Cancel
+                              </Button>
+                            </Box>
+                          </Box>
+                        ) : (
+                          <Typography variant="body2">{comment.content}</Typography>
+                        )}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleCommentLike(comment)}
+                            disabled={isLikingComment}
+                          >
+                            {isLikingComment ? (
+                              <CircularProgress size={20} />
+                            ) : comment.likedBy?.includes(currentUser?.uid || '') ? (
+                              <Favorite fontSize="small" color="error" />
+                            ) : (
+                              <FavoriteBorder fontSize="small" />
+                            )}
+                          </IconButton>
+                          <Typography variant="caption">
+                            {comment.likes || 0}
+                          </Typography>
+                          {(currentUser?.uid === comment.authorId || isOwnPost) && (
+                            <>
+                              <IconButton
+                                size="small"
+                                onClick={() => {
+                                  setEditingCommentId(`${comment.authorId}_${convertTimestampToDate(comment.timestamp).getTime()}`);
+                                  setEditedCommentText(comment.content);
+                                }}
+                                disabled={isEditingComment || isDeletingComment}
+                              >
+                                <Edit fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleCommentDelete(comment)}
+                                disabled={isDeletingComment || isEditingComment}
+                              >
+                                {isDeletingComment ? (
+                                  <CircularProgress size={20} />
+                                ) : (
+                                  <Delete fontSize="small" />
+                                )}
+                              </IconButton>
+                            </>
+                          )}
+                        </Box>
+                      </Box>
+                    </Box>
+                  ))}
+                </List>
+              </Collapse>
+            </Box>
+          </>
+        )}
+
+        {currentUser && (
+          <Box sx={{ mt: 2 }}>
+            <TextField
+              fullWidth
+              multiline
+              placeholder="Write a comment..."
+              size="small"
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              disabled={isCommenting}
+            />
+            <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                variant="contained"
+                onClick={handleComment}
+                disabled={isCommenting || !commentText.trim()}
+              >
+                {isCommenting ? 'Posting...' : 'Post'}
+              </Button>
+            </Box>
+          </Box>
+        )}
       </CardContent>
     </Card>
   );
 };
 
-export default Post; 
+export default Post;
