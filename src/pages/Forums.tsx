@@ -112,16 +112,17 @@ const Forums: React.FC = () => {
         const authorDoc = await getDoc(authorRef);
         const authorData = authorDoc.exists() ? authorDoc.data() as UserProfile : null;
         
+        // Ensure all properties are properly formatted
         return {
-          id: postDoc.id,
-          content: data.content || '',
-          authorId: data.authorId || '',
-          authorName: authorData?.name || 'Anonymous',
-          authorAvatar: authorData?.profilePic || '',
-          username: authorData?.username || 'anonymous',
+          id: String(postDoc.id),
+          content: String(data.content || ''),
+          authorId: String(data.authorId || ''),
+          authorName: String(authorData?.name || 'Anonymous'),
+          authorAvatar: String(authorData?.profilePic || ''),
+          username: String(authorData?.username || 'anonymous'),
           timestamp: data.timestamp?.toDate() || new Date(),
-          likes: data.likes || [],
-          comments: data.comments || 0
+          likes: Array.isArray(data.likes) ? data.likes : [],
+          comments: Number(data.comments || 0)
         };
       }));
       setPosts(newPosts);

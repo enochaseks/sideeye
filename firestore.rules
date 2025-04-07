@@ -119,9 +119,7 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow update: if isAuthenticated() && (
         resource.data.authorId == request.auth.uid ||
-        // Allow users to update likes and comments
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likes', 'comments', 'commentCount', 'likeCount'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments'])
       );
       allow delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
 
@@ -143,19 +141,19 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow update: if isAuthenticated() && (
         resource.data.ownerId == request.auth.uid ||
-        // Allow members to update certain fields
-        (resource.data.members.hasAny([request.auth.uid]) &&
-         request.resource.data.diff(resource.data).affectedKeys()
-           .hasOnly(['members', 'memberCount', 'lastActivity']))
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount'])
       );
       allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
     }
 
     // Side Rooms collection
     match /sideRooms/{roomId} {
-      allow read: if isAuthenticated() && isRoomMember(roomId);
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && isRoomOwner(roomId);
+      allow update: if isAuthenticated() && (
+        isRoomOwner(roomId) ||
+        isRoomMember(roomId)
+      );
       allow delete: if isAuthenticated() && isRoomOwner(roomId);
     }
 

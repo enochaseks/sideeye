@@ -194,63 +194,95 @@ const Profile: React.FC = () => {
       const postsUnsubscribe = onSnapshot(
         query(collection(db, 'posts'), where('authorId', '==', userId)),
         (snapshot) => {
-          setPosts(snapshot.docs.map(doc => ({
-            id: doc.id,
-            content: doc.data().content || '',
-            authorId: doc.data().authorId || '',
-            timestamp: doc.data().timestamp || new Date(),
-            likes: doc.data().likes || [],
-            comments: doc.data().comments || 0
-          })) as Post[]);
+          const newPosts = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: String(doc.id),
+              content: String(data.content || ''),
+              authorId: String(data.authorId || ''),
+              timestamp: data.timestamp?.toDate() || new Date(),
+              likes: Array.isArray(data.likes) ? data.likes : [],
+              comments: Number(data.comments || 0)
+            } as Post;
+          });
+          setPosts(newPosts);
+        },
+        (error) => {
+          console.error('Error fetching posts:', error);
+          setError('Error loading posts. Please try again later.');
         }
       );
 
       const forumsUnsubscribe = onSnapshot(
         query(collection(db, 'forums'), where('members', 'array-contains', userId)),
         (snapshot) => {
-          setForums(snapshot.docs.map(doc => ({
-            id: doc.id,
-            title: doc.data().title || '',
-            description: doc.data().description || '',
-            members: doc.data().members || [],
-            memberCount: doc.data().memberCount || 0,
-            ownerId: doc.data().ownerId || ''
-          })) as Forum[]);
+          const newForums = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: String(doc.id),
+              title: String(data.title || ''),
+              description: String(data.description || ''),
+              members: Array.isArray(data.members) ? data.members : [],
+              memberCount: Number(data.memberCount || 0),
+              ownerId: String(data.ownerId || '')
+            } as Forum;
+          });
+          setForums(newForums);
+        },
+        (error) => {
+          console.error('Error fetching forums:', error);
+          setError('Error loading forums. Please try again later.');
         }
       );
 
       const sideRoomsUnsubscribe = onSnapshot(
         query(collection(db, 'sideRooms'), where('members', 'array-contains', userId)),
         (snapshot) => {
-          setSideRooms(snapshot.docs.map(doc => ({
-            id: doc.id,
-            name: doc.data().name || '',
-            description: doc.data().description || '',
-            ownerId: doc.data().ownerId || '',
-            members: doc.data().members || [],
-            memberCount: doc.data().memberCount || 0,
-            createdAt: doc.data().createdAt || new Date(),
-            isPrivate: doc.data().isPrivate || false,
-            isLive: doc.data().isLive || false,
-            liveParticipants: doc.data().liveParticipants || [],
-            category: doc.data().category || '',
-            scheduledReveals: doc.data().scheduledReveals || [],
-            activeUsers: doc.data().activeUsers || 0
-          })) as SideRoom[]);
+          const newSideRooms = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: String(doc.id),
+              name: String(data.name || ''),
+              description: String(data.description || ''),
+              ownerId: String(data.ownerId || ''),
+              members: Array.isArray(data.members) ? data.members : [],
+              memberCount: Number(data.memberCount || 0),
+              createdAt: data.createdAt?.toDate() || new Date(),
+              isPrivate: Boolean(data.isPrivate),
+              isLive: Boolean(data.isLive),
+              liveParticipants: Array.isArray(data.liveParticipants) ? data.liveParticipants : [],
+              category: String(data.category || ''),
+              scheduledReveals: Array.isArray(data.scheduledReveals) ? data.scheduledReveals : [],
+              activeUsers: Number(data.activeUsers || 0)
+            } as SideRoom;
+          });
+          setSideRooms(newSideRooms);
+        },
+        (error) => {
+          console.error('Error fetching side rooms:', error);
+          setError('Error loading side rooms. Please try again later.');
         }
       );
 
       const likedPostsUnsubscribe = onSnapshot(
         query(collection(db, 'posts'), where('likes', 'array-contains', userId)),
         (snapshot) => {
-          setLikedPosts(snapshot.docs.map(doc => ({
-            id: doc.id,
-            content: doc.data().content || '',
-            authorId: doc.data().authorId || '',
-            timestamp: doc.data().timestamp || new Date(),
-            likes: doc.data().likes || [],
-            comments: doc.data().comments || 0
-          })) as Post[]);
+          const newLikedPosts = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: String(doc.id),
+              content: String(data.content || ''),
+              authorId: String(data.authorId || ''),
+              timestamp: data.timestamp?.toDate() || new Date(),
+              likes: Array.isArray(data.likes) ? data.likes : [],
+              comments: Number(data.comments || 0)
+            } as Post;
+          });
+          setLikedPosts(newLikedPosts);
+        },
+        (error) => {
+          console.error('Error fetching liked posts:', error);
+          setError('Error loading liked posts. Please try again later.');
         }
       );
 
@@ -831,7 +863,7 @@ const Profile: React.FC = () => {
                       )
                     }
                   >
-                    <Avatar
+        <Avatar
                       src={profilePic || undefined}
                       sx={{ width: 100, height: 100 }}
                     />
@@ -869,7 +901,7 @@ const Profile: React.FC = () => {
                   </Box>
                   <Typography variant="body1" sx={{ mt: 1, mb: 2 }}>
                     {bio}
-                  </Typography>
+        </Typography>
                   <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                     {currentUser?.uid === userId ? (
                       <>
@@ -935,28 +967,28 @@ const Profile: React.FC = () => {
                 gap: 3,
                 mt: 2
               }}>
-                <TextField
+              <TextField
                   label="Name"
                   value={editedName}
                   onChange={(e) => setEditedName(e.target.value)}
-                  fullWidth
+                fullWidth
                   variant="outlined"
                 />
                 <TextField
-                  label="Username"
+                label="Username"
                   value={editedUsername}
                   onChange={(e) => setEditedUsername(e.target.value)}
                   fullWidth
                   variant="outlined"
                   helperText="This will be your unique identifier on the platform"
-                />
-                <TextField
+              />
+              <TextField
                   label="Bio"
                   value={editedBio}
                   onChange={(e) => setEditedBio(e.target.value)}
                   multiline
                   rows={4}
-                  fullWidth
+                fullWidth
                   variant="outlined"
                   helperText="Tell others about yourself (You can use emojis!)"
                   InputProps={{
@@ -1041,7 +1073,11 @@ const Profile: React.FC = () => {
                       <ListItem key={post.id} divider>
                         <ListItemText
                           primary={post.content}
-                          secondary={`Posted ${formatDistanceToNow(post.timestamp.toDate())} ago`}
+                          secondary={`Posted ${formatDistanceToNow(
+                            post.timestamp instanceof Date 
+                              ? post.timestamp 
+                              : post.timestamp?.toDate?.() || new Date()
+                          )} ago`}
                         />
                         <ListItemSecondaryAction>
                           <IconButton edge="end" aria-label="likes">
@@ -1127,7 +1163,11 @@ const Profile: React.FC = () => {
                       <ListItem key={post.id} divider>
                         <ListItemText
                           primary={post.content}
-                          secondary={`Posted ${formatDistanceToNow(post.timestamp.toDate())} ago`}
+                          secondary={`Posted ${formatDistanceToNow(
+                            post.timestamp instanceof Date 
+                              ? post.timestamp 
+                              : post.timestamp?.toDate?.() || new Date()
+                          )} ago`}
                         />
                         <ListItemSecondaryAction>
                           <IconButton edge="end" aria-label="likes">

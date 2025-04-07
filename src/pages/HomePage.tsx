@@ -3,7 +3,7 @@ import { Container, Box, Typography, Dialog, DialogTitle, DialogContent, DialogA
 import Post from '../components/Post';
 import CreatePost from '../components/CreatePost';
 import Stories from '../components/Stories';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, setDoc, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, setDoc, getDocs, writeBatch, DocumentData } from 'firebase/firestore';
 import { db, auth } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -187,12 +187,51 @@ const HomePage: React.FC = () => {
       orderBy('count', 'desc'),
       limit(5)
     );
-    const unsubscribeTrending = onSnapshot(topicsQuery, (snapshot) => {
-      const newTopics = snapshot.docs.map(doc => ({
-        tag: doc.id,
-        count: doc.data().count,
-        posts: doc.data().posts || [],
+    const unsubscribeTrending = onSnapshot(topicsQuery, async (snapshot) => {
+      const newTopics = await Promise.all(snapshot.docs.map(async (topicDoc) => {
+        const data = topicDoc.data() as DocumentData;
+        const posts = Array.isArray(data.posts) ? data.posts : [];
+        
+        // Ensure each post has the required properties
+        const processedPosts = await Promise.all(posts.map(async (post: any) => {
+          if (!post.authorId) return null;
+          
+          // Fetch author information
+          const authorRef = doc(db, 'users', post.authorId);
+          const authorDoc = await getDoc(authorRef);
+          const authorData = authorDoc.exists() ? authorDoc.data() as UserProfile : null;
+          
+          return {
+            id: post.id || '',
+            content: post.content || '',
+            authorId: post.authorId || '',
+            authorName: authorData?.name || 'Anonymous',
+            authorAvatar: authorData?.profilePic || '',
+            username: authorData?.username || 'anonymous',
+            timestamp: post.timestamp?.toDate() || new Date(),
+            likes: post.likes || 0,
+            likedBy: post.likedBy || [],
+            comments: post.comments || [],
+            commentCount: post.commentCount || 0,
+            imageUrl: post.imageUrl || '',
+            userId: post.userId || '',
+            tags: post.tags || [],
+            isPrivate: post.isPrivate || false,
+            isPinned: post.isPinned || false,
+            isEdited: post.isEdited || false,
+            reposts: post.reposts || 0,
+            views: post.views || 0,
+            isArchived: post.isArchived || false
+          } as PostData;
+        }));
+
+        return {
+          tag: topicDoc.id,
+          count: data.count || 0,
+          posts: processedPosts.filter(Boolean) as PostData[]
+        };
       }));
+      
       setTrendingTopics(newTopics);
     });
 
@@ -799,14 +838,38 @@ const HomePage: React.FC = () => {
                 Trending Topics
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {trendingTopics.map((topic) => (
+                {trendingTopics.map((topic: TrendingTopic) => (
                   <Chip
                     key={topic.tag}
                     label={`#${topic.tag} (${topic.count})`}
                     onClick={() => {
-                      setPosts(topic.posts);
+                      if (Array.isArray(topic.posts)) {
+                        // Ensure each post has the required string properties
+                        const validPosts = topic.posts.map(post => ({
+                          ...post,
+                          content: String(post.content || ''),
+                          authorName: String(post.authorName || 'Anonymous'),
+                          authorAvatar: String(post.authorAvatar || ''),
+                          username: String(post.username || 'anonymous'),
+                          imageUrl: String(post.imageUrl || ''),
+                          userId: String(post.userId || ''),
+                          authorId: String(post.authorId || ''),
+                          id: String(post.id || ''),
+                          tags: Array.isArray(post.tags) ? post.tags.map(String) : []
+                        }));
+                        setPosts(validPosts);
+                      } else {
+                        console.error('Invalid posts data:', topic.posts);
+                        setError('Error loading posts for this topic');
+                      }
                     }}
-                    sx={{ cursor: 'pointer' }}
+                    sx={{
+                      m: 0.5,
+                      backgroundColor: '#f5f5f5',
+                      '&:hover': {
+                        backgroundColor: '#e0e0e0',
+                      },
+                    }}
                   />
                 ))}
               </Box>

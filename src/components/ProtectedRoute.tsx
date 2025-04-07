@@ -1,34 +1,37 @@
 import React from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
-import { useAuthState } from 'react-firebase-hooks/auth';
-import { auth } from '../services/firebase';
-import { CircularProgress, Box } from '@mui/material';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import LoadingSpinner from './LoadingSpinner';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
+  requireAuth?: boolean;
+  requireEmailVerification?: boolean;
+  require2FA?: boolean;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const [user, loading] = useAuthState(auth);
-  const location = useLocation();
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
+  children,
+  requireAuth = true,
+  requireEmailVerification = false,
+  require2FA = false
+}) => {
+  const { user, loading, userProfile } = useAuth();
 
   if (loading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '100vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingSpinner message="Checking authentication..." />;
   }
 
-  if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+  if (requireAuth && !user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (requireEmailVerification && user && !user.emailVerified) {
+    return <Navigate to="/verify-email" replace />;
+  }
+
+  if (require2FA && userProfile && !userProfile.isVerified) {
+    return <Navigate to="/2fa" replace />;
   }
 
   return <>{children}</>;
