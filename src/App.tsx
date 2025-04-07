@@ -12,7 +12,7 @@ import Profile from './pages/Profile';
 import Messages from './pages/Messages';
 import Forums from './pages/Forums';
 import SideRoomList from './components/SideRooms/SideRoomList';
-import SideRoom from './components/SideRooms/SideRoom';
+import SideRoomComponent from './components/SideRooms/SideRoomComponent';
 import Chat from './pages/Chat';
 import SafetyPage from './pages/SafetyPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -46,7 +46,7 @@ const App: React.FC = () => {
             <Route path="/search" element={<SearchResults />} />
             <Route path="/forums" element={<Forums />} />
             <Route path="/side-rooms" element={<SideRoomList />} />
-            <Route path="/side-room/:roomId" element={<SideRoom />} />
+            <Route path="/side-room/:roomId" element={<SideRoomComponent />} />
             <Route path="/messages" element={<Messages />} />
             <Route path="/chat" element={<Chat />} />
             <Route path="/safety" element={<SafetyPage />} />

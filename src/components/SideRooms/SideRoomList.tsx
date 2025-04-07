@@ -17,17 +17,24 @@ import {
   Chip,
   TextField,
   InputAdornment,
-  CircularProgress
+  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
-import { LocalFireDepartment, Schedule, Group, Add } from '@mui/icons-material';
+import { LocalFireDepartment, Schedule, Group, Add, Lock } from '@mui/icons-material';
 import { SideRoom } from '../../types/index';
 import CreateSideRoom from '../CreateSideRoom';
 
 const SideRoomList: React.FC = () => {
   const [sideRooms, setSideRooms] = useState<SideRoom[]>([]);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
+  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<SideRoom | null>(null);
+  const [password, setPassword] = useState('');
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { currentUser } = useAuth();
 
   useEffect(() => {
     const q = query(collection(db, 'sideRooms'), orderBy('createdAt', 'desc'));
@@ -42,8 +49,24 @@ const SideRoomList: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  const getStatusColor = (isLive: boolean) => {
-    return isLive ? '#ff4444' : '#90ee90';
+  const handleJoinRoom = (room: SideRoom) => {
+    if (room.isPrivate) {
+      setSelectedRoom(room);
+      setShowPasswordDialog(true);
+    } else {
+      navigate(`/side-room/${room.id}`);
+    }
+  };
+
+  const handlePasswordSubmit = () => {
+    if (selectedRoom && password === selectedRoom.password) {
+      navigate(`/side-room/${selectedRoom.id}`);
+      setShowPasswordDialog(false);
+      setPassword('');
+      setSelectedRoom(null);
+    } else {
+      toast.error('Incorrect password');
+    }
   };
 
   return (
@@ -76,7 +99,7 @@ const SideRoomList: React.FC = () => {
         gap: 3 
       }}>
         {sideRooms.map((room) => {
-          const owner = room.members.find(member => member.role === 'owner');
+          const owner = room.members?.find(member => member.role === 'owner');
           return (
             <Card key={room.id} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <CardContent sx={{ flexGrow: 1 }}>
@@ -92,7 +115,7 @@ const SideRoomList: React.FC = () => {
                 <Typography variant="body2" sx={{ mb: 2 }}>
                   {room.description}
                 </Typography>
-                <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
                   <Chip
                     icon={<LocalFireDepartment />}
                     label={room.isLive ? 'Live' : 'Offline'}
@@ -104,21 +127,50 @@ const SideRoomList: React.FC = () => {
                     label={`${room.memberCount || 0} members`}
                     size="small"
                   />
+                  {room.isPrivate && (
+                    <Chip
+                      icon={<Lock />}
+                      label="Private"
+                      color="default"
+                      size="small"
+                    />
+                  )}
                 </Box>
               </CardContent>
               <CardActions>
                 <Button
                   fullWidth
                   variant="contained"
-                  onClick={() => navigate(`/side-room/${room.id}`)}
+                  onClick={() => handleJoinRoom(room)}
                 >
-                  Join Room
+                  {room.isPrivate ? 'Join Private Room' : 'Join Room'}
                 </Button>
               </CardActions>
             </Card>
           );
         })}
       </Box>
+
+      <Dialog open={showPasswordDialog} onClose={() => setShowPasswordDialog(false)}>
+        <DialogTitle>Enter Room Password</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Password"
+            type="password"
+            fullWidth
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowPasswordDialog(false)}>Cancel</Button>
+          <Button onClick={handlePasswordSubmit} variant="contained">
+            Join
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
