@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { db } from '../../services/firebase';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { getDb } from '../../services/firebase';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, Firestore, onSnapshot } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
   Box,
@@ -20,10 +20,14 @@ import {
 import { ExitToApp, Lock, Group, LocalFireDepartment } from '@mui/icons-material';
 import type { SideRoom, RoomMember } from '../../types/index';
 
-const SideRoom: React.FC = () => {
-  const { roomId } = useParams<{ roomId: string }>();
+interface SideRoomProps {
+  roomId: string;
+}
+
+const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const [db, setDb] = useState<Firestore | null>(null);
   const [room, setRoom] = useState<SideRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,43 +35,81 @@ const SideRoom: React.FC = () => {
   const [password, setPassword] = useState('');
 
   useEffect(() => {
-    const fetchRoom = async () => {
+    const initializeDb = async () => {
       try {
-        if (!roomId) {
-          setError('Room ID is required');
-          return;
-        }
-
-        const roomDoc = await getDoc(doc(db, 'sideRooms', roomId));
-        if (!roomDoc.exists()) {
-          setError('Room not found');
-          return;
-        }
-
-        const roomData = roomDoc.data() as SideRoom;
-        setRoom(roomData);
-
-        // Check if user is already a member
-        const isMember = roomData.members?.some(member => member.userId === currentUser?.uid);
-        if (!isMember && roomData.isPrivate) {
-          setShowPasswordDialog(true);
-        }
+        const firestore = await getDb();
+        setDb(firestore);
       } catch (err) {
-        setError('Failed to fetch room data');
-        console.error(err);
-      } finally {
-        setLoading(false);
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
       }
     };
 
-    fetchRoom();
-  }, [roomId, currentUser]);
+    initializeDb();
+  }, []);
 
-  const handleJoinRoom = async () => {
-    if (!room || !currentUser) return;
+  useEffect(() => {
+    if (!db || !currentUser) {
+      setError('Not authenticated');
+      return;
+    }
 
     try {
-      const roomRef = doc(db, 'sideRooms', room.id);
+      const roomRef = doc(db, 'sideRooms', roomId);
+      const unsubscribe = onSnapshot(roomRef, (doc) => {
+        if (doc.exists()) {
+          const data = doc.data();
+          const roomData: SideRoom = {
+            id: doc.id,
+            name: data.name || '',
+            description: data.description || '',
+            ownerId: data.ownerId || '',
+            members: data.members || [],
+            memberCount: data.memberCount || 0,
+            createdAt: data.createdAt || new Date(),
+            isPrivate: data.isPrivate || false,
+            password: data.password || '',
+            tags: data.tags || [],
+            lastActive: data.lastActive || new Date(),
+            maxMembers: data.maxMembers || 50,
+            bannedUsers: data.bannedUsers || [],
+            isLive: data.isLive || false,
+            liveParticipants: data.liveParticipants || [],
+            category: data.category || '',
+            scheduledReveals: data.scheduledReveals || [],
+            activeUsers: data.activeUsers || 0
+          };
+          setRoom(roomData);
+          setLoading(false);
+
+          // Check if user is already a member
+          const isMember = roomData.members?.some(member => member.userId === currentUser.uid);
+          if (!isMember && roomData.isPrivate) {
+            setShowPasswordDialog(true);
+          }
+        } else {
+          setError('Room not found');
+          setLoading(false);
+        }
+      }, (error) => {
+        console.error('Error fetching room:', error);
+        setError('Failed to fetch room');
+        setLoading(false);
+      });
+
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('Error setting up room listener:', error);
+      setError('Failed to set up room listener');
+      setLoading(false);
+    }
+  }, [db, roomId, currentUser]);
+
+  const handleJoinRoom = async () => {
+    if (!db || !currentUser || !room) return;
+
+    try {
+      const roomRef = doc(db as Firestore, 'sideRooms', room.id);
       const newMember: RoomMember = {
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',
@@ -81,19 +123,28 @@ const SideRoom: React.FC = () => {
         memberCount: (room.memberCount || 0) + 1
       });
 
+      setRoom(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          members: [...(prev.members || []), newMember],
+          memberCount: (prev.memberCount || 0) + 1
+        };
+      });
+
       toast.success('Joined room successfully');
       setShowPasswordDialog(false);
-    } catch (err) {
-      toast.error('Failed to join room');
-      console.error(err);
+    } catch (error) {
+      console.error('Error joining room:', error);
+      setError('Failed to join room');
     }
   };
 
   const handleLeaveRoom = async () => {
-    if (!room || !currentUser) return;
+    if (!db || !currentUser || !room) return;
 
     try {
-      const roomRef = doc(db, 'sideRooms', room.id);
+      const roomRef = doc(db as Firestore, 'sideRooms', room.id);
       const memberToRemove: RoomMember = {
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',
@@ -104,14 +155,23 @@ const SideRoom: React.FC = () => {
 
       await updateDoc(roomRef, {
         members: arrayRemove(memberToRemove),
-        memberCount: (room.memberCount || 0) - 1
+        memberCount: Math.max(0, (room.memberCount || 1) - 1)
+      });
+
+      setRoom(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          members: prev.members.filter((m: RoomMember) => m.userId !== currentUser.uid),
+          memberCount: Math.max(0, (prev.memberCount || 1) - 1)
+        };
       });
 
       toast.success('Left room successfully');
       navigate('/side-rooms');
-    } catch (err) {
-      toast.error('Failed to leave room');
-      console.error(err);
+    } catch (error) {
+      console.error('Error leaving room:', error);
+      setError('Failed to leave room');
     }
   };
 

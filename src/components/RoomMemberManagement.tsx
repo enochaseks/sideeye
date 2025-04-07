@@ -23,8 +23,8 @@ import {
   Mic as MicIcon,
   MicOff as MicOffIcon
 } from '@mui/icons-material';
-import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { doc, updateDoc, arrayUnion, arrayRemove, collection, query, where, getDocs, Firestore } from 'firebase/firestore';
+import { getDb } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { SideRoom, RoomMember } from '../types/index';
 
@@ -42,10 +42,61 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
   onUpdate
 }) => {
   const { currentUser } = useAuth();
-  const [loading, setLoading] = useState(false);
+  const [db, setDb] = useState<Firestore | null>(null);
+  const [members, setMembers] = useState<RoomMember[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedMember, setSelectedMember] = useState<RoomMember | null>(null);
+
+  // Initialize Firestore
+  useEffect(() => {
+    const initializeDb = async () => {
+      try {
+        const firestore = await getDb();
+        setDb(firestore);
+      } catch (err) {
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
+      }
+    };
+
+    initializeDb();
+  }, []);
+
+  useEffect(() => {
+    if (db) {
+      fetchMembers();
+    }
+  }, [db]);
+
+  const fetchMembers = async () => {
+    if (!db) return;
+
+    try {
+      const membersQuery = query(
+        collection(db as Firestore, 'rooms', room.id, 'members')
+      );
+      const querySnapshot = await getDocs(membersQuery);
+      const membersList = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          userId: doc.id,
+          username: data.username || '',
+          avatar: data.avatar || '',
+          role: data.role || 'member',
+          joinedAt: data.joinedAt?.toDate() || new Date()
+        } as RoomMember;
+      });
+
+      setMembers(membersList);
+    } catch (error) {
+      console.error('Error fetching members:', error);
+      setError('Failed to fetch members');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, member: RoomMember) => {
     setAnchorEl(event.currentTarget);
@@ -58,14 +109,14 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
   };
 
   const handleRoleChange = async (newRole: 'admin' | 'moderator' | 'member') => {
-    if (!currentUser || !selectedMember || loading) return;
+    if (!currentUser || !selectedMember || loading || !db) return;
 
     try {
       setLoading(true);
       setError(null);
 
-      const roomRef = doc(db, 'sideRooms', room.id);
-      const updatedMembers = room.members.map(member => {
+      const roomRef = doc(db as Firestore, 'rooms', room.id);
+      const updatedMembers = members.map(member => {
         if (member.userId === selectedMember.userId) {
           return { ...member, role: newRole };
         }
@@ -76,6 +127,7 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
         members: updatedMembers
       });
 
+      setMembers(updatedMembers);
       onUpdate(updatedMembers);
       handleMenuClose();
     } catch (error) {
@@ -87,14 +139,14 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
   };
 
   const handleKickMember = async () => {
-    if (!currentUser || !selectedMember || loading) return;
+    if (!currentUser || !selectedMember || loading || !db) return;
 
     try {
       setLoading(true);
       setError(null);
 
-      const roomRef = doc(db, 'sideRooms', room.id);
-      const updatedMembers = room.members.filter(
+      const roomRef = doc(db as Firestore, 'rooms', room.id);
+      const updatedMembers = members.filter(
         member => member.userId !== selectedMember.userId
       );
 
@@ -103,6 +155,7 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
         memberCount: updatedMembers.length
       });
 
+      setMembers(updatedMembers);
       onUpdate(updatedMembers);
       handleMenuClose();
     } catch (error) {
@@ -114,13 +167,13 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
   };
 
   const handleToggleLive = async (member: RoomMember) => {
-    if (!currentUser || loading) return;
+    if (!db || !currentUser) return;
 
     try {
       setLoading(true);
       setError(null);
 
-      const roomRef = doc(db, 'sideRooms', room.id);
+      const roomRef = doc(db as Firestore, 'rooms', room.id);
       const isLive = room.liveParticipants.includes(member.userId);
 
       await updateDoc(roomRef, {
@@ -129,7 +182,7 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
           : arrayUnion(member.userId)
       });
 
-      onUpdate(room.members);
+      onUpdate(members);
     } catch (error) {
       console.error('Error toggling live status:', error);
       setError('Failed to toggle live status');
@@ -140,7 +193,7 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
 
   const canManageMember = (member: RoomMember) => {
     if (!currentUser) return false;
-    const currentUserRole = room.members.find(m => m.userId === currentUser.uid)?.role;
+    const currentUserRole = members.find(m => m.userId === currentUser.uid)?.role;
     const targetRole = member.role;
 
     if (currentUserRole === 'owner') return true;
@@ -156,7 +209,7 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         
         <List>
-          {room.members.map((member) => (
+          {members.map((member) => (
             <ListItem key={member.userId}>
               <Avatar src={member.avatar} sx={{ mr: 2 }}>
                 {member.username.charAt(0)}

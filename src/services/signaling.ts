@@ -1,4 +1,4 @@
-import { rtdb } from '../config/firebase';
+import { rtdb } from './firebase';
 import { ref, set, onValue, off } from 'firebase/database';
 
 interface SignalingData {

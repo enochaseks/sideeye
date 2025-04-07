@@ -40,13 +40,14 @@ import {
   Message as MessageIcon,
   Delete as DeleteIcon
 } from '@mui/icons-material';
-import { auth, db, storage } from '../services/firebase';
+import { auth, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { formatDistanceToNow } from 'date-fns';
 import { User, UserProfile, SideRoom } from '../types/index';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useFirestore } from '../context/FirestoreContext';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -61,6 +62,10 @@ interface Post {
   timestamp: any;
   likes: string[];
   comments: number;
+  authorAvatar?: string;
+  authorName?: string;
+  isEdited?: boolean;
+  likedBy?: string[];
 }
 
 interface Forum {
@@ -120,6 +125,7 @@ const Profile: React.FC = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { userId: urlUserId } = useParams<{ userId: string }>();
   const { currentUser, userProfile, loading: authLoading, setUserProfile } = useAuth();
+  const { db } = useFirestore();
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -149,6 +155,7 @@ const Profile: React.FC = () => {
   const [editedName, setEditedName] = useState('');
   const [editedBio, setEditedBio] = useState('');
   const [editedUsername, setEditedUsername] = useState('');
+  const [isFollowing, setIsFollowing] = useState(false);
   
   // Get the user ID from URL params or current user
   const userId = urlUserId || currentUser?.uid || '';
@@ -156,6 +163,12 @@ const Profile: React.FC = () => {
   const fetchUserData = useCallback(async () => {
     if (!userId) {
       setError('No user ID provided');
+      setIsLoading(false);
+      return;
+    }
+
+    if (!db) {
+      setError('Database not initialized');
       setIsLoading(false);
       return;
     }
@@ -190,131 +203,96 @@ const Profile: React.FC = () => {
         }
       }
 
-      // Set up real-time listeners for all collections
-      const postsUnsubscribe = onSnapshot(
-        query(collection(db, 'posts'), where('authorId', '==', userId)),
-        (snapshot) => {
-          const newPosts = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: String(doc.id),
-              content: String(data.content || ''),
-              authorId: String(data.authorId || ''),
-              timestamp: data.timestamp?.toDate() || new Date(),
-              likes: Array.isArray(data.likes) ? data.likes : [],
-              comments: Number(data.comments || 0)
-            } as Post;
-          });
-          setPosts(newPosts);
-        },
-        (error) => {
-          console.error('Error fetching posts:', error);
-          setError('Error loading posts. Please try again later.');
-        }
+      // Fetch posts
+      const postsQuery = query(
+        collection(db, 'posts'),
+        where('authorId', '==', userId),
+        orderBy('timestamp', 'desc')
       );
 
-      const forumsUnsubscribe = onSnapshot(
-        query(collection(db, 'forums'), where('members', 'array-contains', userId)),
-        (snapshot) => {
-          const newForums = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: String(doc.id),
-              title: String(data.title || ''),
-              description: String(data.description || ''),
-              members: Array.isArray(data.members) ? data.members : [],
-              memberCount: Number(data.memberCount || 0),
-              ownerId: String(data.ownerId || '')
-            } as Forum;
-          });
-          setForums(newForums);
-        },
-        (error) => {
-          console.error('Error fetching forums:', error);
-          setError('Error loading forums. Please try again later.');
-        }
+      const unsubscribePosts = onSnapshot(postsQuery, (snapshot) => {
+        const postsList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Post[];
+        setPosts(postsList);
+      });
+
+      // Fetch forums
+      const forumsQuery = query(
+        collection(db, 'forums'),
+        where('ownerId', '==', userId),
+        orderBy('createdAt', 'desc')
       );
 
-      const sideRoomsUnsubscribe = onSnapshot(
-        query(collection(db, 'sideRooms'), where('members', 'array-contains', userId)),
-        (snapshot) => {
-          const newSideRooms = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: String(doc.id),
-              name: String(data.name || ''),
-              description: String(data.description || ''),
-              ownerId: String(data.ownerId || ''),
-              members: Array.isArray(data.members) ? data.members : [],
-              memberCount: Number(data.memberCount || 0),
-              createdAt: data.createdAt?.toDate() || new Date(),
-              isPrivate: Boolean(data.isPrivate),
-              isLive: Boolean(data.isLive),
-              liveParticipants: Array.isArray(data.liveParticipants) ? data.liveParticipants : [],
-              category: String(data.category || ''),
-              scheduledReveals: Array.isArray(data.scheduledReveals) ? data.scheduledReveals : [],
-              activeUsers: Number(data.activeUsers || 0)
-            } as SideRoom;
-          });
-          setSideRooms(newSideRooms);
-        },
-        (error) => {
-          console.error('Error fetching side rooms:', error);
-          setError('Error loading side rooms. Please try again later.');
-        }
+      const unsubscribeForums = onSnapshot(forumsQuery, (snapshot) => {
+        const forumsList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Forum[];
+        setForums(forumsList);
+      });
+
+      // Fetch side rooms
+      const roomsQuery = query(
+        collection(db, 'sideRooms'),
+        where('ownerId', '==', userId),
+        orderBy('createdAt', 'desc')
       );
 
-      const likedPostsUnsubscribe = onSnapshot(
-        query(collection(db, 'posts'), where('likes', 'array-contains', userId)),
-        (snapshot) => {
-          const newLikedPosts = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: String(doc.id),
-              content: String(data.content || ''),
-              authorId: String(data.authorId || ''),
-              timestamp: data.timestamp?.toDate() || new Date(),
-              likes: Array.isArray(data.likes) ? data.likes : [],
-              comments: Number(data.comments || 0)
-            } as Post;
-          });
-          setLikedPosts(newLikedPosts);
-        },
-        (error) => {
-          console.error('Error fetching liked posts:', error);
-          setError('Error loading liked posts. Please try again later.');
-        }
+      const unsubscribeRooms = onSnapshot(roomsQuery, (snapshot) => {
+        const roomsList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as SideRoom[];
+        setSideRooms(roomsList);
+      });
+
+      // Fetch liked posts
+      const likedPostsQuery = query(
+        collection(db, 'posts'),
+        where('likedBy', 'array-contains', userId),
+        orderBy('timestamp', 'desc')
       );
 
-      const deletedItemsUnsubscribe = onSnapshot(
-        query(collection(db, 'deleted_items'), where('userId', '==', userId)),
-        (snapshot) => {
-          setDeletedItems(snapshot.docs.map(doc => ({
-            id: doc.id,
-            type: doc.data().type || '',
-            content: doc.data().content || {},
-            deletedAt: doc.data().deletedAt || new Date()
-          })) as DeletedItem[]);
-        }
+      const unsubscribeLikedPosts = onSnapshot(likedPostsQuery, (snapshot) => {
+        const likedPostsList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Post[];
+        setLikedPosts(likedPostsList);
+      });
+
+      // Fetch deleted items
+      const deletedItemsQuery = query(
+        collection(db, 'deleted_items'),
+        where('content.authorId', '==', userId),
+        orderBy('deletedAt', 'desc')
       );
 
-      setIsSubscribed(true);
+      const unsubscribeDeletedItems = onSnapshot(deletedItemsQuery, (snapshot) => {
+        const deletedItemsList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as DeletedItem[];
+        setDeletedItems(deletedItemsList);
+      });
+
+      setIsLoading(false);
 
       return () => {
-        postsUnsubscribe();
-        forumsUnsubscribe();
-        sideRoomsUnsubscribe();
-        likedPostsUnsubscribe();
-        deletedItemsUnsubscribe();
-        setIsSubscribed(false);
+        unsubscribePosts();
+        unsubscribeForums();
+        unsubscribeRooms();
+        unsubscribeLikedPosts();
+        unsubscribeDeletedItems();
       };
-    } catch (err) {
-      console.error('Error fetching user data:', err);
-      setError('Failed to load profile data');
-    } finally {
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+      setError('Failed to fetch user data');
       setIsLoading(false);
     }
-  }, [userId, currentUser, userProfile]);
+  }, [userId, currentUser, userProfile, db]);
 
   useEffect(() => {
     fetchUserData();
@@ -322,7 +300,10 @@ const Profile: React.FC = () => {
 
   useEffect(() => {
     const fetchUserLists = async () => {
-      if (!userId) return;
+      if (!userId || !db) {
+        setError('Database not initialized');
+        return;
+      }
 
       try {
         // Fetch followers
@@ -342,11 +323,12 @@ const Profile: React.FC = () => {
         setFollowingList(followingData.filter(Boolean) as UserProfile[]);
       } catch (error) {
         console.error('Error fetching user lists:', error);
+        setError('Failed to fetch user lists');
       }
     };
 
     fetchUserLists();
-  }, [userId, followers, connections]);
+  }, [userId, followers, connections, db]);
 
   useEffect(() => {
     if (userProfile) {
@@ -356,8 +338,17 @@ const Profile: React.FC = () => {
     }
   }, [userProfile]);
 
+  useEffect(() => {
+    // Update following status whenever followers change
+    setIsFollowing(currentUser?.uid ? followers.includes(currentUser.uid) : false);
+  }, [currentUser, followers]);
+
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentUser || !e.target.files || !e.target.files[0]) return;
+    if (!db) {
+      setError('Database not initialized');
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -410,14 +401,17 @@ const Profile: React.FC = () => {
       }
     } catch (error) {
       console.error('Error updating profile picture:', error);
-      setError('Failed to update profile picture. Please try again.');
+      setError('Failed to update profile picture');
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleSaveProfile = async () => {
-    if (!currentUser) return;
+    if (!currentUser || !db) {
+      setError('Database not initialized');
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -447,26 +441,37 @@ const Profile: React.FC = () => {
     }
   };
 
-  // Update the follow button condition
-  const isFollowing = currentUser?.uid ? userProfile?.connections?.includes(userId) : false;
-
   const handleFollow = async () => {
-    if (!currentUser || !userId) return;
+    if (!db || !currentUser || !userId) return;
 
     try {
-      setIsLoading(true);
-      const userRef = doc(db, 'users', currentUser.uid);
+      const currentUserRef = doc(db, 'users', currentUser.uid);
       const targetUserRef = doc(db, 'users', userId);
 
-      // Add to current user's following
-      await updateDoc(userRef, {
+      // Update current user's following list
+      await updateDoc(currentUserRef, {
         connections: arrayUnion(userId)
       });
 
-      // Add to target user's followers
+      // Update target user's followers list
       await updateDoc(targetUserRef, {
         followers: arrayUnion(currentUser.uid)
       });
+
+      // Create notification for follow
+      const notificationData = {
+        type: 'follow',
+        senderId: currentUser.uid,
+        senderName: currentUser.displayName || 'Anonymous',
+        senderAvatar: currentUser.photoURL || '',
+        recipientId: userId,
+        read: false,
+        timestamp: serverTimestamp(),
+        content: `${currentUser.displayName || 'Someone'} started following you`,
+        link: `/profile/${currentUser.uid}`
+      };
+
+      await addDoc(collection(db, 'notifications'), notificationData);
 
       // Update local state
       if (userProfile) {
@@ -475,24 +480,19 @@ const Profile: React.FC = () => {
           connections: [...(userProfile.connections || []), userId]
         });
       }
-
-      // Refresh the user data to ensure consistency
-      const updatedUserDoc = await getDoc(doc(db, 'users', userId));
-      if (updatedUserDoc.exists()) {
-        const updatedUserData = updatedUserDoc.data() as UserProfile;
-        setConnections(updatedUserData.connections || []);
-        setFollowers(updatedUserData.followers || []);
-      }
+      setFollowers(prev => [...prev, currentUser.uid]);
+      setIsFollowing(true);
     } catch (error) {
       console.error('Error following user:', error);
       setError('Failed to follow user');
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const handleUnfollow = async (targetUserId?: string) => {
-    if (!currentUser || !userId) return;
+    if (!currentUser || !userId || !db) {
+      setError('Database not initialized');
+      return;
+    }
     const userToUnfollow = targetUserId || userId;
 
     try {
@@ -592,7 +592,10 @@ const Profile: React.FC = () => {
   };
 
   const handleSendMessage = async () => {
-    if (!currentUser || !userId || !newMessage.trim() || isSending) return;
+    if (!currentUser || !userId || !newMessage.trim() || isSending || !db) {
+      setError('Database not initialized');
+      return;
+    }
 
     try {
       setIsSending(true);
@@ -617,7 +620,10 @@ const Profile: React.FC = () => {
   };
 
   const handleMarkAsRead = async (messageId: string) => {
-    if (!currentUser) return;
+    if (!currentUser || !db) {
+      setError('Database not initialized');
+      return;
+    }
 
     try {
       const messageRef = doc(db, 'messages', messageId);
@@ -630,6 +636,11 @@ const Profile: React.FC = () => {
   };
 
   const handleRestoreItem = async (itemId: string, type: 'post' | 'room' | 'forum') => {
+    if (!db) {
+      setError('Database not initialized');
+      return;
+    }
+
     try {
       const deletedItemRef = doc(db, 'deleted_items', itemId);
       const deletedItemDoc = await getDoc(deletedItemRef);
@@ -663,6 +674,11 @@ const Profile: React.FC = () => {
   };
 
   const handlePermanentDelete = async (itemId: string) => {
+    if (!db) {
+      setError('Database not initialized');
+      return;
+    }
+
     try {
       await deleteDoc(doc(db, 'deleted_items', itemId));
       setDeletedItems(prev => prev.filter(item => item.id !== itemId));
@@ -674,7 +690,10 @@ const Profile: React.FC = () => {
   };
 
   const fetchMessages = async () => {
-    if (!auth.currentUser || !userId) return;
+    if (!auth.currentUser || !userId || !db) {
+      setError('Database not initialized');
+      return;
+    }
 
     try {
       const messagesQuery = query(
@@ -710,7 +729,10 @@ const Profile: React.FC = () => {
   }, [showMessagesDialog]);
 
   const handleDeletePost = async (postId: string) => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || !db) {
+      setError('Database not initialized');
+      return;
+    }
 
     try {
       const postRef = doc(db, 'posts', postId);
@@ -1071,25 +1093,38 @@ const Profile: React.FC = () => {
                   <List>
                     {posts.map((post) => (
                       <ListItem key={post.id} divider>
+                        <ListItemAvatar>
+                          <Avatar src={post.authorAvatar || undefined} />
+                        </ListItemAvatar>
                         <ListItemText
-                          primary={post.content}
-                          secondary={`Posted ${formatDistanceToNow(
-                            post.timestamp instanceof Date 
-                              ? post.timestamp 
-                              : post.timestamp?.toDate?.() || new Date()
-                          )} ago`}
+                          primary={
+                            <Box>
+                              <Typography variant="subtitle1" component="span">
+                                {post.authorName}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
+                                {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
+                              </Typography>
+                            </Box>
+                          }
+                          secondary={
+                            <Box>
+                              <Typography variant="body1" sx={{ mt: 1 }}>
+                                {post.content}
+                              </Typography>
+                              {post.isEdited && (
+                                <Typography variant="caption" color="text.secondary">
+                                  (edited)
+                                </Typography>
+                              )}
+                            </Box>
+                          }
                         />
                         <ListItemSecondaryAction>
                           <IconButton edge="end" aria-label="likes">
-                            <FavoriteIcon />
+                            <FavoriteIcon color={post.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />
                             <Typography variant="body2" sx={{ ml: 1 }}>
-                              {post.likes.length}
-                            </Typography>
-                          </IconButton>
-                          <IconButton edge="end" aria-label="comments">
-                            <CommentIcon />
-                            <Typography variant="body2" sx={{ ml: 1 }}>
-                              {post.comments}
+                              {post.likes || 0}
                             </Typography>
                           </IconButton>
                         </ListItemSecondaryAction>

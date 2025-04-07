@@ -115,29 +115,6 @@ const About: React.FC = () => {
                 color: 'primary.main'
               }}
             >
-              Achievements
-            </Typography>
-            <Typography 
-              variant="h4" 
-              sx={{ 
-                lineHeight: 1.8,
-                color: 'text.secondary',
-                fontSize: { xs: '1.25rem', md: '1.5rem' }
-              }}
-            >
-              Earn badges and recognition for your contributions to the community.
-            </Typography>
-          </Box>
-          <Box>
-            <Typography 
-              variant="h3" 
-              sx={{ 
-                fontWeight: 'medium',
-                mb: 3,
-                fontSize: { xs: '1.75rem', md: '2rem' },
-                color: 'primary.main'
-              }}
-            >
               Leaderboard
             </Typography>
             <Typography 

@@ -11,61 +11,108 @@ import {
   Paper,
   CircularProgress
 } from '@mui/material';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { collection, query, where, getDocs, orderBy, limit, Firestore } from 'firebase/firestore';
+import { getDb } from '../services/firebase';
 import { Link } from 'react-router-dom';
 import { UserProfile } from '../types/index';
+import { useAuth } from '../contexts/AuthContext';
+
+interface SearchResult {
+  id: string;
+  type: 'user' | 'post' | 'room';
+  title: string;
+  description?: string;
+  avatar?: string;
+}
 
 const SearchBar: React.FC = () => {
+  const { currentUser } = useAuth();
+  const [db, setDb] = useState<Firestore | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [results, setResults] = useState<UserProfile[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  // Initialize Firestore
   useEffect(() => {
-    const searchUsers = async () => {
-      if (!searchTerm.trim()) {
-        setResults([]);
-        return;
-      }
-
-      setLoading(true);
+    const initializeDb = async () => {
       try {
-        const usersRef = collection(db, 'users');
-        const q = query(
-          usersRef,
-          where('username', '>=', searchTerm.toLowerCase()),
-          where('username', '<=', searchTerm.toLowerCase() + '\uf8ff'),
-          orderBy('username'),
-          limit(5)
-        );
-
-        const querySnapshot = await getDocs(q);
-        const searchResults = querySnapshot.docs.map(doc => ({
-          uid: doc.id,
-          username: doc.data().username || '',
-          email: doc.data().email || '',
-          name: doc.data().name || '',
-          avatar: doc.data().avatar || '',
-          profilePic: doc.data().profilePic || '',
-          bio: doc.data().bio || '',
-          isVerified: doc.data().isVerified || false,
-          followers: doc.data().followers || [],
-          following: doc.data().following || 0,
-          posts: doc.data().posts || 0,
-          createdAt: doc.data().createdAt || new Date()
-        })) as UserProfile[];
-
-        setResults(searchResults);
-      } catch (error) {
-        console.error('Error searching users:', error);
-      } finally {
-        setLoading(false);
+        const firestore = await getDb();
+        setDb(firestore);
+      } catch (err) {
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
       }
     };
 
-    const debounceTimer = setTimeout(searchUsers, 300);
-    return () => clearTimeout(debounceTimer);
-  }, [searchTerm]);
+    initializeDb();
+  }, []);
+
+  useEffect(() => {
+    if (db && searchTerm.trim()) {
+      searchContent();
+    } else {
+      setResults([]);
+    }
+  }, [db, searchTerm]);
+
+  const searchContent = async () => {
+    if (!db || !currentUser) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Search users
+      const usersQuery = query(
+        collection(db, 'users'),
+        where('username', '>=', searchTerm),
+        where('username', '<=', searchTerm + '\uf8ff')
+      );
+      const usersSnapshot = await getDocs(usersQuery);
+      const userResults = usersSnapshot.docs.map(doc => ({
+        id: doc.id,
+        type: 'user' as const,
+        title: doc.data().username,
+        avatar: doc.data().avatar
+      }));
+
+      // Search posts
+      const postsQuery = query(
+        collection(db, 'posts'),
+        where('content', '>=', searchTerm),
+        where('content', '<=', searchTerm + '\uf8ff')
+      );
+      const postsSnapshot = await getDocs(postsQuery);
+      const postResults = postsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        type: 'post' as const,
+        title: doc.data().content.substring(0, 50) + '...',
+        description: `Posted by ${doc.data().authorName}`
+      }));
+
+      // Search rooms
+      const roomsQuery = query(
+        collection(db, 'rooms'),
+        where('name', '>=', searchTerm),
+        where('name', '<=', searchTerm + '\uf8ff')
+      );
+      const roomsSnapshot = await getDocs(roomsQuery);
+      const roomResults = roomsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        type: 'room' as const,
+        title: doc.data().name,
+        description: doc.data().description
+      }));
+
+      setResults([...userResults, ...postResults, ...roomResults]);
+    } catch (error) {
+      console.error('Error searching content:', error);
+      setError('Failed to search content');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <Box sx={{ position: 'relative', width: '100%' }}>
@@ -97,11 +144,11 @@ const SearchBar: React.FC = () => {
             </Box>
           ) : results.length > 0 ? (
             <List>
-              {results.map((user) => (
+              {results.map((result) => (
                 <ListItem 
-                  key={user.uid} 
+                  key={result.id} 
                   component={Link} 
-                  to={`/profile/${user.uid}`}
+                  to={`/profile/${result.id}`}
                   sx={{ 
                     textDecoration: 'none',
                     color: 'inherit',
@@ -111,11 +158,11 @@ const SearchBar: React.FC = () => {
                   }}
                 >
                   <ListItemAvatar>
-                    <Avatar src={user.profilePic} />
+                    <Avatar src={result.avatar} />
                   </ListItemAvatar>
                   <ListItemText
-                    primary={user.name}
-                    secondary={`@${user.username}`}
+                    primary={result.title}
+                    secondary={result.description}
                   />
                 </ListItem>
               ))}

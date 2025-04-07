@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useHotkeys } from 'react-hotkeys-hook';
 import { useAuthState, useSignOut } from 'react-firebase-hooks/auth';
-import { auth, db } from '../services/firebase';
-import { collection, query, where, getDocs, orderBy, limit, getDoc, doc } from 'firebase/firestore';
+import { auth, getDb } from '../services/firebase';
 import {
   AppBar,
   Toolbar,
@@ -11,100 +9,32 @@ import {
   Button,
   IconButton,
   Box,
-  InputBase,
   Menu,
   MenuItem,
-  Popper,
-  Paper,
-  List,
-  ListItem,
-  ListItemButton,
   Divider,
   Avatar,
-  Link,
   ListItemIcon,
   ListItemText,
-  TextField,
-  useTheme,
-  useMediaQuery,
-  InputAdornment,
-  ClickAwayListener,
-  CircularProgress,
-  ListItemAvatar
 } from '@mui/material';
 import {
   Menu as MenuIcon,
-  Search as SearchIcon,
-  FilterList as FilterIcon,
   LocalCafe,
-  Psychology,
-  EmojiEvents,
-  MilitaryTech,
-  Security as SecurityIcon,
   Person,
-  Info as InfoIcon,
-  Policy as PolicyIcon,
-  Cookie as CookieIcon,
-  Forum as ForumIcon,
   TrendingUp as TrendingUpIcon,
   Home as HomeIcon,
-  Notifications as NotificationsIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
-  Tag as TagIcon,
-  LocalCafe as SideRoomIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { NotificationIcon } from './NotificationIcon';
 
-interface SearchResult {
-  id: string;
-  type: 'user' | 'post' | 'forum' | 'sideRoom';
-  title: string;
-  subtitle?: string;
-  avatar?: string;
-}
-
-interface UserData {
-  username: string;
-  name: string;
-  profilePic: string;
-}
-
-interface PostData {
-  content: string;
-  authorId: string;
-  timestamp: any;
-  likes: string[];
-  comments: number;
-}
-
-interface ForumData {
-  title: string;
-  description: string;
-}
-
-interface SideRoomData {
-  name: string;
-  description: string;
-}
+const db = getDb();
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [user] = useAuthState(auth);
   const [signOut] = useSignOut(auth);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [selectedResultIndex, setSelectedResultIndex] = useState(-1);
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const [dateFilter, setDateFilter] = useState<'all' | 'day' | 'week' | 'month'>('all');
-  const [popularityFilter, setPopularityFilter] = useState<'all' | 'likes' | 'comments'>('all');
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchResultsRef = useRef<HTMLDivElement>(null);
   const { currentUser } = useAuth();
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
@@ -114,81 +44,6 @@ const Navbar: React.FC = () => {
   const handleMenuClose = () => {
     setAnchorEl(null);
   };
-
-  const handleSearch = async (searchQuery: string) => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    navigate(`/search?q=${encodeURIComponent(searchQuery)}`);
-  };
-
-  const handleResultClick = (result: SearchResult) => {
-    setShowResults(false);
-    setSearchQuery('');
-    switch (result.type) {
-      case 'user':
-        navigate(`/profile/${result.id}`);
-        break;
-      case 'post':
-        navigate(`/post/${result.id}`);
-        break;
-      case 'forum':
-        navigate(`/forum/${result.id}`);
-        break;
-      case 'sideRoom':
-        navigate(`/side-room/${result.id}`);
-        break;
-    }
-  };
-
-  // Add keyboard navigation support
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && searchResults.length > 0 && searchQuery) {
-        const firstResult = searchResults[0];
-        handleResultClick(firstResult);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [searchResults, searchQuery]);
-
-  // Keyboard navigation for search results
-  useHotkeys('up', () => {
-    if (showResults && searchResults.length > 0) {
-      setSelectedResultIndex(prev => 
-        prev <= 0 ? searchResults.length - 1 : prev - 1
-      );
-    }
-  }, { enableOnFormTags: true });
-
-  useHotkeys('down', () => {
-    if (showResults && searchResults.length > 0) {
-      setSelectedResultIndex(prev => 
-        prev >= searchResults.length - 1 ? 0 : prev + 1
-      );
-    }
-  }, { enableOnFormTags: true });
-
-  useHotkeys('esc', () => {
-    setShowResults(false);
-  }, { enableOnFormTags: true });
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (searchResultsRef.current && !searchResultsRef.current.contains(event.target as Node)) {
-        setShowResults(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -254,28 +109,6 @@ const Navbar: React.FC = () => {
             </Typography>
           </Box>
 
-          <Box sx={{ flexGrow: 1, position: 'relative', maxWidth: 600, mx: 4 }}>
-            <TextField
-              fullWidth
-              size="small"
-              placeholder="Search users, posts, forums..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter') {
-                  handleSearch(searchQuery);
-                }
-              }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Box>
-
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             {user ? (
               <>
@@ -291,17 +124,7 @@ const Navbar: React.FC = () => {
                 >
                   <HomeIcon />
                 </IconButton>
-                <IconButton
-                  color="inherit"
-                  sx={{ 
-                    color: 'text.primary',
-                    '&:hover': {
-                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                    },
-                  }}
-                >
-                  <NotificationsIcon />
-                </IconButton>
+                <NotificationIcon />
                 <IconButton
                   color="inherit"
                   onClick={handleMenuOpen}
@@ -364,41 +187,18 @@ const Navbar: React.FC = () => {
               </ListItemIcon>
               <ListItemText primary="Side Rooms" />
             </MenuItem>
-            <MenuItem onClick={() => handleNavigation('/forums')}>
+            <MenuItem onClick={() => handleNavigation('/discover')}>
               <ListItemIcon>
-                <ForumIcon />
+                <TrendingUpIcon />
               </ListItemIcon>
-              <ListItemText primary="Forums" />
+              <ListItemText primary="Discover" />
             </MenuItem>
-            <MenuItem onClick={() => handleNavigation('/safety')}>
+            <Divider />
+            <MenuItem onClick={() => handleNavigation('/settings')}>
               <ListItemIcon>
-                <SecurityIcon />
+                <SettingsIcon />
               </ListItemIcon>
-              <ListItemText primary="Safety" />
-            </MenuItem>
-            <MenuItem onClick={() => handleNavigation('/about')}>
-              <ListItemIcon>
-                <InfoIcon />
-              </ListItemIcon>
-              <ListItemText>About</ListItemText>
-            </MenuItem>
-            <MenuItem onClick={() => handleNavigation('/privacy-policy')}>
-              <ListItemIcon>
-                <PolicyIcon />
-              </ListItemIcon>
-              <ListItemText>Privacy Policy</ListItemText>
-            </MenuItem>
-            <MenuItem onClick={() => handleNavigation('/terms')}>
-              <ListItemIcon>
-                <PolicyIcon />
-              </ListItemIcon>
-              <ListItemText>Terms of Service</ListItemText>
-            </MenuItem>
-            <MenuItem onClick={() => handleNavigation('/cookies')}>
-              <ListItemIcon>
-                <CookieIcon />
-              </ListItemIcon>
-              <ListItemText>Cookie Policy</ListItemText>
+              <ListItemText primary="Settings" />
             </MenuItem>
             {user && (
               <>
@@ -411,7 +211,7 @@ const Navbar: React.FC = () => {
                 </MenuItem>
                 <MenuItem onClick={handleSignOut}>
                   <ListItemIcon>
-                    <Person />
+                    <LogoutIcon />
                   </ListItemIcon>
                   <ListItemText>Logout</ListItemText>
                 </MenuItem>

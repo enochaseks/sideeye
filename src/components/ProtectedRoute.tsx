@@ -16,17 +16,17 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requireEmailVerification = false,
   require2FA = false
 }) => {
-  const { user, loading, userProfile } = useAuth();
+  const { currentUser, loading, userProfile } = useAuth();
 
   if (loading) {
     return <LoadingSpinner message="Checking authentication..." />;
   }
 
-  if (requireAuth && !user) {
+  if (requireAuth && !currentUser) {
     return <Navigate to="/login" replace />;
   }
 
-  if (requireEmailVerification && user && !user.emailVerified) {
+  if (requireEmailVerification && currentUser && !currentUser.emailVerified) {
     return <Navigate to="/verify-email" replace />;
   }
 

@@ -1,5 +1,5 @@
-import { doc, updateDoc, getDoc, arrayUnion } from 'firebase/firestore';
-import { db } from './firebase';
+import { doc, updateDoc, getDoc, arrayUnion, Firestore } from 'firebase/firestore';
+import { getDb } from './firebase';
 
 interface ModerationResult {
   isApproved: boolean;
@@ -70,6 +70,8 @@ const CYBERCRIME_PATTERNS = [
   /crack\s+password/i,
 ];
 
+const db = getDb();
+
 export const moderateContent = async (
   content: string,
   userId: string
@@ -124,7 +126,8 @@ export const moderateContent = async (
   }
 
   // Check user's warning history
-  const userRef = doc(db, 'users', userId);
+  const firestore = await db;
+  const userRef = doc(firestore, 'users', userId);
   const userDoc = await getDoc(userRef);
   
   if (userDoc.exists()) {
@@ -177,4 +180,21 @@ export const getModerationGuidelines = () => ({
     'Third violation: Account suspension',
     'Severe violations: Permanent ban'
   ]
-}); 
+});
+
+export const checkUserWarnings = async (db: Firestore, userId: string): Promise<boolean> => {
+  // Check user's warning history
+  const userRef = doc(db, 'users', userId);
+  const userDoc = await getDoc(userRef);
+  
+  if (userDoc.exists()) {
+    const userData = userDoc.data();
+    const warningHistory = userData.warningHistory || [];
+    
+    if (warningHistory.length >= 3) {
+      return true;
+    }
+  }
+
+  return false;
+}; 

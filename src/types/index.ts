@@ -1,11 +1,9 @@
+import { Timestamp } from 'firebase/firestore';
+
 export interface User {
   uid: string;
   username: string;
   email: string;
-  shadePoints: number;
-  pettyLevel: number;
-  badges: Badge[];
-  truthScore: number;
   profilePic?: string;
   photoURL?: string;
   displayName?: string;
@@ -29,14 +27,7 @@ export interface Post {
   tags: string[];
 }
 
-export interface Badge {
-  id: string;
-  name: string;
-  description: string;
-  imageUrl: string;
-  category: 'shade' | 'petty' | 'truth' | 'tea';
-  level: 'bronze' | 'silver' | 'gold' | 'platinum';
-}
+
 
 export interface SideRoom {
   id: string;
@@ -58,6 +49,8 @@ export interface SideRoom {
   maxParticipants?: number;
   rules?: string[];
   bannedUsers?: string[];
+  lastActive: Date;
+  maxMembers: number;
 }
 
 export interface RoomMember {
@@ -87,12 +80,10 @@ export interface Comment {
   authorId: string;
   authorName: string;
   authorAvatar: string;
-  timestamp: any;
+  timestamp: Timestamp;
   likes: number;
   likedBy: string[];
   isEdited: boolean;
-  lastEdited?: any;
-  replies?: Comment[];
 }
 
 export interface Author {
@@ -103,20 +94,25 @@ export interface Author {
 
 export interface PostData {
   id: string;
+  content: string;
   authorId: string;
   authorName: string;
   authorAvatar: string;
-  content: string;
-  imageUrl?: string;
-  timestamp: any;
+  timestamp: Timestamp;
   likes: number;
   likedBy: string[];
   comments: Comment[];
-  originalPostId?: string;
-  originalAuthor?: Author;
+  imageUrl?: string;
   tags?: string[];
-  location?: string;
-  isPrivate?: boolean;
+  isPrivate: boolean;
+  userId: string;
+  reposts: number;
+  views: number;
+  isPinned: boolean;
+  isEdited: boolean;
+  lastEdited?: Timestamp;
+  isArchived: boolean;
+  deleted: boolean;
 }
 
 export interface PostProps extends Omit<PostData, 'comments'> {
@@ -178,23 +174,38 @@ export interface DramaHotspot {
 }
 
 export interface UserProfile {
-  uid: string;
+  id: string;
+  name: string;
   username: string;
   email: string;
-  name: string;
-  avatar: string;
   profilePic: string;
-  bio?: string;
-  isVerified: boolean;
+  bio: string;
+  location: string;
+  website: string;
   followers: string[];
-  following: number;
-  posts: number;
-  shadePoints?: number;
-  pettyLevel?: number;
-  badges?: Badge[];
-  truthScore?: number;
-  createdAt?: any;
-  connections?: string[];
+  following: string[];
+  connections: string[];
+  isVerified: boolean;
+  createdAt: Timestamp;
+  lastLogin: Timestamp;
+  settings: {
+    theme: 'light' | 'dark';
+    notifications: boolean;
+    privacy: 'public' | 'private';
+  };
+  blockedUsers?: string[];
+  updatedAt?: Date;
+  isPrivate?: boolean;
+  isActive?: boolean;
+  lastSeen?: Date;
+  status?: string;
+  preferences?: {
+    theme: 'light' | 'dark';
+    language: string;
+    notifications: boolean;
+    emailNotifications: boolean;
+    pushNotifications: boolean;
+  };
 }
 
 export interface TrendingTopic {

@@ -15,8 +15,9 @@ import {
   Alert,
   Snackbar,
 } from '@mui/material';
-import { db } from '../../services/firebase';
-import { doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
+import { getDb } from '../../services/firebase';
+import { doc, updateDoc, arrayUnion, getDoc, Firestore } from 'firebase/firestore';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface ReportContentProps {
   contentId: string;
@@ -49,57 +50,66 @@ const ReportContent: React.FC<ReportContentProps> = ({
   onClose,
   open,
 }) => {
+  const { currentUser } = useAuth();
+  const [db, setDb] = useState<Firestore | null>(null);
+  const [preview, setPreview] = useState<ContentPreview | null>(null);
   const [reportType, setReportType] = useState('');
   const [description, setDescription] = useState('');
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [preview, setPreview] = useState<ContentPreview | null>(null);
+  const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState({ open: false, message: '' });
 
+  // Initialize Firestore
   useEffect(() => {
-    const fetchContent = async () => {
+    const initializeDb = async () => {
       try {
-        const contentRef = doc(db, contentType + 's', contentId);
-        const contentDoc = await getDoc(contentRef);
-        if (contentDoc.exists()) {
-          setPreview(contentDoc.data() as ContentPreview);
-        }
+        const firestore = await getDb();
+        setDb(firestore);
       } catch (err) {
-        console.error('Error fetching content preview:', err);
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
       }
     };
 
-    if (open) {
+    initializeDb();
+  }, []);
+
+  useEffect(() => {
+    if (db && open) {
       fetchContent();
     }
-  }, [contentId, contentType, open]);
+  }, [db, open]);
 
-  const handleSubmit = async () => {
-    if (!reportType) {
-      setError('Please select a report type');
-      return;
-    }
-
-    if (!description.trim()) {
-      setError('Please provide a description');
-      return;
-    }
+  const fetchContent = async () => {
+    if (!db) return;
 
     try {
-      setSubmitting(true);
+      const contentRef = doc(db, contentType + 's', contentId);
+      const contentDoc = await getDoc(contentRef);
+      if (contentDoc.exists()) {
+        setPreview(contentDoc.data() as ContentPreview);
+      }
+    } catch (error) {
+      console.error('Error fetching content:', error);
+      setError('Failed to fetch content');
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!currentUser || !db) return;
+
+    try {
+      setLoading(true);
       setError('');
 
       const reportRef = doc(db, 'reports', contentId);
       await updateDoc(reportRef, {
         reports: arrayUnion({
           type: reportType,
-          description: description.trim(),
-          contentType,
-          timestamp: new Date().toISOString(),
-          status: 'pending',
-          reviewedBy: null,
-          resolution: null,
-        }),
+          description,
+          reporterId: currentUser.uid,
+          timestamp: new Date().toISOString()
+        })
       });
 
       // Create notification for admins
@@ -108,10 +118,9 @@ const ReportContent: React.FC<ReportContentProps> = ({
         reports: arrayUnion({
           contentId,
           contentType,
-          reportType,
-          timestamp: new Date().toISOString(),
-          status: 'unread',
-        }),
+          reporterId: currentUser.uid,
+          timestamp: new Date().toISOString()
+        })
       });
 
       setNotification({
@@ -119,10 +128,11 @@ const ReportContent: React.FC<ReportContentProps> = ({
         message: 'Report submitted successfully. Our team will review it shortly.',
       });
       onClose();
-    } catch (err) {
-      setError('Error submitting report. Please try again.');
+    } catch (error) {
+      console.error('Error submitting report:', error);
+      setError('Failed to submit report');
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   };
 
@@ -191,16 +201,16 @@ const ReportContent: React.FC<ReportContentProps> = ({
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={onClose} disabled={submitting}>
+          <Button onClick={onClose} disabled={loading}>
             Cancel
           </Button>
           <Button
             onClick={handleSubmit}
             variant="contained"
             color="primary"
-            disabled={submitting}
+            disabled={loading}
           >
-            {submitting ? <CircularProgress size={24} /> : 'Submit Report'}
+            {loading ? <CircularProgress size={24} /> : 'Submit Report'}
           </Button>
         </DialogActions>
       </Dialog>

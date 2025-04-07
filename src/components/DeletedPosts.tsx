@@ -20,9 +20,10 @@ import {
   arrayUnion,
   serverTimestamp,
   increment,
-  getDoc
+  getDoc,
+  Firestore
 } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { getDb } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
 import RestoreIcon from '@mui/icons-material/Restore';
@@ -42,42 +43,62 @@ interface DeletedPost {
 
 const DeletedPosts: React.FC = () => {
   const { currentUser } = useAuth();
+  const [db, setDb] = useState<Firestore | null>(null);
   const [deletedPosts, setDeletedPosts] = useState<DeletedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [permanentlyDeleting, setPermanentlyDeleting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
+  // Initialize Firestore
   useEffect(() => {
-    const fetchDeletedPosts = async () => {
-      if (!currentUser) return;
-
+    const initializeDb = async () => {
       try {
-        const deletedPostsQuery = query(
-          collection(db, 'deleted_posts'),
-          where('userId', '==', currentUser.uid)
-        );
-
-        const snapshot = await getDocs(deletedPostsQuery);
-        const posts = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          deletedAt: doc.data().deletedAt?.toDate(),
-          scheduledForDeletion: doc.data().scheduledForDeletion?.toDate()
-        })) as DeletedPost[];
-
-        setDeletedPosts(posts);
-      } catch (error) {
-        console.error('Error fetching deleted posts:', error);
-      } finally {
-        setLoading(false);
+        const firestore = await getDb();
+        setDb(firestore);
+      } catch (err) {
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
       }
     };
 
-    fetchDeletedPosts();
-  }, [currentUser]);
+    initializeDb();
+  }, []);
+
+  useEffect(() => {
+    if (db && currentUser) {
+      fetchDeletedPosts();
+    }
+  }, [db, currentUser]);
+
+  const fetchDeletedPosts = async () => {
+    if (!db || !currentUser) return;
+
+    try {
+      const deletedPostsQuery = query(
+        collection(db, 'deleted_posts'),
+        where('userId', '==', currentUser.uid)
+      );
+
+      const querySnapshot = await getDocs(deletedPostsQuery);
+      const posts = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        deletedAt: doc.data().deletedAt?.toDate(),
+        scheduledForDeletion: doc.data().scheduledForDeletion?.toDate()
+      })) as DeletedPost[];
+
+      setDeletedPosts(posts);
+    } catch (error) {
+      console.error('Error fetching deleted posts:', error);
+      setError('Failed to fetch deleted posts');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleRestore = async (postId: string) => {
-    if (!currentUser) return;
+    if (!db || !currentUser) return;
 
     setRestoring(postId);
     try {
@@ -100,13 +121,12 @@ const DeletedPosts: React.FC = () => {
       // Delete from deleted_posts collection
       await deleteDoc(deletedPostRef);
 
-      // Update local state
-      setDeletedPosts(prev => prev.filter(post => post.id !== postId));
-
       // Update user's post count
       await updateDoc(doc(db, 'users', currentUser.uid), {
         postCount: increment(1)
       });
+
+      setDeletedPosts(posts => posts.filter(post => post.id !== postId));
     } catch (error) {
       console.error('Error restoring post:', error);
     } finally {
@@ -115,17 +135,17 @@ const DeletedPosts: React.FC = () => {
   };
 
   const handlePermanentDelete = async (postId: string) => {
-    if (!currentUser) return;
-
+    if (!db) return;
     setPermanentlyDeleting(postId);
+
     try {
-      const deletedPostRef = doc(db, 'deleted_posts', postId);
+      const deletedPostRef = doc(db as Firestore, 'deleted_posts', postId);
       await deleteDoc(deletedPostRef);
 
-      // Update local state
-      setDeletedPosts(prev => prev.filter(post => post.id !== postId));
+      setDeletedPosts(posts => posts.filter(post => post.id !== postId));
     } catch (error) {
       console.error('Error permanently deleting post:', error);
+      setError('Failed to permanently delete post');
     } finally {
       setPermanentlyDeleting(null);
     }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { TextField, Button, Container, Typography, Box } from '@mui/material';
 import { auth } from '../services/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -64,6 +64,14 @@ const Login: React.FC = () => {
           >
             Sign In
           </Button>
+          <Box sx={{ textAlign: 'center', mt: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Don't have an account?{' '}
+              <Link to="/register" style={{ textDecoration: 'none', color: '#1976d2' }}>
+                Sign Up Here
+              </Link>
+            </Typography>
+          </Box>
         </Box>
       </Box>
     </Container>

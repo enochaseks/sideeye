@@ -10,11 +10,14 @@ import {
   Button,
   Typography,
   Grid,
+  Alert,
+  CircularProgress,
+  Skeleton,
 } from '@mui/material';
 import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, db, storage } from '../services/firebase';
-import { collection, addDoc, serverTimestamp, getDoc, doc, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { auth, getDb, storage } from '../services/firebase';
+import { collection, addDoc, serverTimestamp, getDoc, doc, query, orderBy, onSnapshot, where, Firestore } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 
 interface Story {
@@ -35,7 +38,11 @@ interface Sticker {
   isCustom: boolean;
 }
 
-const Stories: React.FC = () => {
+interface StoriesProps {
+  following: string[];
+}
+
+const Stories: React.FC<StoriesProps> = ({ following }) => {
   const { currentUser } = useAuth();
   const [stories, setStories] = useState<Story[]>([]);
   const [open, setOpen] = useState(false);
@@ -43,6 +50,9 @@ const Stories: React.FC = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedStickers, setSelectedStickers] = useState<Sticker[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [db, setDb] = useState<Firestore | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Default stickers
@@ -53,9 +63,24 @@ const Stories: React.FC = () => {
     { id: '4', url: '/stickers/cool.png', name: 'Cool', isCustom: false },
   ];
 
-  // Fetch user profile
+  // Initialize Firestore
   useEffect(() => {
-    if (!currentUser) return;
+    const initializeDb = async () => {
+      try {
+        const firestore = await getDb();
+        setDb(firestore);
+      } catch (err) {
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
+      }
+    };
+
+    initializeDb();
+  }, []);
+
+  // Fetch user profile and stories
+  useEffect(() => {
+    if (!currentUser || !db) return;
 
     const fetchUserProfile = async () => {
       try {
@@ -65,158 +90,284 @@ const Stories: React.FC = () => {
         }
       } catch (error) {
         console.error('Error fetching user profile:', error);
+        setError('Failed to load user profile');
+      }
+    };
+
+    const fetchStories = async () => {
+      try {
+        const storiesQuery = query(
+          collection(db, 'stories'),
+          where('authorId', 'in', [...following, currentUser.uid]),
+          orderBy('timestamp', 'desc')
+        );
+
+        const unsubscribe = onSnapshot(storiesQuery, async (snapshot) => {
+          try {
+            const newStories = await Promise.all(snapshot.docs.map(async (storyDoc) => {
+              const data = storyDoc.data();
+              const authorDoc = await getDoc(doc(db, 'users', data.authorId));
+              const authorData = authorDoc.data();
+              
+              return {
+                id: storyDoc.id,
+                imageUrl: data.imageUrl,
+                author: {
+                  name: authorData?.name || 'Anonymous',
+                  avatar: authorData?.profilePic || '',
+                  username: authorData?.username || ''
+                },
+                timestamp: data.timestamp?.toDate() || new Date()
+              };
+            }));
+            
+            setStories(newStories);
+          } catch (error) {
+            console.error('Error processing stories:', error);
+            setError('Failed to load stories');
+          }
+        });
+
+        return () => unsubscribe();
+      } catch (error) {
+        console.error('Error setting up stories listener:', error);
+        setError('Failed to load stories');
       }
     };
 
     fetchUserProfile();
-  }, [currentUser]);
+    fetchStories();
+  }, [currentUser, db, following]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+        setError('Image size should be less than 5MB');
+        return;
+      }
+      if (!file.type.match(/image\/(jpeg|png|gif)/)) {
+        setError('Only JPEG, PNG, and GIF images are allowed');
+        return;
+      }
       setImage(file);
       setImagePreview(URL.createObjectURL(file));
-      setOpen(true);
+      setError(null);
     }
   };
 
-  const handleStickerSelect = (sticker: Sticker) => {
-    setSelectedStickers(prev => [...prev, sticker]);
-  };
-
-  const handleCreateStory = async () => {
-    if (!image || !currentUser) return;
+  const handleUploadStory = async () => {
+    if (!currentUser || !db || !image) return;
 
     try {
-      // Upload the image
-      const storageRef = ref(storage, `stories/${Date.now()}_${image.name}`);
+      setIsLoading(true);
+      setError(null);
+
+      // Upload image to storage
+      const storageRef = ref(storage, `stories/${currentUser.uid}/${Date.now()}_${image.name}`);
       await uploadBytes(storageRef, image);
       const imageUrl = await getDownloadURL(storageRef);
 
-      // Create the story document
+      // Create story document
       const storyData = {
+        authorId: currentUser.uid,
         imageUrl,
-        author: {
-          name: currentUser.displayName || 'Anonymous',
-          avatar: userProfile?.profilePic || currentUser.photoURL || '',
-          username: currentUser.email?.split('@')[0] || 'anonymous',
-        },
-        timestamp: serverTimestamp(),
         stickers: selectedStickers,
+        timestamp: serverTimestamp(),
+        views: 0
       };
 
       await addDoc(collection(db, 'stories'), storyData);
       
-      setOpen(false);
+      // Reset form
       setImage(null);
       setImagePreview(null);
       setSelectedStickers([]);
+      setOpen(false);
     } catch (error) {
-      console.error('Error creating story:', error);
+      console.error('Error uploading story:', error);
+      setError('Failed to upload story');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  return (
-    <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', py: 2, px: 1 }}>
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <IconButton
-          onClick={() => fileInputRef.current?.click()}
-          sx={{
-            width: 64,
-            height: 64,
-            border: '2px dashed #ccc',
-            '&:hover': { borderColor: 'primary.main' },
-          }}
-        >
-          <AddIcon />
-        </IconButton>
-        <Typography variant="caption" sx={{ mt: 1 }}>
-          Create Story
-        </Typography>
-        <input
-          type="file"
-          accept="image/*"
-          onChange={handleImageChange}
-          style={{ display: 'none' }}
-          ref={fileInputRef}
-        />
-      </Box>
-
-      {stories.map((story) => (
-        <Box key={story.id} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <Avatar
-            src={story.author.avatar}
+  // Skeleton loader for stories
+  if (!stories.length && !error) {
+    return (
+      <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', py: 2 }}>
+        {/* Add Story Button - Always visible during loading */}
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center',
+          minWidth: '80px',
+          flexShrink: 0
+        }}>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageChange}
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+          />
+          <IconButton
+            onClick={() => fileInputRef.current?.click()}
             sx={{
               width: 64,
               height: 64,
-              border: '2px solid #1976d2',
+              border: '2px solid',
+              borderColor: 'primary.main',
+              bgcolor: 'background.paper',
+              '&:hover': {
+                borderColor: 'primary.dark',
+                bgcolor: 'action.hover'
+              }
             }}
-          />
-          <Typography variant="caption" sx={{ mt: 1 }}>
-            {story.author.name}
+          >
+            <AddIcon color="primary" />
+          </IconButton>
+          <Typography variant="caption" sx={{ mt: 1, color: 'text.primary' }}>
+            Add Story
           </Typography>
         </Box>
-      ))}
 
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Create Story</DialogTitle>
+        {/* Skeleton loaders for other stories */}
+        {[...Array(4)].map((_, index) => (
+          <Box key={index} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <Skeleton variant="circular" width={64} height={64} />
+            <Skeleton variant="text" width={80} sx={{ mt: 1 }} />
+          </Box>
+        ))}
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ mb: 3 }}>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+      
+      <Box sx={{ 
+        display: 'flex', 
+        gap: 2, 
+        overflowX: 'auto', 
+        py: 2,
+        '&::-webkit-scrollbar': {
+          display: 'none'
+        }
+      }}>
+        {/* Add Story Button - Always visible */}
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center',
+          minWidth: '80px',
+          flexShrink: 0
+        }}>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageChange}
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+          />
+          <IconButton
+            onClick={() => fileInputRef.current?.click()}
+            sx={{
+              width: 64,
+              height: 64,
+              border: '2px solid',
+              borderColor: 'primary.main',
+              bgcolor: 'background.paper',
+              '&:hover': {
+                borderColor: 'primary.dark',
+                bgcolor: 'action.hover'
+              }
+            }}
+          >
+            <AddIcon color="primary" />
+          </IconButton>
+          <Typography variant="caption" sx={{ mt: 1, color: 'text.primary' }}>
+            Add Story
+          </Typography>
+        </Box>
+
+        {/* Stories List */}
+        {stories.length > 0 ? (
+          stories.map((story) => (
+            <Box
+              key={story.id}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                cursor: 'pointer',
+                minWidth: '80px',
+                flexShrink: 0
+              }}
+              onClick={() => {/* Handle story view */}}
+            >
+              <Avatar
+                src={story.author.avatar}
+                alt={story.author.name}
+                sx={{
+                  width: 64,
+                  height: 64,
+                  border: '2px solid',
+                  borderColor: 'primary.main'
+                }}
+              />
+              <Typography variant="caption" sx={{ mt: 1, color: 'text.primary' }}>
+                {story.author.username}
+              </Typography>
+            </Box>
+          ))
+        ) : (
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            alignItems: 'center',
+            minWidth: '80px',
+            flexShrink: 0
+          }}>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+              No stories yet
+            </Typography>
+          </Box>
+        )}
+      </Box>
+
+      {/* Story Upload Dialog */}
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Create New Story</DialogTitle>
         <DialogContent>
           {imagePreview && (
-            <Box sx={{ position: 'relative', mb: 2 }}>
+            <Box sx={{ mt: 2, mb: 2 }}>
               <img
                 src={imagePreview}
                 alt="Preview"
-                style={{ width: '100%', borderRadius: '8px' }}
+                style={{ width: '100%', height: 'auto', borderRadius: '8px' }}
               />
-              {selectedStickers.map((sticker, index) => (
-                <img
-                  key={index}
-                  src={sticker.url}
-                  alt={sticker.name}
-                  style={{
-                    position: 'absolute',
-                    width: '50px',
-                    height: '50px',
-                    top: `${Math.random() * 50}%`,
-                    left: `${Math.random() * 50}%`,
-                  }}
-                />
-              ))}
             </Box>
           )}
-          
-          <Typography variant="h6" sx={{ mb: 2 }}>
-            Add Stickers
-          </Typography>
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 2 }}>
-            {defaultStickers.map((sticker) => (
-              <Box
-                key={sticker.id}
-                onClick={() => handleStickerSelect(sticker)}
-                sx={{
-                  cursor: 'pointer',
-                  p: 1,
-                  border: '1px solid #ccc',
-                  borderRadius: 1,
-                  '&:hover': { borderColor: 'primary.main' },
-                }}
-              >
-                <img
-                  src={sticker.url}
-                  alt={sticker.name}
-                  style={{ width: '100%', height: 'auto' }}
-                />
-                <Typography variant="caption" display="block" textAlign="center">
-                  {sticker.name}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
+          {isLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
+              <CircularProgress />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleCreateStory} variant="contained">
-            Create Story
+          <Button
+            onClick={handleUploadStory}
+            variant="contained"
+            disabled={!image || isLoading}
+          >
+            Upload Story
           </Button>
         </DialogActions>
       </Dialog>

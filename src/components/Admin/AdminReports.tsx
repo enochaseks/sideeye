@@ -20,8 +20,8 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
-import { db } from '../../services/firebase';
-import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { getDb } from '../../services/firebase';
+import { collection, query, where, getDocs, doc, updateDoc, Firestore } from 'firebase/firestore';
 
 interface Report {
   id: string;
@@ -41,12 +41,32 @@ const AdminReports: React.FC = () => {
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [resolution, setResolution] = useState('');
   const [updating, setUpdating] = useState(false);
+  const [db, setDb] = useState<Firestore | null>(null);
 
+  // Initialize Firestore
   useEffect(() => {
-    fetchReports();
+    const initializeDb = async () => {
+      try {
+        const firestore = await getDb();
+        setDb(firestore);
+      } catch (err) {
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
+      }
+    };
+
+    initializeDb();
   }, []);
 
+  useEffect(() => {
+    if (db) {
+      fetchReports();
+    }
+  }, [db]);
+
   const fetchReports = async () => {
+    if (!db) return;
+
     try {
       setLoading(true);
       const reportsRef = collection(db, 'reports');
@@ -72,7 +92,7 @@ const AdminReports: React.FC = () => {
   };
 
   const handleResolve = async () => {
-    if (!selectedReport || !resolution) return;
+    if (!selectedReport || !resolution || !db) return;
 
     try {
       setUpdating(true);

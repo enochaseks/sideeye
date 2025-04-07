@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { db } from '../../services/firebase';
+import { getDb } from '../../services/firebase';
 import { 
   doc, 
   getDoc, 
@@ -20,7 +20,8 @@ import {
   getDocs,
   where,
   writeBatch,
-  deleteDoc
+  deleteDoc,
+  Firestore
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -100,6 +101,7 @@ const SideRoomComponent: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const [db, setDb] = useState<Firestore | null>(null);
   const [room, setRoom] = useState<SideRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -166,109 +168,107 @@ const SideRoomComponent: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!roomId) {
-      setError('Room ID is required');
-      setLoading(false);
-      return;
-    }
+    const initializeDb = async () => {
+      try {
+        const firestore = await getDb();
+        setDb(firestore);
+      } catch (err) {
+        console.error('Error initializing Firestore:', err);
+        setError('Failed to initialize database');
+      }
+    };
 
-    let isSubscribed = true;
+    initializeDb();
+  }, []);
 
-    // Set up real-time listener for room changes
-    const roomRef = doc(db, 'sideRooms', roomId);
-    const unsubscribe = onSnapshot(
-      roomRef,
-      (doc) => {
-        if (!isSubscribed) return;
+  useEffect(() => {
+    if (!db || !currentUser) return;
 
-        if (doc.exists()) {
-          try {
-            const roomData = doc.data();
-            const owner = roomData.members?.find((member: RoomMember) => member.role === 'owner');
-            const newRoom: SideRoom = {
+    const setupRoomListener = () => {
+      try {
+        if (!roomId || !db) return () => {};
+        const roomRef = doc(db, 'sideRooms', roomId);
+        const unsubscribe = onSnapshot(roomRef, (doc) => {
+          if (doc.exists()) {
+            const data = doc.data();
+            const roomData: SideRoom = {
               id: doc.id,
-              name: String(roomData.name || ''),
-              description: String(roomData.description || ''),
-              ownerId: owner?.userId || '',
-              members: Array.isArray(roomData.members) ? roomData.members : [],
-              memberCount: Number(roomData.memberCount || 0),
-              createdAt: roomData.createdAt?.toDate() || new Date(),
-              isPrivate: Boolean(roomData.isPrivate),
-              password: roomData.password || undefined,
-              tags: Array.isArray(roomData.tags) ? roomData.tags : [],
-              imageUrl: roomData.imageUrl || undefined,
-              isLive: Boolean(roomData.isLive),
-              liveParticipants: Array.isArray(roomData.liveParticipants) ? roomData.liveParticipants : [],
-              category: String(roomData.category || ''),
-              scheduledReveals: Array.isArray(roomData.scheduledReveals) ? roomData.scheduledReveals : [],
-              activeUsers: Number(roomData.activeUsers || 0),
-              maxParticipants: Number(roomData.maxParticipants || 50),
-              rules: Array.isArray(roomData.rules) ? roomData.rules : [],
-              bannedUsers: Array.isArray(roomData.bannedUsers) ? roomData.bannedUsers : []
+              name: data.name || '',
+              description: data.description || '',
+              ownerId: data.ownerId || '',
+              members: data.members || [],
+              memberCount: data.memberCount || 0,
+              createdAt: data.createdAt || new Date(),
+              isPrivate: data.isPrivate || false,
+              password: data.password || '',
+              tags: data.tags || [],
+              lastActive: data.lastActive || new Date(),
+              maxMembers: data.maxMembers || 50,
+              bannedUsers: data.bannedUsers || [],
+              isLive: data.isLive || false,
+              liveParticipants: data.liveParticipants || [],
+              category: data.category || '',
+              scheduledReveals: data.scheduledReveals || [],
+              activeUsers: data.activeUsers || 0
             };
+            setRoom(roomData);
+            setLoading(false);
 
-            if (isSubscribed) {
-              setRoom(newRoom);
-              setLoading(false);
-
-              // Check if user is already a member
-              const isMember = newRoom.members?.some(member => member.userId === currentUser?.uid);
-              if (!isMember && newRoom.isPrivate) {
-                setShowPasswordDialog(true);
-              }
+            // Check if user is already a member
+            const isMember = roomData.members?.some(member => member.userId === currentUser.uid);
+            if (!isMember && roomData.isPrivate) {
+              setShowPasswordDialog(true);
+            } else if (isMember) {
+              // Only set up messages listener if user is a member
+              setupMessagesListener();
             }
-          } catch (err) {
-            if (isSubscribed) {
-              handleError(err, 'Failed to process room data');
-              setLoading(false);
-            }
-          }
-        } else {
-          if (isSubscribed) {
+          } else {
             setError('Room not found');
             setLoading(false);
           }
-        }
-      },
-      (err) => {
-        if (isSubscribed) {
-          handleError(err, 'Failed to fetch room data');
+        }, (error) => {
+          console.error('Error fetching room:', error);
+          setError('Failed to fetch room');
           setLoading(false);
-        }
+        });
+
+        return () => unsubscribe();
+      } catch (error) {
+        console.error('Error setting up room listener:', error);
+        setError('Failed to set up room listener');
+        setLoading(false);
+        return () => {};
       }
-    );
-
-    unsubscribeRef.current = unsubscribe;
-
-    // Cleanup subscription on unmount
-    return () => {
-      isSubscribed = false;
-      unsubscribe();
     };
-  }, [roomId, currentUser, handleError]);
 
-  useEffect(() => {
-    if (!roomId) return;
+    const setupMessagesListener = () => {
+      try {
+        if (!roomId || !db) return () => {};
+        const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+        const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
+        
+        const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
+          const newMessages = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as Message[];
+          
+          setMessages(newMessages);
+        });
 
-    // Set up messages listener
-    const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-    const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
-    
-    const unsubscribeMessages = onSnapshot(messagesQuery, (snapshot) => {
-      const newMessages = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toDate()
-      })) as Message[];
-      
-      setMessages(newMessages.reverse());
-      scrollToBottom();
-    });
-
-    return () => {
-      unsubscribeMessages();
+        return unsubscribe;
+      } catch (error) {
+        console.error('Error setting up messages listener:', error);
+        setError('Failed to listen to messages');
+        return () => {};
+      }
     };
-  }, [roomId]);
+
+    const roomUnsubscribe = setupRoomListener();
+    return () => {
+      if (roomUnsubscribe) roomUnsubscribe();
+    };
+  }, [db, roomId, currentUser]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -279,9 +279,9 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
+      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
 
-      await runTransaction(db, async (transaction) => {
+      await runTransaction(db as Firestore, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
           throw new Error('Room not found');
@@ -346,9 +346,9 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
+      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
 
-      await runTransaction(db, async (transaction) => {
+      await runTransaction(db as Firestore, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
           throw new Error('Room not found');
@@ -401,7 +401,7 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
+      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
       
       await updateDoc(roomRef, {
         isLive: !room.isLive,
@@ -422,7 +422,7 @@ const SideRoomComponent: React.FC = () => {
     if (!roomId || !currentUser || !newMessage.trim()) return;
 
     try {
-      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+      const messagesRef = collection(db as Firestore, 'sideRooms', roomId, 'messages');
       await addDoc(messagesRef, {
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',
@@ -440,6 +440,13 @@ const SideRoomComponent: React.FC = () => {
   // Initialize WebRTC when room is live
   useEffect(() => {
     if (room?.isLive && currentUser && roomId) {
+      // Only initialize WebRTC if user is a member
+      const isMember = room.members?.some(member => member.userId === currentUser.uid);
+      if (!isMember) {
+        console.log('User is not a member, skipping WebRTC initialization');
+        return;
+      }
+
       const pc = createPeerConnection(roomId, currentUser.uid);
       setPeerConnection(pc);
 
@@ -501,7 +508,7 @@ const SideRoomComponent: React.FC = () => {
         pc.cleanup();
       };
     }
-  }, [room?.isLive, currentUser, roomId]);
+  }, [room?.isLive, currentUser, roomId, room?.members]);
 
   // Add debugging logs for media streams
   useEffect(() => {
@@ -686,7 +693,7 @@ const SideRoomComponent: React.FC = () => {
     if (!room || !roomId) return;
     try {
       setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
+      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
       await updateDoc(roomRef, {
         ...roomData,
         updatedAt: new Date()
@@ -707,11 +714,11 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsDeleting(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
+      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
       
       // Move room to user's trash
-      const trashRef = doc(db, 'users', currentUser.uid, 'trash', roomId);
-      await runTransaction(db, async (transaction) => {
+      const trashRef = doc(db as Firestore, 'users', currentUser.uid, 'trash', roomId);
+      await runTransaction(db as Firestore, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
           throw new Error('Room not found');
@@ -721,7 +728,7 @@ const SideRoomComponent: React.FC = () => {
         transaction.set(trashRef, {
           ...roomDoc.data(),
           deletedAt: new Date(),
-          originalId: roomId
+          originalPath: `sideRooms/${roomId}`
         });
 
         // Delete the room
@@ -743,33 +750,27 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleSearchUsers = async (searchTerm: string) => {
-    if (!searchTerm.trim()) {
-      setSearchResults([]);
-      return;
-    }
+    if (!db || !currentUser) return [];
 
     try {
       // Search users by username
-      const usersRef = collection(db, 'users');
+      const usersRef = collection(db as Firestore, 'users');
       const q = query(
         usersRef,
         where('username', '>=', searchTerm),
         where('username', '<=', searchTerm + '\uf8ff'),
-        limit(5)
+        limit(10)
       );
+
       const snapshot = await getDocs(q);
-      const results = snapshot.docs.map(doc => {
-        const data = doc.data() as { username: string; avatar: string };
-        return {
-          id: doc.id,
-          username: data.username,
-          avatar: data.avatar
-        };
-      });
-      setSearchResults(results);
-    } catch (err) {
-      console.error('Error searching users:', err);
-      handleError(err, 'Failed to search users');
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    } catch (error) {
+      console.error('Error searching users:', error);
+      handleError(error, 'Failed to search users');
+      return [];
     }
   };
 
@@ -778,30 +779,28 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsInviting(true);
-      const batch = writeBatch(db);
+      const batch = writeBatch(db as Firestore);
 
       // Create invitations for each selected user
       selectedUsers.forEach(user => {
-        const invitationRef = doc(collection(db, 'sideRooms', roomId, 'invitations'));
+        const invitationRef = doc(collection(db as Firestore, 'sideRooms', roomId, 'invitations'));
         batch.set(invitationRef, {
           userId: user.id,
           invitedBy: currentUser.uid,
-          status: 'pending',
-          createdAt: new Date(),
-          roomId,
-          roomName: room.name
+          timestamp: new Date(),
+          status: 'pending'
         });
 
         // Add notification for the invited user
-        const notificationRef = doc(collection(db, 'users', user.id, 'notifications'));
+        const notificationRef = doc(collection(db as Firestore, 'users', user.id, 'notifications'));
         batch.set(notificationRef, {
           type: 'room_invitation',
           roomId,
           roomName: room.name,
           invitedBy: currentUser.uid,
-          invitedByUsername: currentUser.displayName,
-          createdAt: new Date(),
-          read: false
+          invitedByName: currentUser.displayName || 'Anonymous',
+          timestamp: new Date(),
+          status: 'unread'
         });
       });
 
