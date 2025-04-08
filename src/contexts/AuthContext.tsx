@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { auth } from '../services/firebase';
 import { User, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification } from 'firebase/auth';
 import { UserProfile } from '../types/index';
@@ -51,6 +52,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [db, setDb] = useState<Firestore | null>(null);
+  const navigate = useNavigate();
 
   // Initialize Firestore
   useEffect(() => {
@@ -148,9 +150,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await setDoc(doc(db, 'users', user.uid), newUserProfile);
             setUserProfile(newUserProfile);
           }
+
+          // Navigate to verification page if email is not verified
+          if (!user.emailVerified) {
+            console.log('User email not verified, navigating to /verify-email');
+            navigate('/verify-email', { replace: true });
+            setLoading(false);
+            return;
+          }
         } catch (err) {
-          console.error('Error fetching user profile:', err);
-          setError('Failed to fetch user profile');
+          console.error('Error in onAuthStateChanged:', err);
+          setError('Failed to process user state');
         }
       } else {
         setUserProfile(null);
@@ -159,7 +169,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return unsubscribe;
-  }, [db]);
+  }, [db, navigate]);
 
   const login = async (email: string, password: string) => {
     setLoading(true);
@@ -211,30 +221,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (email: string, password: string, username: string) => {
     setLoading(true);
     setError(null);
-    let retryCount = 0;
-    const maxRetries = 3;
 
-    while (retryCount < maxRetries) {
-      try {
-        // Check if username is already taken
-        if (db) {
-          const usernameQuery = query(
-            collection(db, 'users'),
-            where('username', '==', username.toLowerCase())
-          );
-          const usernameSnapshot = await getDocs(usernameQuery);
-          if (!usernameSnapshot.empty) {
-            setError('Username is already taken');
-            setLoading(false);
-            return;
-          }
-        }
+    try {
+      // Create the user account first
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
+      // Send verification email immediately with actionCodeSettings
+      const actionCodeSettings = {
+        url: window.location.origin + '/login',
+        handleCodeInApp: true
+      };
+      await firebaseSendEmailVerification(user, actionCodeSettings);
 
-        // Create user profile
-        if (db) {
+      // Then create the user profile
+      if (db) {
+        try {
           const newUserProfile: UserProfile = {
             id: user.uid,
             email: user.email || '',
@@ -268,24 +270,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               pushNotifications: true
             }
           };
-
+  
+          console.log('Attempting to create user profile in Firestore for UID:', user.uid);
           await setDoc(doc(db, 'users', user.uid), newUserProfile);
+          console.log('Successfully created user profile in Firestore.');
           setUserProfile(newUserProfile);
+        } catch (firestoreError: any) {
+          console.error('Firestore error creating user profile:', firestoreError);
+          // Re-throw the error or handle it specifically if needed
+          // For now, let's re-throw to ensure it bubbles up
+          throw firestoreError;
         }
-
-        // Send email verification
-        await firebaseSendEmailVerification(user);
-        setError('Please verify your email to continue');
-        return;
-      } catch (error: any) {
-        retryCount++;
-        if (retryCount === maxRetries) {
-          setError(getAuthErrorMessage(error.code));
-          setLoading(false);
-          return;
-        }
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
       }
+
+      // Update local state
+      setCurrentUser(user);
+      setUser(user);
+    } catch (error: any) {
+      console.error('Registration error:', error);
+      setError(getAuthErrorMessage(error.code));
+      throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -296,7 +302,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentUser(null);
       setUser(null);
       setUserProfile(null);
-      window.location.href = '/login';
+      navigate('/login');
     } catch (error) {
       console.error('Error logging out:', error);
       toast.error('Failed to log out');
@@ -341,7 +347,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       setLoading(true);
-      await firebaseSendEmailVerification(currentUser);
+      const actionCodeSettings = {
+        url: window.location.origin + '/login',
+        handleCodeInApp: true
+      };
+      await firebaseSendEmailVerification(currentUser, actionCodeSettings);
     } catch (error: any) {
       setError(error.message);
       throw error;

@@ -90,8 +90,8 @@ const Register: React.FC = () => {
     try {
       setLoading(true);
       await register(formData.email, formData.password, formData.username);
-      // Redirect to email verification page
-      navigate('/verify-email');
+      // Navigate to verification page after successful registration
+      navigate('/verify-email', { replace: true });
     } catch (error: any) {
       console.error('Registration error:', error);
       if (error.code === 'auth/email-already-in-use') {

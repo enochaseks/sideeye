@@ -8,7 +8,7 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
-import { sendEmailVerification, applyActionCode } from 'firebase/auth';
+import { sendEmailVerification } from 'firebase/auth';
 import { auth } from '../services/firebase';
 
 const EmailVerification: React.FC = () => {
@@ -19,39 +19,33 @@ const EmailVerification: React.FC = () => {
   const [success, setSuccess] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
 
+  // Check auth state when component mounts
   useEffect(() => {
-    const handleEmailVerification = async () => {
-      const actionCode = new URLSearchParams(location.search).get('oobCode');
-      if (actionCode) {
-        try {
-          setLoading(true);
-          await applyActionCode(auth, actionCode);
-          setSuccess(true);
-          setTimeout(() => {
-            navigate('/login');
-          }, 3000);
-        } catch (error) {
-          setError('Invalid or expired verification link');
-        } finally {
-          setLoading(false);
-        }
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (!user) {
+        navigate('/login');
       }
-    };
+    });
 
-    handleEmailVerification();
-  }, [location, navigate]);
+    return () => unsubscribe();
+  }, [navigate]);
 
   const handleResendVerification = async () => {
-    if (!auth.currentUser) {
-      setError('No user found. Please log in again.');
-      return;
-    }
-
     try {
       setLoading(true);
-      await sendEmailVerification(auth.currentUser);
+      setError(null);
+
+      const user = auth.currentUser;
+      if (!user) {
+        // Instead of showing error, redirect to login
+        navigate('/login');
+        return;
+      }
+
+      await sendEmailVerification(user);
       setVerificationSent(true);
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Error sending verification email:', error);
       setError('Failed to send verification email. Please try again.');
     } finally {
       setLoading(false);
