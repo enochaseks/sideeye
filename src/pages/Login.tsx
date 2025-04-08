@@ -1,32 +1,37 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { TextField, Button, Container, Typography, Box } from '@mui/material';
+import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { TextField, Button, Container, Typography, Box, Link as MuiLink, Paper, Alert, Grid } from '@mui/material';
 import { auth } from '../services/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
+import { CircularProgress } from '@mui/material';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
       navigate('/');
     } catch (error) {
       setError('Invalid email or password');
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <Container maxWidth="sm">
-      <Box sx={{ mt: 8, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+    <Container maxWidth="xs">
+      <Paper elevation={0} sx={{ mt: 8, p: 4 }}>
         <Typography component="h1" variant="h5">
           Login to Side Eye
         </Typography>
-        <Box component="form" onSubmit={handleLogin} sx={{ mt: 1 }}>
+        <Box component="form" onSubmit={handleLogin} noValidate sx={{ mt: 1 }}>
           <TextField
             margin="normal"
             required
@@ -52,28 +57,33 @@ const Login: React.FC = () => {
             onChange={(e) => setPassword(e.target.value)}
           />
           {error && (
-            <Typography color="error" sx={{ mt: 2 }}>
+            <Alert severity="error" sx={{ mt: 2 }}>
               {error}
-            </Typography>
+            </Alert>
           )}
           <Button
             type="submit"
             fullWidth
             variant="contained"
             sx={{ mt: 3, mb: 2 }}
+            disabled={loading}
           >
-            Sign In
+            {loading ? <CircularProgress size={24} /> : 'Sign In'}
           </Button>
-          <Box sx={{ textAlign: 'center', mt: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Don't have an account?{' '}
-              <Link to="/register" style={{ textDecoration: 'none', color: '#1976d2' }}>
-                Sign Up Here
-              </Link>
-            </Typography>
-          </Box>
+          <Grid container justifyContent="space-between">
+            <Grid item>
+              <MuiLink component={RouterLink} to="/reset-password" variant="body2">
+                Forgot password?
+              </MuiLink>
+            </Grid>
+            <Grid item>
+              <MuiLink component={RouterLink} to="/register" variant="body2">
+                {"Don\'t have an account? Sign Up"}
+              </MuiLink>
+            </Grid>
+          </Grid>
         </Box>
-      </Box>
+      </Paper>
     </Container>
   );
 };

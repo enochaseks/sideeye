@@ -13,14 +13,17 @@ import {
   IconButton,
   Paper,
 } from '@mui/material';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { Timestamp } from 'firebase/firestore';
 
 interface FormErrors {
   username?: string;
   email?: string;
   password?: string;
   confirmPassword?: string;
+  dateOfBirth?: string;
 }
 
 const Register: React.FC = () => {
@@ -30,6 +33,7 @@ const Register: React.FC = () => {
     password: '',
     confirmPassword: '',
   });
+  const [dateOfBirth, setDateOfBirth] = useState<Date | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -62,6 +66,16 @@ const Register: React.FC = () => {
       newErrors.confirmPassword = 'Passwords do not match';
     }
 
+    if (!dateOfBirth) {
+      newErrors.dateOfBirth = 'Date of Birth is required';
+    } else {
+      const today = new Date();
+      const sixteenYearsAgo = new Date(today.getFullYear() - 16, today.getMonth(), today.getDate());
+      if (dateOfBirth > sixteenYearsAgo) {
+        newErrors.dateOfBirth = 'You must be at least 16 years old to register';
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -72,7 +86,6 @@ const Register: React.FC = () => {
       ...prev,
       [name]: value
     }));
-    // Clear error when user starts typing
     if (errors[name as keyof FormErrors]) {
       setErrors(prev => ({
         ...prev,
@@ -81,16 +94,23 @@ const Register: React.FC = () => {
     }
   };
 
+  const handleDateChange = (newValue: Date | null) => {
+    setDateOfBirth(newValue);
+    if (errors.dateOfBirth && newValue) {
+      setErrors(prev => ({...prev, dateOfBirth: undefined}));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!validateForm()) return;
+    if (!validateForm() || !dateOfBirth) return;
 
     try {
       setLoading(true);
-      await register(formData.email, formData.password, formData.username);
-      // Navigate to verification page after successful registration
+      const dobTimestamp = Timestamp.fromDate(dateOfBirth);
+      await register(formData.email, formData.password, formData.username, dobTimestamp);
       navigate('/verify-email', { replace: true });
     } catch (error: any) {
       console.error('Registration error:', error);
@@ -192,6 +212,20 @@ const Register: React.FC = () => {
               required
               error={!!errors.confirmPassword}
               helperText={errors.confirmPassword}
+            />
+            <DatePicker
+              label="Date of Birth"
+              value={dateOfBirth}
+              onChange={handleDateChange}
+              slotProps={{ textField: { 
+                margin: "normal", 
+                required: true, 
+                fullWidth: true, 
+                error: !!errors.dateOfBirth, 
+                helperText: errors.dateOfBirth 
+              }}}
+              disableFuture
+              maxDate={new Date()}
             />
             <Button
               type="submit"

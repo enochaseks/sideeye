@@ -15,7 +15,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, username: string) => Promise<void>;
+  register: (email: string, password: string, username: string, dateOfBirth: Timestamp) => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateProfile: (data: { displayName?: string; photoURL?: string }) => Promise<void>;
@@ -96,8 +96,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Proceed with session restoration/check ONLY if currentUser is not already set
       if (user) {
         try {
+          // Force refresh user state to get latest emailVerified status
+          await user.reload();
+          // Now get the potentially updated user object
+          const refreshedUser = auth.currentUser; 
+          if (!refreshedUser) { // Check if user disappeared after reload
+              await firebaseSignOut(auth); // Log out if something went wrong
+              throw new Error('User state lost after reload.');
+          }
+
           // Fetch user profile from Firestore
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          const userDoc = await getDoc(doc(db, 'users', refreshedUser.uid));
           let profileData: UserProfile | null = null;
 
           if (userDoc.exists()) {
@@ -107,7 +116,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } else {
             // Profile doesn't exist - this shouldn't happen for an existing session
             // but if it does, maybe treat as needing setup?
-            console.warn('User profile not found for existing session UID:', user.uid);
+            console.warn('User profile not found for existing session UID:', refreshedUser.uid);
             // For safety, let's log them out if profile is missing
             await firebaseSignOut(auth);
             setCurrentUser(null);
@@ -118,31 +127,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
           }
           
-          // Check email verification first
-          if (!user.emailVerified) {
-            console.log('Session restored, but email not verified. Navigating to /verify-email');
-            // Don't set currentUser yet, just navigate
-            // User state might be set briefly, but context consumers rely on currentUser
-            setUser(user); // Keep basic user info
+          // Check email verification first using the refreshed user
+          if (!refreshedUser.emailVerified) {
+            console.log('Session restored, but email not verified (after reload). Navigating to /verify-email');
+            setUser(refreshedUser); // Keep basic user info
             setLoading(false);
             navigate('/verify-email', { replace: true });
             return;
           }
 
-          // Check if source code needs to be entered (only if currentUser isn't already set)
+          // Check if source code needs to be entered (using profileData)
           if (profileData?.sourceCodeSetupComplete) {
-              console.log('Session restore: Source code required. Navigating to /enter-source-code');
-              setTempUserForSourceCode(user);
-              setUser(user); 
+              console.log('Session restore: Source code required (email verified). Navigating to /enter-source-code');
+              setTempUserForSourceCode(refreshedUser);
+              setUser(refreshedUser); 
               setLoading(false);
               navigate('/enter-source-code', { replace: true });
               return;
           } else {
-            // Source code not set up
-            console.log('Session restore: Source code setup required. Navigating to /setup-source-code');
-            // Set currentUser here because they ARE logged into Firebase, just need setup
-            setCurrentUser(user); 
-            setUser(user);
+            // Source code not set up (email verified)
+            console.log('Session restore: Source code setup required (email verified). Navigating to /setup-source-code');
+            setCurrentUser(refreshedUser); 
+            setUser(refreshedUser);
             setLoading(false);
             navigate('/setup-source-code', { replace: true });
             return;
@@ -277,7 +283,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const register = async (email: string, password: string, username: string) => {
+  const register = async (email: string, password: string, username: string, dateOfBirth: Timestamp) => {
     setLoading(true);
     setError(null);
 
@@ -311,6 +317,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isVerified: false,
             createdAt: Timestamp.fromDate(new Date()),
             lastLogin: Timestamp.fromDate(new Date()),
+            dateOfBirth: dateOfBirth,
             settings: {
               theme: 'light',
               notifications: true,

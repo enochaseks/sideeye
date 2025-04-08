@@ -210,6 +210,7 @@ export interface UserProfile {
   preferences: UserPreferences;
   sourceCodeHash?: string;
   sourceCodeSetupComplete?: boolean;
+  dateOfBirth?: Timestamp;
 }
 
 export interface TrendingTopic {
