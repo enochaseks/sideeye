@@ -37,6 +37,9 @@ import ErrorBoundary from './components/ErrorBoundary';
 import RateLimiter from './components/RateLimiter';
 import { FirestoreProvider } from './context/FirestoreContext';
 import NotificationPage from './pages/Notifications';
+import SetupSourceCode from './pages/SetupSourceCode';
+import EnterSourceCode from './pages/EnterSourceCode';
+import ResetSourceCode from './pages/ResetSourceCode';
 import './App.css';
 
 const App: React.FC = () => {
@@ -53,9 +56,13 @@ const App: React.FC = () => {
                     <Navbar />
                     <Box component="main" sx={{ flexGrow: 1 }}>
                       <Routes>
-                        <Route path="/" element={<ProtectedRoute><Feed /></ProtectedRoute>} />
+                        <Route path="/" element={<ProtectedRoute requireEmailVerification><Feed /></ProtectedRoute>} />
                         <Route path="/login" element={<Login />} />
                         <Route path="/register" element={<Register />} />
+                        <Route path="/verify-email" element={<EmailVerification />} />
+                        <Route path="/setup-source-code" element={<SetupSourceCode />} />
+                        <Route path="/enter-source-code" element={<EnterSourceCode />} />
+                        <Route path="/reset-source-code" element={<ResetSourceCode />} />
                         <Route path="/profile/:userId?" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
                         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                         <Route path="/search" element={<ProtectedRoute><SearchResults /></ProtectedRoute>} />
@@ -69,7 +76,6 @@ const App: React.FC = () => {
                         <Route path="/about" element={<About />} />
                         <Route path="/terms" element={<TermsOfService />} />
                         <Route path="/cookies" element={<CookiePolicy />} />
-                        <Route path="/verify-email" element={<EmailVerification />} />
                         <Route path="/2fa" element={<TwoFactorAuth />} />
                         <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
                         <Route path="/profile/:userId/followers" element={<ProtectedRoute><FollowersList /></ProtectedRoute>} />

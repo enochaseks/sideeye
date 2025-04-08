@@ -27,8 +27,6 @@ export interface Post {
   tags: string[];
 }
 
-
-
 export interface SideRoom {
   id: string;
   name: string;
@@ -173,6 +171,16 @@ export interface DramaHotspot {
   topTags: string[];
 }
 
+// Define UserPreferences interface
+export interface UserPreferences {
+  theme: 'light' | 'dark';
+  language: string;
+  notifications: boolean;
+  emailNotifications: boolean;
+  pushNotifications: boolean;
+}
+
+// UserProfile interface
 export interface UserProfile {
   id: string;
   name: string;
@@ -199,13 +207,9 @@ export interface UserProfile {
   isActive?: boolean;
   lastSeen?: Date;
   status?: string;
-  preferences?: {
-    theme: 'light' | 'dark';
-    language: string;
-    notifications: boolean;
-    emailNotifications: boolean;
-    pushNotifications: boolean;
-  };
+  preferences: UserPreferences;
+  sourceCodeHash?: string;
+  sourceCodeSetupComplete?: boolean;
 }
 
 export interface TrendingTopic {

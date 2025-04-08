@@ -21,8 +21,11 @@ const app = initializeApp(firebaseConfig);
 // Initialize Auth
 export const auth = getAuth(app);
 
-// Always connect to the Auth emulator in this environment
-connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
+// Connect to the Auth emulator only in development
+if (process.env.NODE_ENV === 'development') {
+  connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
+  console.log('Connected to Auth emulator on localhost:9099');
+}
 
 // Add auth state change listener for debugging
 auth.onAuthStateChanged((user) => {

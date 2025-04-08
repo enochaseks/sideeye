@@ -6,6 +6,7 @@ import { UserProfile } from '../types/index';
 import { getDoc, doc, setDoc, Firestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, increment, Timestamp, getDocs } from 'firebase/firestore';
 import { getDb } from '../services/firebase';
 import { toast } from 'react-hot-toast';
+import bcrypt from 'bcryptjs';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -24,6 +25,8 @@ interface AuthContextType {
   verifyTwoFactorAuth: (code: string) => Promise<void>;
   setUserProfile: (profile: UserProfile | null) => void;
   setError: (error: string | null) => void;
+  tempUserForSourceCode?: User | null;
+  verifySourceCodeAndCompleteLogin: (code: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -42,7 +45,9 @@ const AuthContext = createContext<AuthContextType>({
   setupTwoFactorAuth: async () => {},
   verifyTwoFactorAuth: async () => {},
   setUserProfile: () => {},
-  setError: () => {}
+  setError: () => {},
+  tempUserForSourceCode: null,
+  verifySourceCodeAndCompleteLogin: async () => {}
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -52,6 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [db, setDb] = useState<Firestore | null>(null);
+  const [tempUserForSourceCode, setTempUserForSourceCode] = useState<User | null>(null);
   const navigate = useNavigate();
 
   // Initialize Firestore
@@ -73,107 +79,113 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!db) return;
 
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
-      setCurrentUser(user);
-      setUser(user);
+      // If the context already has a fully authenticated currentUser, 
+      // don't interfere with ongoing operations (like post-verification redirect).
+      // However, we still need to handle the case where the Firebase user disappears (logout).
+      if (currentUser && user && currentUser.uid === user.uid) {
+        console.log('onAuthStateChanged: currentUser already set, skipping session restore logic.');
+        setLoading(false); // Ensure loading is off
+        return; // Do nothing if currentUser is already set and matches Firebase user
+      }
+      
+      // Clear temp user if Firebase user disappears or changes significantly
+      if (!user) {
+          setTempUserForSourceCode(null);
+      }
+
+      // Proceed with session restoration/check ONLY if currentUser is not already set
       if (user) {
         try {
           // Fetch user profile from Firestore
           const userDoc = await getDoc(doc(db, 'users', user.uid));
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as UserProfile;
-            setUserProfile({
-              ...userData,
-              id: user.uid,
-              email: user.email || '',
-              name: user.displayName || userData.name || '',
-              username: userData.username || user.email?.split('@')[0] || '',
-              profilePic: user.photoURL || userData.profilePic || '',
-              connections: userData.connections || [],
-              followers: userData.followers || [],
-              following: userData.following || [],
-              isVerified: user.emailVerified || userData.isVerified || false,
-              createdAt: userData.createdAt || Timestamp.fromDate(new Date()),
-              lastLogin: Timestamp.fromDate(new Date()),
-              settings: userData.settings || {
-                theme: 'light',
-                notifications: true,
-                privacy: 'public'
-              },
-              updatedAt: new Date(),
-              isPrivate: false,
-              isActive: true,
-              lastSeen: new Date(),
-              status: 'online',
-              preferences: userData.preferences || {
-                theme: 'light',
-                language: 'en',
-                notifications: true,
-                emailNotifications: true,
-                pushNotifications: true
-              }
-            });
-          } else {
-            // Create new user profile if it doesn't exist
-            const newUserProfile: UserProfile = {
-              id: user.uid,
-              email: user.email || '',
-              name: user.displayName || '',
-              username: user.email?.split('@')[0] || '',
-              profilePic: user.photoURL || '',
-              bio: '',
-              location: '',
-              website: '',
-              followers: [],
-              following: [],
-              connections: [],
-              isVerified: false,
-              createdAt: Timestamp.now(),
-              lastLogin: Timestamp.now(),
-              settings: {
-                theme: 'light',
-                notifications: true,
-                privacy: 'public'
-              },
-              updatedAt: new Date(),
-              isPrivate: false,
-              isActive: true,
-              lastSeen: new Date(),
-              status: 'online',
-              preferences: {
-                theme: 'light',
-                language: 'en',
-                notifications: true,
-                emailNotifications: true,
-                pushNotifications: true
-              }
-            };
-            await setDoc(doc(db, 'users', user.uid), newUserProfile);
-            setUserProfile(newUserProfile);
-          }
+          let profileData: UserProfile | null = null;
 
-          // Navigate to verification page if email is not verified
-          if (!user.emailVerified) {
-            console.log('User email not verified, navigating to /verify-email');
-            navigate('/verify-email', { replace: true });
+          if (userDoc.exists()) {
+            profileData = userDoc.data() as UserProfile;
+            // Update profile state immediately for potential use elsewhere
+            setUserProfile(profileData);
+          } else {
+            // Profile doesn't exist - this shouldn't happen for an existing session
+            // but if it does, maybe treat as needing setup?
+            console.warn('User profile not found for existing session UID:', user.uid);
+            // For safety, let's log them out if profile is missing
+            await firebaseSignOut(auth);
+            setCurrentUser(null);
+            setUser(null);
+            setUserProfile(null);
             setLoading(false);
+            navigate('/login');
             return;
           }
+          
+          // Check email verification first
+          if (!user.emailVerified) {
+            console.log('Session restored, but email not verified. Navigating to /verify-email');
+            // Don't set currentUser yet, just navigate
+            // User state might be set briefly, but context consumers rely on currentUser
+            setUser(user); // Keep basic user info
+            setLoading(false);
+            navigate('/verify-email', { replace: true });
+            return;
+          }
+
+          // Check if source code needs to be entered (only if currentUser isn't already set)
+          if (profileData?.sourceCodeSetupComplete) {
+              console.log('Session restore: Source code required. Navigating to /enter-source-code');
+              setTempUserForSourceCode(user);
+              setUser(user); 
+              setLoading(false);
+              navigate('/enter-source-code', { replace: true });
+              return;
+          } else {
+            // Source code not set up
+            console.log('Session restore: Source code setup required. Navigating to /setup-source-code');
+            // Set currentUser here because they ARE logged into Firebase, just need setup
+            setCurrentUser(user); 
+            setUser(user);
+            setLoading(false);
+            navigate('/setup-source-code', { replace: true });
+            return;
+          }
+
+          // If we reach here, it means email verified BUT source code NOT set up (handled above)
+          // This path shouldn't logically be reached anymore with the checks above.
+          // Let's keep the original behaviour just in case, but log it.
+          // console.warn('Reached unexpected state in onAuthStateChanged');
+          // setCurrentUser(user); // Set as fully logged in (Original behaviour)
+          // setUser(user);
+
         } catch (err) {
-          console.error('Error in onAuthStateChanged:', err);
-          setError('Failed to process user state');
+          console.error('Error in onAuthStateChanged processing user session:', err);
+          setError('Failed to process user session');
+          // Maybe log out on error?
+          await firebaseSignOut(auth); 
+          setCurrentUser(null);
+          setUser(null);
+          setUserProfile(null);
+          navigate('/login'); // Redirect to login on error
         }
       } else {
+        // No user session found (logout)
+        setCurrentUser(null);
+        setUser(null);
         setUserProfile(null);
+        setTempUserForSourceCode(null); // Clear temp state on logout
       }
       setLoading(false);
     });
 
     return unsubscribe;
-  }, [db, navigate]);
+  // NOTE: We intentionally DO NOT include currentUser in the dependency array
+  // to prevent loops. We only want this to run on db/navigate changes or
+  // when the auth state *itself* changes from Firebase.
+  }, [db, navigate]); 
 
   const login = async (email: string, password: string) => {
     setLoading(true);
     setError(null);
+    setTempUserForSourceCode(null);
+
     let retryCount = 0;
     const maxRetries = 3;
 
@@ -185,26 +197,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!user.emailVerified) {
           setError('Please verify your email before logging in');
           await firebaseSignOut(auth);
+          setLoading(false);
+          navigate('/verify-email');
           return;
         }
 
-        // Fetch user profile
+        let profileData: UserProfile | null = null;
         if (db) {
           const userDoc = await getDoc(doc(db, 'users', user.uid));
           if (userDoc.exists()) {
-            const userData = userDoc.data() as UserProfile;
-            setUserProfile({
-              ...userData,
-              id: user.uid,
-              email: user.email || '',
-              name: user.displayName || userData.name || '',
-              username: userData.username || user.email?.split('@')[0] || '',
-              profilePic: user.photoURL || userData.profilePic || '',
-              lastLogin: Timestamp.fromDate(new Date())
-            });
+            profileData = userDoc.data() as UserProfile;
+          } else {
+            console.warn('User profile not found during login for UID:', user.uid);
+            setError('User profile incomplete. Please contact support or try registering again.');
+            await firebaseSignOut(auth);
+            setLoading(false);
+            return;
           }
         }
-        return;
+        
+        if (profileData?.sourceCodeSetupComplete) {
+            setTempUserForSourceCode(user);
+            setUserProfile(profileData);
+            setLoading(false);
+            navigate('/enter-source-code');
+            return;
+        } else {
+            setCurrentUser(user);
+            setUser(user);
+            setUserProfile(profileData);
+            setLoading(false);
+            navigate('/setup-source-code');
+            return;
+        }
       } catch (error: any) {
         retryCount++;
         if (retryCount === maxRetries) {
@@ -212,9 +237,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setLoading(false);
           return;
         }
-        // Wait before retrying (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
       }
+    }
+  };
+
+  const verifySourceCodeAndCompleteLogin = async (code: string) => {
+    if (!tempUserForSourceCode || !userProfile || !userProfile.sourceCodeHash) {
+      setError('Login state lost or source code not set up.');
+      console.error('verifySourceCodeAndCompleteLogin: Missing temp user, profile, or hash.', { hasTempUser: !!tempUserForSourceCode, hasProfile: !!userProfile, hasHash: !!userProfile?.sourceCodeHash });
+      navigate('/login');
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+    console.log('Verifying source code. Hash from profile:', userProfile.sourceCodeHash);
+    console.log('Code entered:', code); // Log the entered code
+    
+    try {
+      const isMatch = await bcrypt.compare(code, userProfile.sourceCodeHash);
+      console.log('bcrypt.compare result (isMatch):', isMatch); // Log the result
+      
+      if (isMatch) {
+        setCurrentUser(tempUserForSourceCode);
+        setUser(tempUserForSourceCode);
+        setTempUserForSourceCode(null);
+        setLoading(false);
+        navigate('/');
+      } else {
+        setError('Invalid source code.');
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error('Error verifying source code:', err);
+      setError('Failed to verify source code. Please try again.');
+      setLoading(false);
     }
   };
 
@@ -229,7 +288,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Send verification email immediately with actionCodeSettings
       const actionCodeSettings = {
-        url: window.location.origin + '/login',
+        url: window.location.origin + '/setup-source-code',
         handleCodeInApp: true
       };
       await firebaseSendEmailVerification(user, actionCodeSettings);
@@ -348,7 +407,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setLoading(true);
       const actionCodeSettings = {
-        url: window.location.origin + '/login',
+        url: window.location.origin + '/setup-source-code',
         handleCodeInApp: true
       };
       await firebaseSendEmailVerification(currentUser, actionCodeSettings);
@@ -377,6 +436,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     verifyTwoFactorAuth: async () => {},
     setUserProfile,
     setError,
+    tempUserForSourceCode,
+    verifySourceCodeAndCompleteLogin
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
