@@ -24,7 +24,8 @@ import {
   MicOff as MicOffIcon
 } from '@mui/icons-material';
 import { doc, updateDoc, arrayUnion, arrayRemove, collection, query, where, getDocs, Firestore } from 'firebase/firestore';
-import { getDb } from '../services/firebase';
+import { toast } from 'react-hot-toast';
+import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { SideRoom, RoomMember } from '../types/index';
 
@@ -42,37 +43,17 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
   onUpdate
 }) => {
   const { currentUser } = useAuth();
-  const [db, setDb] = useState<Firestore | null>(null);
   const [members, setMembers] = useState<RoomMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedMember, setSelectedMember] = useState<RoomMember | null>(null);
 
-  // Initialize Firestore
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
+    fetchMembers();
   }, []);
 
-  useEffect(() => {
-    if (db) {
-      fetchMembers();
-    }
-  }, [db]);
-
   const fetchMembers = async () => {
-    if (!db) return;
-
     try {
       const membersQuery = query(
         collection(db as Firestore, 'rooms', room.id, 'members')
@@ -109,7 +90,7 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
   };
 
   const handleRoleChange = async (newRole: 'admin' | 'moderator' | 'member') => {
-    if (!currentUser || !selectedMember || loading || !db) return;
+    if (!currentUser || !selectedMember || loading) return;
 
     try {
       setLoading(true);
@@ -139,7 +120,7 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
   };
 
   const handleKickMember = async () => {
-    if (!currentUser || !selectedMember || loading || !db) return;
+    if (!currentUser || !selectedMember || loading) return;
 
     try {
       setLoading(true);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -20,8 +20,8 @@ import {
   Divider,
 } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import { collection, addDoc, doc, updateDoc, arrayUnion, getDoc, Firestore } from 'firebase/firestore';
-import { getDb } from '../services/firebase';
+import { collection, addDoc, serverTimestamp, Firestore, Timestamp, getDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { SideRoom, RoomMember } from '../types/index';
@@ -35,7 +35,7 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
@@ -50,21 +50,6 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
   const [maxLiveParticipants, setMaxLiveParticipants] = useState(4);
   const [allowGuestSpeakers, setAllowGuestSpeakers] = useState(false);
   const [guestSpeakerLimit, setGuestSpeakerLimit] = useState(2);
-  const [db, setDb] = useState<Firestore | null>(null);
-
-  // Initialize Firestore
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-      }
-    };
-
-    initializeDb();
-  }, []);
 
   const handleCreateRoom = async () => {
     if (!currentUser || !db) return;

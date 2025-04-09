@@ -16,13 +16,14 @@ import {
   Link as MuiLink
 } from '@mui/material';
 import { Notifications as NotificationsIcon } from '@mui/icons-material';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate as useReactRouterNavigate } from 'react-router-dom';
 import { useNotifications, Notification } from '../contexts/NotificationContext';
 import { formatDistanceToNow } from 'date-fns';
 
 export const NotificationIcon: React.FC = () => {
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const reactRouterNavigate = useReactRouterNavigate();
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -33,8 +34,18 @@ export const NotificationIcon: React.FC = () => {
   };
 
   const handleNotificationClick = async (notification: Notification) => {
-    await markAsRead(notification.id);
-    handleClose();
+    if (!notification.isRead) {
+      await markAsRead(notification.id);
+    }
+    let navigateTo = '/';
+    if (notification.type === 'follow') {
+      navigateTo = `/profile/${notification.senderId}`;
+    } else if (notification.type === 'like' || notification.type === 'comment') {
+      navigateTo = `/post/${notification.postId}`;
+    } else if (notification.type === 'room_invite') {
+      navigateTo = `/side-room/${notification.roomId}`;
+    }
+    reactRouterNavigate(navigateTo);
   };
 
   const handleMarkAllRead = async () => {
@@ -84,27 +95,22 @@ export const NotificationIcon: React.FC = () => {
         <Divider />
         <List>
           {notifications.length === 0 ? (
-            <ListItem>
-              <ListItemText
-                primary="No notifications"
-                secondary="You're all caught up!"
-                sx={{ textAlign: 'center' }}
-              />
-            </ListItem>
+            <MenuItem onClick={handleClose}>No new notifications</MenuItem>
           ) : (
             notifications.slice(0, 5).map((notification) => (
-              <ListItem
+              <MenuItem
                 key={notification.id}
-                component={Link}
-                to={notification.link}
                 onClick={() => handleNotificationClick(notification)}
                 sx={{
-                  backgroundColor: notification.read ? 'transparent' : 'action.hover',
+                  backgroundColor: notification.isRead ? 'transparent' : 'action.hover',
                   textDecoration: 'none',
                   color: 'inherit',
                   '&:hover': {
-                    backgroundColor: 'action.hover',
+                    backgroundColor: 'action.selected',
                   },
+                  mb: 1,
+                  borderBottom: '1px solid',
+                  borderColor: 'divider',
                 }}
               >
                 <ListItemAvatar>
@@ -112,14 +118,14 @@ export const NotificationIcon: React.FC = () => {
                 </ListItemAvatar>
                 <ListItemText
                   primary={notification.content}
-                  secondary={formatDistanceToNow(notification.timestamp.toDate(), { addSuffix: true })}
+                  secondary={formatDistanceToNow(notification.createdAt, { addSuffix: true })}
                   sx={{
                     '& .MuiListItemText-primary': {
-                      fontWeight: notification.read ? 'normal' : 'bold',
+                      fontWeight: notification.isRead ? 'normal' : 'bold',
                     },
                   }}
                 />
-              </ListItem>
+              </MenuItem>
             ))
           )}
         </List>

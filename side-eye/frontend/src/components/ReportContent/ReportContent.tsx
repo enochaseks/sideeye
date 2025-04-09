@@ -15,9 +15,9 @@ import {
   Alert,
   Snackbar,
 } from '@mui/material';
-import { getDb } from '../../services/firebase';
-import { doc, updateDoc, arrayUnion, getDoc, Firestore } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, Firestore, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
+import { db } from '../../services/firebase';
 
 interface ReportContentProps {
   contentId: string;
@@ -51,43 +51,43 @@ const ReportContent: React.FC<ReportContentProps> = ({
   open,
 }) => {
   const { currentUser } = useAuth();
-  const [db, setDb] = useState<Firestore | null>(null);
   const [preview, setPreview] = useState<ContentPreview | null>(null);
   const [reportType, setReportType] = useState('');
   const [description, setDescription] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState({ open: false, message: '' });
 
-  // Initialize Firestore
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
-  useEffect(() => {
-    if (db && open) {
+    if (open) {
       fetchContent();
     }
-  }, [db, open]);
+  }, [open]);
 
   const fetchContent = async () => {
-    if (!db) return;
-
     try {
-      const contentRef = doc(db, contentType + 's', contentId);
-      const contentDoc = await getDoc(contentRef);
-      if (contentDoc.exists()) {
-        setPreview(contentDoc.data() as ContentPreview);
+      const contentRef = collection(db, contentType + 's');
+      const contentDoc = await addDoc(contentRef, { id: contentId });
+      const contentData = await addDoc(collection(contentRef, contentDoc.id, 'reports'), {
+        type: reportType,
+        description,
+        reporterId: currentUser?.uid,
+        timestamp: serverTimestamp()
+      });
+      const contentPreviewRef = doc(db, contentType + 's', contentId);
+      const contentPreviewSnap = await getDoc(contentPreviewRef);
+
+      if (contentPreviewSnap.exists()) {
+        const previewData = contentPreviewSnap.data();
+        setPreview({
+          title: previewData?.title,
+          content: previewData?.content,
+          author: previewData?.author,
+          timestamp: previewData?.timestamp?.toDate().toISOString()
+        });
+      } else {
+        console.log("Preview document does not exist!");
+        setPreview(null);
       }
     } catch (error) {
       console.error('Error fetching content:', error);
@@ -102,25 +102,21 @@ const ReportContent: React.FC<ReportContentProps> = ({
       setLoading(true);
       setError('');
 
-      const reportRef = doc(db, 'reports', contentId);
-      await updateDoc(reportRef, {
-        reports: arrayUnion({
-          type: reportType,
-          description,
-          reporterId: currentUser.uid,
-          timestamp: new Date().toISOString()
-        })
+      const reportRef = collection(db, 'reports');
+      await addDoc(reportRef, {
+        type: reportType,
+        description,
+        reporterId: currentUser.uid,
+        timestamp: serverTimestamp()
       });
 
       // Create notification for admins
-      const notificationRef = doc(db, 'notifications', 'admin');
-      await updateDoc(notificationRef, {
-        reports: arrayUnion({
-          contentId,
-          contentType,
-          reporterId: currentUser.uid,
-          timestamp: new Date().toISOString()
-        })
+      const notificationRef = collection(db, 'notifications', 'admin', 'reports');
+      await addDoc(notificationRef, {
+        contentId,
+        contentType,
+        reporterId: currentUser.uid,
+        timestamp: serverTimestamp()
       });
 
       setNotification({

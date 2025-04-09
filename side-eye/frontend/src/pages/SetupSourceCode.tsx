@@ -11,9 +11,9 @@ import {
   Paper,
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
-import { getDb } from '../services/firebase';
 import { doc, updateDoc, getDoc, Firestore } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
+import { db } from '../services/firebase';
 
 const SetupSourceCode: React.FC = (): JSX.Element | null => {
   const { currentUser, loading: authLoading, userProfile } = useAuth();
@@ -22,21 +22,6 @@ const SetupSourceCode: React.FC = (): JSX.Element | null => {
   const [confirmCode, setConfirmCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [db, setDb] = useState<Firestore | null>(null);
-
-  // Initialize Firestore
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-    initializeDb();
-  }, []);
 
   // Redirect if user is not logged in, not verified, or already set up
   useEffect(() => {
@@ -93,7 +78,7 @@ const SetupSourceCode: React.FC = (): JSX.Element | null => {
     // No finally block needed as navigate happens on success
   };
 
-  if (authLoading || loading || !db) {
+  if (authLoading || loading) {
     return (
       <Container maxWidth="sm">
         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 8 }}>

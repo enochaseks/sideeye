@@ -11,8 +11,8 @@ import {
   Paper,
   CircularProgress
 } from '@mui/material';
-import { collection, query, where, getDocs, orderBy, limit, Firestore } from 'firebase/firestore';
-import { getDb } from '../services/firebase';
+import { collection, query as firestoreQuery, where, getDocs, DocumentData, QueryDocumentSnapshot, Timestamp, Firestore } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { Link } from 'react-router-dom';
 import { UserProfile } from '../types/index';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,44 +27,28 @@ interface SearchResult {
 
 const SearchBar: React.FC = () => {
   const { currentUser } = useAuth();
-  const [db, setDb] = useState<Firestore | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize Firestore
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
-  useEffect(() => {
-    if (db && searchTerm.trim()) {
+    if (searchTerm.trim()) {
       searchContent();
     } else {
       setResults([]);
     }
-  }, [db, searchTerm]);
+  }, [searchTerm]);
 
   const searchContent = async () => {
-    if (!db || !currentUser) return;
+    if (!currentUser) return;
 
     try {
       setLoading(true);
       setError(null);
 
       // Search users
-      const usersQuery = query(
+      const usersQuery = firestoreQuery(
         collection(db, 'users'),
         where('username', '>=', searchTerm),
         where('username', '<=', searchTerm + '\uf8ff')
@@ -78,7 +62,7 @@ const SearchBar: React.FC = () => {
       }));
 
       // Search posts
-      const postsQuery = query(
+      const postsQuery = firestoreQuery(
         collection(db, 'posts'),
         where('content', '>=', searchTerm),
         where('content', '<=', searchTerm + '\uf8ff')
@@ -92,7 +76,7 @@ const SearchBar: React.FC = () => {
       }));
 
       // Search rooms
-      const roomsQuery = query(
+      const roomsQuery = firestoreQuery(
         collection(db, 'rooms'),
         where('name', '>=', searchTerm),
         where('name', '<=', searchTerm + '\uf8ff')

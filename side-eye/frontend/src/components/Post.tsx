@@ -54,7 +54,7 @@ import {
   DocumentReference
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
-import { getDb, storage } from '../services/firebase';
+import { db, storage } from '../services/firebase';
 import { ref, deleteObject } from 'firebase/storage';
 import { formatDate, convertTimestampToDate, compareTimestamps } from '../utils/dateUtils';
 import { toast } from 'react-hot-toast';
@@ -114,32 +114,9 @@ const Post: React.FC<PostComponentProps> = ({
   const [replyingToComment, setReplyingToComment] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [isReplying, setIsReplying] = useState(false);
-  const [db, setDb] = useState<Firestore | null>(null);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-
-  // Initialize Firestore
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
-  // Validate post data
-  useEffect(() => {
-    if (!authorId || !content) {
-      setError('Invalid post data');
-    }
-  }, [authorId, content]);
 
   const handleProfileClick = (username: string) => {
     navigate(`/profile/${username}`);
@@ -250,7 +227,7 @@ const Post: React.FC<PostComponentProps> = ({
     setIsLikingComment(true);
 
     try {
-      const postRef = doc(db as Firestore, 'posts', id);
+      const postRef = doc(db, 'posts', id);
       const postDoc = await getDoc(postRef);
       
       if (!postDoc.exists()) return;
@@ -293,7 +270,7 @@ const Post: React.FC<PostComponentProps> = ({
     setIsDeletingComment(true);
 
     try {
-      const postRef = doc(db as Firestore, 'posts', id);
+      const postRef = doc(db, 'posts', id);
       const postDoc = await getDoc(postRef);
       
       if (!postDoc.exists()) return;
@@ -317,7 +294,7 @@ const Post: React.FC<PostComponentProps> = ({
     setIsEditingComment(true);
 
     try {
-      const postRef = doc(db as Firestore, 'posts', id);
+      const postRef = doc(db, 'posts', id);
       const postDoc = await getDoc(postRef);
       
       if (!postDoc.exists()) return;

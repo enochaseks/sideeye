@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { getDb } from '../../services/firebase';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, arrayUnion, where, getDocs, addDoc, serverTimestamp, Firestore, Timestamp } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
   Box,
@@ -40,6 +39,7 @@ import {
 } from '@mui/icons-material';
 import CreateSideRoom from '../CreateSideRoom';
 import { useFirestore } from '../../context/FirestoreContext';
+import { db } from '../../services/firebase';
 
 interface SideRoomMember {
   userId: string;
@@ -81,7 +81,6 @@ const GENRES = [
 ];
 
 const SideRoomList: React.FC = () => {
-  const { db } = useFirestore();
   const [rooms, setRooms] = useState<SideRoomData[]>([]);
   const [filteredRooms, setFilteredRooms] = useState<SideRoomData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,8 +100,6 @@ const SideRoomList: React.FC = () => {
   const { currentUser } = useAuth();
 
   useEffect(() => {
-    if (!db) return;
-
     try {
       const q = query(collection(db, 'sideRooms'), orderBy('createdAt', 'desc'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -121,7 +118,7 @@ const SideRoomList: React.FC = () => {
       setError('Error fetching rooms');
       setLoading(false);
     }
-  }, [db]);
+  }, []);
 
   // Filter and search effect
   useEffect(() => {

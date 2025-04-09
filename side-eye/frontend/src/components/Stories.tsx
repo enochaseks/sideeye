@@ -15,9 +15,9 @@ import {
   Skeleton,
 } from '@mui/material';
 import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, getDb, storage } from '../services/firebase';
-import { collection, addDoc, serverTimestamp, getDoc, doc, query, orderBy, onSnapshot, where, Firestore } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { auth, db, storage } from '../services/firebase';
+import { collection, addDoc, serverTimestamp, getDoc, doc, query, orderBy, onSnapshot, where, Firestore, Timestamp, updateDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 
 interface Story {
@@ -50,8 +50,6 @@ const Stories: React.FC<StoriesProps> = ({ following }) => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedStickers, setSelectedStickers] = useState<Sticker[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
-  const [db, setDb] = useState<Firestore | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -63,24 +61,9 @@ const Stories: React.FC<StoriesProps> = ({ following }) => {
     { id: '4', url: '/stickers/cool.png', name: 'Cool', isCustom: false },
   ];
 
-  // Initialize Firestore
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
   // Fetch user profile and stories
   useEffect(() => {
-    if (!currentUser || !db) return;
+    if (!currentUser) return;
 
     const fetchUserProfile = async () => {
       try {
@@ -137,7 +120,7 @@ const Stories: React.FC<StoriesProps> = ({ following }) => {
 
     fetchUserProfile();
     fetchStories();
-  }, [currentUser, db, following]);
+  }, [currentUser, following]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -157,10 +140,9 @@ const Stories: React.FC<StoriesProps> = ({ following }) => {
   };
 
   const handleUploadStory = async () => {
-    if (!currentUser || !db || !image) return;
+    if (!currentUser || !image) return;
 
     try {
-      setIsLoading(true);
       setError(null);
 
       // Upload image to storage
@@ -187,8 +169,6 @@ const Stories: React.FC<StoriesProps> = ({ following }) => {
     } catch (error) {
       console.error('Error uploading story:', error);
       setError('Failed to upload story');
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -354,18 +334,13 @@ const Stories: React.FC<StoriesProps> = ({ following }) => {
               />
             </Box>
           )}
-          {isLoading && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
-              <CircularProgress />
-            </Box>
-          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>Cancel</Button>
           <Button
             onClick={handleUploadStory}
             variant="contained"
-            disabled={!image || isLoading}
+            disabled={!image}
           >
             Upload Story
           </Button>

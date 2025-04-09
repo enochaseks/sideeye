@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Container, TextField, Button, List, ListItem, Typography, Box } from '@mui/material';
-import { auth, getDb } from '../services/firebase';
+import { auth, db } from '../services/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, Firestore, serverTimestamp } from 'firebase/firestore';
 
 interface Message {
@@ -15,26 +15,10 @@ const Chat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [username, setUsername] = useState('');
-  const [db, setDb] = useState<Firestore | null>(null);
-
-  // Initialize Firestore
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-      }
-    };
-
-    initializeDb();
-  }, []);
+  const [error, setError] = useState<string | null>(null);
 
   // Set up message listener
   useEffect(() => {
-    if (!db) return;
-
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const newMessages = snapshot.docs.map(doc => ({
@@ -46,7 +30,7 @@ const Chat: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [db]);
+  }, []);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();

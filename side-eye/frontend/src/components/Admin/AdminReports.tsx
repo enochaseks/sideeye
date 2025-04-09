@@ -20,8 +20,8 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
-import { getDb } from '../../services/firebase';
 import { collection, query, where, getDocs, doc, updateDoc, Firestore } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 
 interface Report {
   id: string;
@@ -37,26 +37,10 @@ interface Report {
 const AdminReports: React.FC = () => {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [resolution, setResolution] = useState('');
   const [updating, setUpdating] = useState(false);
-  const [db, setDb] = useState<Firestore | null>(null);
-
-  // Initialize Firestore
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
 
   useEffect(() => {
     if (db) {

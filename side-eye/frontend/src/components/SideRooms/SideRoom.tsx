@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { getDb } from '../../services/firebase';
+import { db } from '../../services/firebase';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, Firestore, onSnapshot } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -27,7 +27,6 @@ interface SideRoomProps {
 const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const [db, setDb] = useState<Firestore | null>(null);
   const [room, setRoom] = useState<SideRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,21 +34,7 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
   const [password, setPassword] = useState('');
 
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
-  useEffect(() => {
-    if (!db || !currentUser) {
+    if (!currentUser) {
       setError('Not authenticated');
       return;
     }
@@ -103,13 +88,13 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
       setError('Failed to set up room listener');
       setLoading(false);
     }
-  }, [db, roomId, currentUser]);
+  }, [roomId, currentUser]);
 
   const handleJoinRoom = async () => {
     if (!db || !currentUser || !room) return;
 
     try {
-      const roomRef = doc(db as Firestore, 'sideRooms', room.id);
+      const roomRef = doc(db, 'sideRooms', room.id);
       const newMember: RoomMember = {
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',
@@ -144,7 +129,7 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
     if (!db || !currentUser || !room) return;
 
     try {
-      const roomRef = doc(db as Firestore, 'sideRooms', room.id);
+      const roomRef = doc(db, 'sideRooms', room.id);
       const memberToRemove: RoomMember = {
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',

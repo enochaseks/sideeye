@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { getDb } from '../../services/firebase';
+import { db } from '../../services/firebase';
 import { 
   doc, 
   getDoc, 
@@ -101,7 +101,6 @@ const SideRoomComponent: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const [db, setDb] = useState<Firestore | null>(null);
   const [room, setRoom] = useState<SideRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -168,22 +167,6 @@ const SideRoomComponent: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
-  useEffect(() => {
-    if (!db || !currentUser) return;
-
     const setupRoomListener = () => {
       try {
         if (!roomId || !db) return () => {};
@@ -214,8 +197,8 @@ const SideRoomComponent: React.FC = () => {
             setRoom(roomData);
             setLoading(false);
 
-            // Check if user is already a member
-            const isMember = roomData.members?.some(member => member.userId === currentUser.uid);
+            // Check if user is already a member (Add null check for currentUser)
+            const isMember = currentUser && roomData.members?.some(member => member.userId === currentUser.uid);
             if (!isMember && roomData.isPrivate) {
               setShowPasswordDialog(true);
             } else if (isMember) {
@@ -279,9 +262,9 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
+      const roomRef = doc(db, 'sideRooms', roomId);
 
-      await runTransaction(db as Firestore, async (transaction) => {
+      await runTransaction(db, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
           throw new Error('Room not found');
@@ -346,9 +329,9 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
+      const roomRef = doc(db, 'sideRooms', roomId);
 
-      await runTransaction(db as Firestore, async (transaction) => {
+      await runTransaction(db, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
           throw new Error('Room not found');
@@ -401,7 +384,7 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
+      const roomRef = doc(db, 'sideRooms', roomId);
       
       await updateDoc(roomRef, {
         isLive: !room.isLive,
@@ -422,7 +405,7 @@ const SideRoomComponent: React.FC = () => {
     if (!roomId || !currentUser || !newMessage.trim()) return;
 
     try {
-      const messagesRef = collection(db as Firestore, 'sideRooms', roomId, 'messages');
+      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
       await addDoc(messagesRef, {
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',
@@ -693,7 +676,7 @@ const SideRoomComponent: React.FC = () => {
     if (!room || !roomId) return;
     try {
       setIsProcessing(true);
-      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
+      const roomRef = doc(db, 'sideRooms', roomId);
       await updateDoc(roomRef, {
         ...roomData,
         updatedAt: new Date()
@@ -714,11 +697,11 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsDeleting(true);
-      const roomRef = doc(db as Firestore, 'sideRooms', roomId);
+      const roomRef = doc(db, 'sideRooms', roomId);
       
       // Move room to user's trash
-      const trashRef = doc(db as Firestore, 'users', currentUser.uid, 'trash', roomId);
-      await runTransaction(db as Firestore, async (transaction) => {
+      const trashRef = doc(db, 'users', currentUser.uid, 'trash', roomId);
+      await runTransaction(db, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
           throw new Error('Room not found');
@@ -754,7 +737,7 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       // Search users by username
-      const usersRef = collection(db as Firestore, 'users');
+      const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
         where('username', '>=', searchTerm),
@@ -779,11 +762,11 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsInviting(true);
-      const batch = writeBatch(db as Firestore);
+      const batch = writeBatch(db);
 
       // Create invitations for each selected user
       selectedUsers.forEach(user => {
-        const invitationRef = doc(collection(db as Firestore, 'sideRooms', roomId, 'invitations'));
+        const invitationRef = doc(collection(db, 'sideRooms', roomId, 'invitations'));
         batch.set(invitationRef, {
           userId: user.id,
           invitedBy: currentUser.uid,
@@ -792,7 +775,7 @@ const SideRoomComponent: React.FC = () => {
         });
 
         // Add notification for the invited user
-        const notificationRef = doc(collection(db as Firestore, 'users', user.id, 'notifications'));
+        const notificationRef = doc(collection(db, 'users', user.id, 'notifications'));
         batch.set(notificationRef, {
           type: 'room_invitation',
           roomId,

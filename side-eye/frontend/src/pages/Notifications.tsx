@@ -23,10 +23,18 @@ const NotificationPage: React.FC = () => {
   const navigate = useNavigate();
 
   const handleNotificationClick = async (notification: Notification) => {
-    if (!notification.read) {
+    if (!notification.isRead) {
       await markAsRead(notification.id);
     }
-    navigate(notification.link);
+    let navigateTo = '/';
+    if (notification.type === 'follow') {
+      navigateTo = `/profile/${notification.senderId}`;
+    } else if (notification.type === 'like' || notification.type === 'comment') {
+      navigateTo = `/post/${notification.postId}`;
+    } else if (notification.type === 'room_invite') {
+      navigateTo = `/side-room/${notification.roomId}`;
+    }
+    navigate(navigateTo);
   };
 
   const handleDelete = async (event: React.MouseEvent, notificationId: string) => {
@@ -60,7 +68,7 @@ const NotificationPage: React.FC = () => {
           <Typography variant="h4" component="h1">
             Notifications
           </Typography>
-          {notifications.some(n => !n.read) && (
+          {notifications.some(n => !n.isRead) && (
             <Button onClick={() => markAllAsRead()}>
               Mark all as read
             </Button>
@@ -82,10 +90,12 @@ const NotificationPage: React.FC = () => {
                   button
                   onClick={() => handleNotificationClick(notification)}
                   sx={{
-                    backgroundColor: notification.read ? 'transparent' : 'action.hover',
+                    backgroundColor: notification.isRead ? 'transparent' : 'action.hover',
                     '&:hover': {
                       backgroundColor: 'action.hover',
                     },
+                    mb: 1,
+                    borderRadius: 1,
                   }}
                 >
                   <ListItemAvatar>
@@ -98,13 +108,13 @@ const NotificationPage: React.FC = () => {
                       <Typography
                         variant="body1"
                         sx={{
-                          fontWeight: notification.read ? 'normal' : 'bold',
+                          fontWeight: notification.isRead ? 'normal' : 'bold',
                         }}
                       >
                         {notification.content}
                       </Typography>
                     }
-                    secondary={formatDistanceToNow(notification.timestamp.toDate(), { addSuffix: true })}
+                    secondary={formatDistanceToNow(notification.createdAt, { addSuffix: true })}
                   />
                   <IconButton
                     edge="end"

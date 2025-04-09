@@ -29,16 +29,8 @@ import {
   People as PeopleIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { getDb } from '../services/firebase';
-import { 
-  collection, 
-  query as firestoreQuery, 
-  where, 
-  getDocs,
-  DocumentData,
-  QueryDocumentSnapshot,
-  Timestamp
-} from 'firebase/firestore';
+import { collection, query as firestoreQuery, where, getDocs, orderBy, limit, Firestore, DocumentData, Timestamp } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 
@@ -63,24 +55,24 @@ interface Room {
 }
 
 interface FirestoreUser extends DocumentData {
-  displayName: string;
-  photoURL: string;
-  username: string;
+  displayName?: string;
+  photoURL?: string;
+  username?: string;
   bio?: string;
   followers?: number;
   following?: number;
-  displayNameSearch: string;
-  usernameSearch: string;
+  displayNameSearch?: string;
+  usernameSearch?: string;
 }
 
 interface FirestoreRoom extends DocumentData {
-  name: string;
-  description: string;
-  memberCount: number;
-  shareCount: number;
-  isPrivate: boolean;
-  createdAt: Timestamp;
-  nameSearch: string;
+  name?: string;
+  description?: string;
+  memberCount?: number;
+  shareCount?: number;
+  isPrivate?: boolean;
+  createdAt?: Timestamp;
+  nameSearch?: string;
 }
 
 const Discover: React.FC = () => {
@@ -93,6 +85,7 @@ const Discover: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const [error, setError] = useState<string | null>(null);
 
   const handleSearch = async (query: string) => {
     setSearchQuery(query);
@@ -104,7 +97,6 @@ const Discover: React.FC = () => {
 
     setLoading(true);
     try {
-      const db = await getDb();
       const queryLower = query.toLowerCase();
 
       // Search users
@@ -171,13 +163,13 @@ const Discover: React.FC = () => {
         const data = doc.data() as FirestoreRoom;
         return {
           id: doc.id,
-          name: data.name,
-          description: data.description,
+          name: data.name || 'Unnamed Room',
+          description: data.description || '',
           memberCount: data.memberCount || 0,
           shareCount: data.shareCount || 0,
           isPrivate: data.isPrivate || false,
-          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date()
-        };
+          createdAt: data.createdAt && data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date()
+        } as Room;
       });
 
       setSearchResults({

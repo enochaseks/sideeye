@@ -21,9 +21,12 @@ import {
   serverTimestamp,
   increment,
   getDoc,
-  Firestore
+  orderBy,
+  limit,
+  Firestore,
+  Timestamp
 } from 'firebase/firestore';
-import { getDb } from '../services/firebase';
+import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
 import RestoreIcon from '@mui/icons-material/Restore';
@@ -43,36 +46,20 @@ interface DeletedPost {
 
 const DeletedPosts: React.FC = () => {
   const { currentUser } = useAuth();
-  const [db, setDb] = useState<Firestore | null>(null);
   const [deletedPosts, setDeletedPosts] = useState<DeletedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [permanentlyDeleting, setPermanentlyDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize Firestore
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
-  useEffect(() => {
-    if (db && currentUser) {
+    if (currentUser) {
       fetchDeletedPosts();
     }
-  }, [db, currentUser]);
+  }, [currentUser]);
 
   const fetchDeletedPosts = async () => {
-    if (!db || !currentUser) return;
+    if (!currentUser) return;
 
     try {
       const deletedPostsQuery = query(
@@ -98,7 +85,7 @@ const DeletedPosts: React.FC = () => {
   };
 
   const handleRestore = async (postId: string) => {
-    if (!db || !currentUser) return;
+    if (!currentUser) return;
 
     setRestoring(postId);
     try {
@@ -135,11 +122,11 @@ const DeletedPosts: React.FC = () => {
   };
 
   const handlePermanentDelete = async (postId: string) => {
-    if (!db) return;
+    if (!currentUser) return;
     setPermanentlyDeleting(postId);
 
     try {
-      const deletedPostRef = doc(db as Firestore, 'deleted_posts', postId);
+      const deletedPostRef = doc(db, 'deleted_posts', postId);
       await deleteDoc(deletedPostRef);
 
       setDeletedPosts(posts => posts.filter(post => post.id !== postId));

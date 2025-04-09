@@ -1,20 +1,21 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, Timestamp, Firestore } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, Timestamp, Firestore, limit } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
-import { getDb } from '../services/firebase';
+import { db } from '../services/firebase';
 
 export interface Notification {
   id: string;
   type: 'follow' | 'like' | 'comment' | 'tag' | 'mention' | 'room_invite';
   senderId: string;
-  senderName: string;
-  senderAvatar: string;
+  senderName?: string;
+  senderAvatar?: string;
   recipientId: string;
-  read: boolean;
-  timestamp: Timestamp;
-  content: string;
-  link: string;
-  relatedId?: string; // ID of related post, comment, room, etc.
+  postId?: string;
+  commentId?: string;
+  roomId?: string;
+  content?: string;
+  createdAt: Date;
+  isRead: boolean;
 }
 
 interface NotificationContextType {
@@ -31,66 +32,48 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const { currentUser } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [db, setDb] = useState<Firestore | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Initialize Firestore
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-      }
-    };
+    if (currentUser && db) {
+      setLoading(true);
+      const notificationsRef = collection(db, 'users', currentUser.uid, 'notifications');
+      const q = query(notificationsRef, orderBy('createdAt', 'desc'), limit(50));
 
-    initializeDb();
-  }, []);
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetchedNotifications = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            createdAt: (data.createdAt as Timestamp).toDate(),
+            type: data.type as Notification['type'],
+            senderId: data.senderId as string,
+            recipientId: data.recipientId as string,
+            isRead: data.isRead as boolean,
+            senderName: data.senderName as string | undefined,
+            senderAvatar: data.senderAvatar as string | undefined,
+            postId: data.postId as string | undefined,
+            commentId: data.commentId as string | undefined,
+            roomId: data.roomId as string | undefined,
+            content: data.content as string | undefined,
+          } as Notification;
+        });
+        setNotifications(fetchedNotifications);
+        setUnreadCount(fetchedNotifications.filter(n => !n.isRead).length);
+        setLoading(false);
+      }, (error) => {
+        console.error("Error fetching notifications: ", error);
+        setLoading(false);
+      });
 
-  // Set up notifications listener
-  useEffect(() => {
-    if (!currentUser || !db) return;
-
-    let unsubscribe: (() => void) | undefined;
-
-    try {
-      const notificationsRef = collection(db, 'notifications');
-      const q = query(
-        notificationsRef,
-        where('recipientId', '==', currentUser.uid),
-        orderBy('timestamp', 'desc')
-      );
-
-      unsubscribe = onSnapshot(q, 
-        (snapshot) => {
-          const newNotifications: Notification[] = [];
-          let newUnreadCount = 0;
-
-          snapshot.forEach((doc) => {
-            const notification = { id: doc.id, ...doc.data() } as Notification;
-            newNotifications.push(notification);
-            if (!notification.read) {
-              newUnreadCount++;
-            }
-          });
-
-          setNotifications(newNotifications);
-          setUnreadCount(newUnreadCount);
-        },
-        (error) => {
-          console.error('Error in notifications listener:', error);
-        }
-      );
-    } catch (error) {
-      console.error('Error setting up notifications listener:', error);
+      return () => unsubscribe();
+    } else {
+      setNotifications([]);
+      setUnreadCount(0);
+      setLoading(false);
     }
-
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [currentUser, db]);
+  }, [currentUser]);
 
   const markAsRead = async (notificationId: string) => {
     if (!db || !currentUser) return;
@@ -108,7 +91,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     try {
       const promises = notifications
-        .filter(n => !n.read)
+        .filter(n => !n.isRead)
         .map(n => updateDoc(doc(db, 'notifications', n.id), { read: true }));
 
       await Promise.all(promises);

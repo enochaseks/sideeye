@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Container, Typography, Box, TextField, Button, Paper } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { getDb } from '../services/firebase';
 import { collection, addDoc, serverTimestamp, Firestore } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 const CreateForum: React.FC = () => {
@@ -11,25 +11,11 @@ const CreateForum: React.FC = () => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [db, setDb] = useState<Firestore | null>(null);
-
-  // Initialize Firestore
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-      }
-    };
-
-    initializeDb();
-  }, []);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser || !title.trim() || !description.trim() || !db) return;
+    if (!currentUser || !title.trim() || !description.trim()) return;
 
     setIsSubmitting(true);
     try {

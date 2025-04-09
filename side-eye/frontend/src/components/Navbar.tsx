@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthState, useSignOut } from 'react-firebase-hooks/auth';
-import { auth, getDb } from '../services/firebase';
+import { auth, db } from '../services/firebase';
 import {
   AppBar,
   Toolbar,
@@ -27,8 +27,6 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { NotificationIcon } from './NotificationIcon';
-
-const db = getDb();
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();

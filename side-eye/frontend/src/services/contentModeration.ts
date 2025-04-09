@@ -1,5 +1,5 @@
 import { doc, updateDoc, getDoc, arrayUnion, Firestore } from 'firebase/firestore';
-import { getDb } from './firebase';
+import { db } from './firebase';
 
 interface ModerationResult {
   isApproved: boolean;
@@ -70,8 +70,6 @@ const CYBERCRIME_PATTERNS = [
   /crack\s+password/i,
 ];
 
-const db = getDb();
-
 export const moderateContent = async (
   content: string,
   userId: string
@@ -126,8 +124,7 @@ export const moderateContent = async (
   }
 
   // Check user's warning history
-  const firestore = await db;
-  const userRef = doc(firestore, 'users', userId);
+  const userRef = doc(db, 'users', userId);
   const userDoc = await getDoc(userRef);
   
   if (userDoc.exists()) {
