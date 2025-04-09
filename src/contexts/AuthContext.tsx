@@ -288,59 +288,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
 
     try {
-      // Create the user account first
+      // 1. Create user with Firebase Auth
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // Send verification email immediately with actionCodeSettings
-      const actionCodeSettings = {
-        url: window.location.origin + '/setup-source-code',
-        handleCodeInApp: true
-      };
-      await firebaseSendEmailVerification(user, actionCodeSettings);
+      // 2. Send verification email
+      await firebaseSendEmailVerification(user);
+      console.log("Verification email sent to:", user.email); // Log success
 
-      // Then create the user profile
+      // 3. Create user profile in Firestore
+      const userProfileData: UserProfile = {
+        id: user.uid,
+        email: user.email || '',
+        name: user.displayName || '',
+        username: username.toLowerCase(),
+        profilePic: user.photoURL || '',
+        bio: '',
+        location: '',
+        website: '',
+        followers: [],
+        following: [],
+        connections: [],
+        isVerified: false,
+        createdAt: Timestamp.fromDate(new Date()),
+        lastLogin: Timestamp.fromDate(new Date()),
+        dateOfBirth: dateOfBirth,
+        settings: {
+          theme: 'light',
+          notifications: true,
+          privacy: 'public'
+        },
+        updatedAt: new Date(),
+        isPrivate: false,
+        isActive: true,
+        lastSeen: new Date(),
+        status: 'online',
+        preferences: {
+          theme: 'light',
+          language: 'en',
+          notifications: true,
+          emailNotifications: true,
+          pushNotifications: true
+        }
+      };
+
       if (db) {
         try {
-          const newUserProfile: UserProfile = {
-            id: user.uid,
-            email: user.email || '',
-            name: user.displayName || '',
-            username: username.toLowerCase(),
-            profilePic: user.photoURL || '',
-            bio: '',
-            location: '',
-            website: '',
-            followers: [],
-            following: [],
-            connections: [],
-            isVerified: false,
-            createdAt: Timestamp.fromDate(new Date()),
-            lastLogin: Timestamp.fromDate(new Date()),
-            dateOfBirth: dateOfBirth,
-            settings: {
-              theme: 'light',
-              notifications: true,
-              privacy: 'public'
-            },
-            updatedAt: new Date(),
-            isPrivate: false,
-            isActive: true,
-            lastSeen: new Date(),
-            status: 'online',
-            preferences: {
-              theme: 'light',
-              language: 'en',
-              notifications: true,
-              emailNotifications: true,
-              pushNotifications: true
-            }
-          };
-  
           console.log('Attempting to create user profile in Firestore for UID:', user.uid);
-          await setDoc(doc(db, 'users', user.uid), newUserProfile);
+          await setDoc(doc(db, 'users', user.uid), userProfileData);
           console.log('Successfully created user profile in Firestore.');
-          setUserProfile(newUserProfile);
+          setUserProfile(userProfileData);
         } catch (firestoreError: any) {
           console.error('Firestore error creating user profile:', firestoreError);
           // Re-throw the error or handle it specifically if needed
@@ -349,9 +346,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Update local state
-      setCurrentUser(user);
-      setUser(user);
+      // Update local state - REMOVED, let onAuthStateChanged handle this.
+      // setCurrentUser(user);
+      // setUser(user);
     } catch (error: any) {
       console.error('Registration error:', error);
       setError(getAuthErrorMessage(error.code));

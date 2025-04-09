@@ -8,54 +8,51 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
-import { sendEmailVerification } from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { useAuth } from '../contexts/AuthContext';
 
 const EmailVerification: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { currentUser, loading: authLoading, sendEmailVerification: resendVerificationEmail } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
 
-  // Check auth state when component mounts
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (!user) {
-        navigate('/login');
-      }
-    });
-
-    return () => unsubscribe();
-  }, [navigate]);
+    if (currentUser && currentUser.emailVerified) {
+      console.log("User email is verified, redirecting to setup source code...");
+      navigate('/setup-source-code', { replace: true });
+      return;
+    }
+  }, [currentUser, authLoading, navigate]);
 
   const handleResendVerification = async () => {
+    if (!currentUser) {
+      setError("Not logged in. Cannot resend verification email.");
+      navigate('/login');
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
+      setVerificationSent(false);
 
-      const user = auth.currentUser;
-      if (!user) {
-        // Instead of showing error, redirect to login
-        navigate('/login');
-        return;
-      }
-
-      await sendEmailVerification(user);
+      await resendVerificationEmail();
       setVerificationSent(true);
+      setError(null);
     } catch (error: any) {
       console.error('Error sending verification email:', error);
-      setError('Failed to send verification email. Please try again.');
+      setError(error.message || 'Failed to send verification email. Please try again.');
+      setVerificationSent(false);
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) {
+  if (authLoading) {
     return (
       <Container maxWidth="sm">
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 8 }}>
           <CircularProgress />
         </Box>
       </Container>
@@ -65,46 +62,33 @@ const EmailVerification: React.FC = () => {
   return (
     <Container maxWidth="sm">
       <Box sx={{ mt: 8, textAlign: 'center' }}>
-        {success ? (
-          <>
-            <Typography variant="h4" gutterBottom>
-              Email Verified!
-            </Typography>
-            <Typography variant="body1" color="text.secondary" paragraph>
-              Your email has been successfully verified. You will be redirected to the login page.
-            </Typography>
-          </>
-        ) : (
-          <>
-            <Typography variant="h4" gutterBottom>
-              Verify Your Email
-            </Typography>
-            <Typography variant="body1" color="text.secondary" paragraph>
-              Please check your email for a verification link. If you haven't received it, you can request a new one.
-            </Typography>
-            {error && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                {error}
-              </Alert>
-            )}
-            {verificationSent && (
-              <Alert severity="success" sx={{ mb: 2 }}>
-                Verification email sent! Please check your inbox.
-              </Alert>
-            )}
-            <Button
-              variant="contained"
-              onClick={handleResendVerification}
-              disabled={loading || verificationSent}
-              sx={{ mt: 2 }}
-            >
-              Resend Verification Email
-            </Button>
-          </>
+        <Typography variant="h4" gutterBottom>
+          Verify Your Email
+        </Typography>
+        <Typography variant="body1" color="text.secondary" paragraph>
+          Please check your email ({currentUser?.email || 'your registered email'}) for a verification link. If you haven't received it or it has expired, you can request a new one.
+        </Typography>
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
         )}
+        {verificationSent && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            Verification email sent! Please check your inbox (and spam folder).
+          </Alert>
+        )}
+        <Button
+          variant="contained"
+          onClick={handleResendVerification}
+          disabled={loading}
+          sx={{ mt: 2 }}
+        >
+          {loading ? <CircularProgress size={24} color="inherit" /> : 'Resend Verification Email'}
+        </Button>
       </Box>
     </Container>
   );
 };
 
-export default EmailVerification; 
+export default EmailVerification;
