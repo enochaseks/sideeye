@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../services/firebase';
-import { User, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { User, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification, setPersistence, browserLocalPersistence, onAuthStateChanged } from 'firebase/auth';
 import { UserProfile, UserPreferences } from '../types/index';
 import { getDoc, doc, setDoc, Firestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, increment, Timestamp, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -46,6 +46,9 @@ const AuthContext = createContext<AuthContextType>({
   completeInitialSetupAndLogin: () => {}
 });
 
+const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+const ACTIVITY_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -54,178 +57,261 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [tempUserForSourceCode, setTempUserForSourceCode] = useState<User | null>(null);
   const navigate = useNavigate();
+  const [lastActivity, setLastActivity] = useState<number>(Date.now());
+  const activityCheckInterval = useRef<NodeJS.Timeout>();
+
+  // Add rate limiting for source code verification
+  const [lastVerificationAttempt, setLastVerificationAttempt] = useState<number>(0);
+  const VERIFICATION_COOLDOWN = 2000; // 2 seconds cooldown
 
   const logError = (error: any, context: string) => {
-    const errorMessage = typeof error === 'object' ? JSON.stringify(error, null, 2) : String(error);
-    console.error(`[${context}] Error:`, errorMessage);
+    // Sanitize error message to prevent sensitive data leakage
+    const sanitizedError = typeof error === 'object' 
+      ? JSON.stringify({
+          message: error.message,
+          code: error.code,
+          name: error.name
+        }, null, 2)
+      : String(error).replace(/password|token|key|secret/gi, '[REDACTED]');
     
-    // Log to a remote service if needed
+    console.error(`[${context}] Error:`, sanitizedError);
+    
+    // In production, use a proper error tracking service
     if (process.env.NODE_ENV === 'production') {
-      // You can add your error tracking service here (e.g., Sentry, LogRocket)
+      // Example: Send to error tracking service
+      // You should replace this with your actual error tracking service
       try {
-        // Example: Log to localStorage for debugging
+        // Only log non-sensitive information
         const errorLog = {
           timestamp: new Date().toISOString(),
           context,
-          error: errorMessage,
-          userAgent: navigator.userAgent,
-          url: window.location.href
+          error: sanitizedError,
+          path: window.location.pathname
         };
         
-        const existingLogs = JSON.parse(localStorage.getItem('errorLogs') || '[]');
-        existingLogs.push(errorLog);
-        localStorage.setItem('errorLogs', JSON.stringify(existingLogs.slice(-10))); // Keep last 10 errors
+        // Send to error tracking service instead of localStorage
+        // errorTrackingService.log(errorLog);
       } catch (e) {
         console.error('Failed to log error:', e);
       }
     }
   };
 
+  const updateLastActivity = () => {
+    setLastActivity(Date.now());
+    if (currentUser && checkStoragePermission('functionality')) {
+      const sessionId = localStorage.getItem('sessionId');
+      if (sessionId && db) {
+        const userRef = doc(db, 'users', currentUser.uid);
+        updateDoc(userRef, {
+          'sessions': arrayUnion({
+            id: sessionId,
+            lastActivity: new Date().toISOString()
+          })
+        }).catch(error => {
+          console.error('Error updating session activity:', error);
+        });
+      }
+    }
+  };
+
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (userAuth) => {
-      if (userAuth && currentUser && userAuth.uid === currentUser.uid && !loading) {
-        console.log(`Auth state: Listener triggered for existing user ${currentUser.uid}, state seems stable. Skipping redundant run.`);
-        if (loading) setLoading(false);
-        return;
+    // Set up activity tracking
+    const handleActivity = () => {
+      updateLastActivity();
+    };
+
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('keypress', handleActivity);
+    window.addEventListener('click', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+
+    // Set up periodic activity check
+    activityCheckInterval.current = setInterval(() => {
+      if (currentUser && Date.now() - lastActivity > SESSION_TIMEOUT) {
+        console.log('Session timeout detected, logging out...');
+        logout();
+      }
+    }, ACTIVITY_CHECK_INTERVAL);
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('keypress', handleActivity);
+      window.removeEventListener('click', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      if (activityCheckInterval.current) {
+        clearInterval(activityCheckInterval.current);
+      }
+    };
+  }, [currentUser, lastActivity]);
+
+  const registerDevice = async (userId: string) => {
+    if (!db) {
+      console.error('Firestore not initialized');
+      return null;
+    }
+
+    try {
+      // Generate a device ID if not exists
+      let deviceId = localStorage.getItem('deviceId');
+      if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem('deviceId', deviceId);
+        console.log('Generated new device ID:', deviceId);
       }
 
-      try {
-        console.log('Auth state changed:', userAuth ? `User UID: ${userAuth.uid}, Verified: ${userAuth.emailVerified}` : 'No user');
-        setError(null);
+      const userRef = doc(db, 'users', userId);
+      const userDoc = await getDoc(userRef);
 
-        if (userAuth) {
-          const initialUser = userAuth;
-          setLoading(true);
+      if (!userDoc.exists()) {
+        console.error('User document not found');
+        return null;
+      }
 
-          try {
-            console.log(`Auth state: Reloading user ${initialUser.uid} to ensure latest status...`);
-            await initialUser.reload();
+      const userData = userDoc.data();
+      const registeredDevices = userData.registeredDevices || [];
 
-            // Add retry logic for verification check
-            let isVerified = false;
-            let retryCount = 0;
-            const maxRetries = 3;
+      // Check if device is already registered
+      if (!registeredDevices.includes(deviceId)) {
+        console.log('Registering new device:', deviceId);
+        await updateDoc(userRef, {
+          registeredDevices: arrayUnion(deviceId)
+        });
+        console.log('Device registered successfully');
+      } else {
+        console.log('Device already registered:', deviceId);
+      }
 
-            while (!isVerified && retryCount < maxRetries) {
-              try {
-                isVerified = await forceCheckEmailVerification(initialUser);
-                console.log(`Verification check attempt ${retryCount + 1}:`, isVerified);
-                
-                if (!isVerified) {
-                  retryCount++;
-                  if (retryCount < maxRetries) {
-                    console.log('Waiting before retry...');
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                  }
-                }
-              } catch (verificationError) {
-                logError(verificationError, 'Email Verification Check');
-                retryCount++;
-              }
-            }
+      return deviceId;
+    } catch (error) {
+      console.error('Error registering device:', error);
+      return null;
+    }
+  };
 
-            const refreshedUser = auth.currentUser;
-
-            if (!refreshedUser) {
-              logError('User disappeared after verification check', 'Auth State');
-              setError('Authentication state lost. Please log in again.');
-              await firebaseSignOut(auth);
-              setCurrentUser(null);
-              setUser(null);
-              setUserProfile(null);
-              setTempUserForSourceCode(null);
-              setLoading(false);
-              navigate('/login');
-              return;
-            }
-
-            if (!isVerified) {
-              console.log('Auth state: Email not verified after all retries. Navigating to /verify-email');
-              setUser(refreshedUser);
-              setCurrentUser(null);
-              setUserProfile(null);
-              setTempUserForSourceCode(null);
-              setLoading(false);
-              navigate('/verify-email', { replace: true });
-              return;
-            }
-
-            // Get the current device ID
-            const deviceId = localStorage.getItem('deviceId');
-            
-            // Fetch user profile with device-specific information
-            if (db) {
-              const userRef = doc(db, 'users', refreshedUser.uid);
-              const docSnap = await getDoc(userRef);
-              
-              if (docSnap.exists()) {
-                const profileData = docSnap.data() as UserProfile;
-                
-                // Check if this device has completed source code setup
-                const deviceSetupComplete = profileData.devices?.find(
-                  (device: any) => device.id === deviceId
-                )?.sourceCodeSetupComplete;
-
-                if (profileData.sourceCodeSetupComplete && !deviceSetupComplete) {
-                  console.log('Auth state: Source code setup complete on other device, but not on this device. Navigating to /enter-source-code');
-                  setTempUserForSourceCode(refreshedUser);
-                  setLoading(false);
-                  navigate('/enter-source-code', { replace: true });
-                  return;
-                }
-
-                if (!profileData.sourceCodeSetupComplete) {
-                  console.log('Auth state: Source code setup required. Navigating to /setup-source-code');
-                  setTempUserForSourceCode(null);
-                  setLoading(false);
-                  navigate('/setup-source-code', { replace: true });
-                  return;
-                }
-
-                // If we get here, both profile and device setup are complete
-                console.log('Auth state: All setup complete. Navigating to feed');
-                setCurrentUser(refreshedUser);
-                setUser(refreshedUser);
-                setUserProfile(profileData);
-                setTempUserForSourceCode(null);
-                setLoading(false);
-                navigate('/', { replace: true });
-                return;
-              }
-            }
-          } catch (reloadOrInnerError) {
-            logError(reloadOrInnerError, 'User Reload/Inner Processing');
-            setError('An unexpected error occurred during authentication update.');
-            await firebaseSignOut(auth);
-            setCurrentUser(null);
-            setUser(null);
-            setUserProfile(null);
-            setTempUserForSourceCode(null);
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('Auth state changed:', user ? 'User logged in' : 'No user');
+      setLoading(true);
+      
+      if (user) {
+        try {
+          // Register device first
+          const deviceId = await registerDevice(user.uid);
+          if (!deviceId) {
+            console.error('Failed to register device');
+            setError('Failed to register device. Please try again.');
             setLoading(false);
-            navigate('/login');
+            return;
           }
-        } else {
-          console.log('Auth state changed - No user / explicit logout');
-          setCurrentUser(null);
-          setUser(null);
-          setUserProfile(null);
-          setTempUserForSourceCode(null);
+
+          // Get user profile
+          const userRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userRef);
+          
+          if (!userDoc.exists()) {
+            console.error('User profile not found');
+            setError('User profile not found');
+            setLoading(false);
+            return;
+          }
+
+          const profileData = userDoc.data();
+          console.log('Profile data:', profileData);
+
+          // Check if source code setup is complete for this device
+          const isSetupComplete = profileData.sourceCodeSetupComplete || false;
+          console.log('Source code setup complete:', isSetupComplete);
+
+          if (isSetupComplete) {
+            console.log('Source code setup complete, navigating to feed');
+            setCurrentUser(user);
+            setLoading(false);
+            navigate('/');
+          } else {
+            console.log('Source code setup not complete, navigating to setup');
+            setCurrentUser(user);
+            setLoading(false);
+            navigate('/setup-source-code');
+          }
+        } catch (error) {
+          console.error('Error in auth state change:', error);
+          setError('An error occurred while processing your login');
           setLoading(false);
         }
-      } catch (outerError) {
-        logError(outerError, 'Outer Auth State Change');
-        setError('A critical error occurred during authentication setup.');
-        await firebaseSignOut(auth);
+      } else {
         setCurrentUser(null);
         setUser(null);
         setUserProfile(null);
-        setTempUserForSourceCode(null);
         setLoading(false);
       }
     });
 
-    return unsubscribe;
+    return () => unsubscribe();
   }, [navigate]);
+
+  const checkStoragePermission = (type: 'necessary' | 'functionality' | 'analytics'): boolean => {
+    try {
+      const preferences = localStorage.getItem('cookiePreferences');
+      if (!preferences) return false;
+      
+      const parsedPreferences = JSON.parse(preferences);
+      return parsedPreferences[type] === true;
+    } catch (error) {
+      console.error('Error checking storage permissions:', error);
+      return false;
+    }
+  };
+
+  const cleanupOldSessions = async (userId: string) => {
+    if (!db) return;
+    
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const data = userDoc.data();
+        if (data.sessions && Array.isArray(data.sessions)) {
+          const now = new Date();
+          const validSessions = data.sessions.filter((session: any) => {
+            const sessionTime = new Date(session.loginTime);
+            // Keep sessions from the last 30 days
+            return (now.getTime() - sessionTime.getTime()) < (30 * 24 * 60 * 60 * 1000);
+          });
+          
+          if (validSessions.length !== data.sessions.length) {
+            await updateDoc(userRef, {
+              sessions: validSessions
+            });
+            console.log('Cleaned up old sessions');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error cleaning up sessions:', error);
+    }
+  };
+
+  const validateSession = async (userId: string, sessionId: string): Promise<boolean> => {
+    if (!db) return false;
+    
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const data = userDoc.data();
+        if (data.sessions && Array.isArray(data.sessions)) {
+          return data.sessions.some((session: any) => session.id === sessionId);
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error validating session:', error);
+      return false;
+    }
+  };
 
   const login = async (email: string, password: string) => {
     setLoading(true);
@@ -234,7 +320,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log('Starting login process for:', email);
       
-      // Set persistence to LOCAL to maintain session across page refreshes
       await setPersistence(auth, browserLocalPersistence);
       console.log('Persistence set to LOCAL');
       
@@ -242,14 +327,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const user = userCredential.user;
       
       console.log('Login successful, checking verification status...');
-      console.log('User object:', {
-        uid: user.uid,
-        email: user.email,
-        emailVerified: user.emailVerified,
-        providerData: user.providerData
-      });
       
-      // Force a reload and check verification status
       const isVerified = await forceCheckEmailVerification(user);
       console.log('Email verification status after login:', isVerified);
       
@@ -261,48 +339,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Check if this is a new device
-      const deviceId = localStorage.getItem('deviceId');
-      console.log('Current device ID:', deviceId);
-      
-      if (!deviceId) {
-        // Generate a new device ID for this device
-        const newDeviceId = crypto.randomUUID();
-        localStorage.setItem('deviceId', newDeviceId);
-        console.log('Generated new device ID:', newDeviceId);
-        
-        // Update user's devices in Firestore
+      // Clean up old sessions before creating a new one
+      await cleanupOldSessions(user.uid);
+
+      if (checkStoragePermission('functionality')) {
+        const sessionId = crypto.randomUUID();
+        localStorage.setItem('sessionId', sessionId);
+        console.log('Generated new session ID:', sessionId);
+
         if (db) {
           try {
             const userRef = doc(db, 'users', user.uid);
-            const deviceInfo = {
-              id: newDeviceId,
-              lastLogin: new Date().toISOString(), // Use ISO string instead of serverTimestamp
-              sourceCodeSetupComplete: false,
+            const sessionInfo = {
+              id: sessionId,
+              loginTime: new Date().toISOString(),
               deviceInfo: {
                 userAgent: navigator.userAgent,
-                platform: navigator.platform
-              }
+                platform: navigator.platform,
+                ip: await fetch('https://api.ipify.org?format=json').then(res => res.json()).then(data => data.ip).catch(() => 'unknown')
+              },
+              lastActivity: new Date().toISOString()
             };
             
-            // First, get the current devices array
-            const userDoc = await getDoc(userRef);
-            const currentDevices = userDoc.data()?.devices || [];
-            
-            // Update the document with the new devices array
             await updateDoc(userRef, {
-              devices: [...currentDevices, deviceInfo]
+              sessions: arrayUnion(sessionInfo)
             });
             
-            console.log('Device information updated in Firestore');
+            console.log('Session information updated in Firestore');
           } catch (firestoreError) {
-            console.error('Error updating device information:', firestoreError);
-            // Don't fail the login if device update fails
+            console.error('Error updating session information:', firestoreError);
           }
         }
       }
       
-      // If verified, let onAuthStateChanged handle the rest
       setLoading(false);
       
     } catch (error: any) {
@@ -323,8 +392,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       setError(errorMessage);
       setLoading(false);
-      
-      // Log the error for debugging
       logError(error, 'Login Function');
     }
   };
@@ -335,6 +402,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('verifySourceCodeAndCompleteLogin: No temporary user found');
       return;
     }
+
+    // Check rate limiting
+    const now = Date.now();
+    if (now - lastVerificationAttempt < VERIFICATION_COOLDOWN) {
+      setError('Please wait a moment before trying again');
+      return;
+    }
+    setLastVerificationAttempt(now);
 
     try {
       setLoading(true);
@@ -358,6 +433,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      // Add artificial delay to prevent timing attacks
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       // Verify the source code
       const isMatch = await bcrypt.compare(code, profileData.sourceCodeHash);
       
@@ -366,31 +444,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Get the current device ID
-      const deviceId = localStorage.getItem('deviceId');
-      if (!deviceId) {
-        setError('Device ID not found');
+      // Get the current session ID
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) {
+        setError('Session ID not found');
         return;
       }
 
-      // Update the device's source code setup status
-      const devices = profileData.devices || [];
-      const updatedDevices = devices.map(device => 
-        device.id === deviceId 
-          ? { ...device, sourceCodeSetupComplete: true }
-          : device
-      );
-
-      await updateDoc(userRef, {
-        devices: updatedDevices
-      });
+      try {
+        // Update the session's verification status
+        await updateDoc(userRef, {
+          'sessions.verifications': arrayUnion({
+            sessionId,
+            timestamp: new Date().toISOString()
+          })
+        });
+        console.log('Session verification status updated successfully');
+      } catch (updateError) {
+        // Log but don't fail the verification if session update fails
+        console.error('Error updating session verification status:', updateError);
+      }
 
       // Set the current user and navigate to feed
       setCurrentUser(tempUserForSourceCode);
       setUserProfile(profileData);
       setTempUserForSourceCode(null);
       setLoading(false);
-      navigate('/');
+      
+      // Using setTimeout to allow React state updates to complete before navigation
+      setTimeout(() => {
+        navigate('/');
+      }, 0);
     } catch (error) {
       console.error('Error verifying source code:', error);
       setError('Failed to verify source code');
@@ -417,7 +501,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log("Verification email sent to:", user.email);
 
       // 4. Create a basic user profile in Firestore with sourceCodeSetupComplete=false
-      // Doing this early helps prevent issues if user verifies email from a different device
       try {
         if (db) {
           const defaultPreferences = {
@@ -439,7 +522,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             followers: [],
             following: [],
             connections: [],
-            isVerified: false, // Will be updated to true after email verification
+            isVerified: false,
             sourceCodeHash: null,
             sourceCodeSetupComplete: false,
             createdAt: Timestamp.fromDate(new Date()),
@@ -462,13 +545,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // It can be created later in the onAuthStateChanged listener
       }
 
-      // Do not set currentUser here - let onAuthStateChanged handle it
-      // which will send them to email verification page
+      // Set the user state to trigger onAuthStateChanged
+      setUser(user);
       
     } catch (error: any) {
       console.error('Registration error:', error);
       setError(getAuthErrorMessage(error.code));
-      throw error; // Let the Register component handle specific error cases
+      throw error;
     } finally {
       setLoading(false);
     }
@@ -477,6 +560,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       setLoading(true);
+      if (currentUser && checkStoragePermission('functionality')) {
+        const sessionId = localStorage.getItem('sessionId');
+        if (sessionId && db) {
+          const userRef = doc(db, 'users', currentUser.uid);
+          await updateDoc(userRef, {
+            'sessions': arrayRemove({
+              id: sessionId
+            })
+          });
+        }
+        localStorage.removeItem('sessionId');
+      }
       await firebaseSignOut(auth);
       setCurrentUser(null);
       setUser(null);
@@ -568,6 +663,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const isAdmin = async (userId: string): Promise<boolean> => {
+    if (!db) return false;
+    try {
+      const adminDoc = await getDoc(doc(db, 'admins', userId));
+      return adminDoc.exists();
+    } catch (error) {
+      console.log('Error checking admin status:', error);
+      return false;
+    }
+  };
+
   const forceCheckEmailVerification = async (user: User): Promise<boolean> => {
     try {
       console.log('Starting forceCheckEmailVerification for user:', user.uid);
@@ -597,15 +703,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             
             // Only update if the profile isn't already marked as verified
             if (!profileData.isVerified) {
-              await updateDoc(userRef, {
-                isVerified: true,
-                updatedAt: serverTimestamp()
-              });
-              console.log('Updated user profile verification status in Firestore');
+              // Check if user is admin before attempting update
+              const userIsAdmin = await isAdmin(refreshedUser.uid);
+              if (userIsAdmin) {
+                await updateDoc(userRef, {
+                  isVerified: true,
+                  updatedAt: serverTimestamp()
+                });
+                console.log('Updated user profile verification status in Firestore');
+              } else {
+                console.log('User is not admin, skipping verification status update');
+              }
             }
           }
         } catch (error) {
-          console.error('Error updating user profile verification status:', error);
+          console.log('Could not access user profile in Firestore');
         }
       }
       

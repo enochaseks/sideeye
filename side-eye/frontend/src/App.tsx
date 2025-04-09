@@ -44,22 +44,23 @@ import ResetSourceCode from './pages/ResetSourceCode';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Debug from './pages/Debug';
+import CookieConsent from './components/CookieConsent';
 import './App.css';
 
 const App: React.FC = () => {
   return (
-    <BrowserRouter>
+    <ErrorBoundary>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <ErrorBoundary>
-          <AuthProvider>
-            <FirestoreProvider>
+        <LocalizationProvider dateAdapter={AdapterDateFns}>
+          <BrowserRouter>
+            <AuthProvider>
               <NotificationProvider>
-                <RateLimiter>
-                  <LocalizationProvider dateAdapter={AdapterDateFns}>
+                <FirestoreProvider>
+                  <RateLimiter>
                     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
                       <Navbar />
-                      <Box component="main" sx={{ flexGrow: 1 }}>
+                      <Box component="main" sx={{ flexGrow: 1, pt: 8 }}>
                         <Routes>
                           <Route path="/" element={<ProtectedRoute requireEmailVerification><Feed /></ProtectedRoute>} />
                           <Route path="/login" element={<Login />} />
@@ -90,16 +91,17 @@ const App: React.FC = () => {
                           <Route path="/debug" element={<Debug />} />
                         </Routes>
                       </Box>
+                      <CookieConsent />
+                      <Toaster position="bottom-right" />
                     </Box>
-                  </LocalizationProvider>
-                  <Toaster position="bottom-right" />
-                </RateLimiter>
+                  </RateLimiter>
+                </FirestoreProvider>
               </NotificationProvider>
-            </FirestoreProvider>
-          </AuthProvider>
-        </ErrorBoundary>
+            </AuthProvider>
+          </BrowserRouter>
+        </LocalizationProvider>
       </ThemeProvider>
-    </BrowserRouter>
+    </ErrorBoundary>
   );
 };
 

@@ -90,35 +90,44 @@ const Discover: React.FC = () => {
   const handleSearch = async (query: string) => {
     setSearchQuery(query);
     
+    if (!currentUser || !db) {
+      setSearchResults({ users: [], rooms: [] });
+      return;
+    }
+
     if (query.length < 2) {
       setSearchResults({ users: [], rooms: [] });
       return;
     }
 
     setLoading(true);
+    setError(null);
     try {
       const queryLower = query.toLowerCase();
 
-      // Search users
       const usersRef = collection(db, 'users');
+      
       const nameQuery = firestoreQuery(
         usersRef,
         where('displayNameSearch', '>=', queryLower),
-        where('displayNameSearch', '<=', queryLower + '\uf8ff')
+        where('displayNameSearch', '<=', queryLower + '\uf8ff'),
+        limit(10)
       );
 
       const usernameQuery = firestoreQuery(
         usersRef,
         where('usernameSearch', '>=', queryLower),
-        where('usernameSearch', '<=', queryLower + '\uf8ff')
+        where('usernameSearch', '<=', queryLower + '\uf8ff'),
+        limit(10)
       );
 
-      // Search rooms
-      const roomsRef = collection(db, 'rooms');
+      const roomsRef = collection(db, 'sideRooms');
       const roomQuery = firestoreQuery(
         roomsRef,
+        where('isPrivate', '==', false),
         where('nameSearch', '>=', queryLower),
-        where('nameSearch', '<=', queryLower + '\uf8ff')
+        where('nameSearch', '<=', queryLower + '\uf8ff'),
+        limit(10)
       );
 
       const [nameResults, usernameResults, roomResults] = await Promise.all([
@@ -127,10 +136,10 @@ const Discover: React.FC = () => {
         getDocs(roomQuery)
       ]);
 
-      // Combine and deduplicate user results
       const combinedUserResults = new Map<string, UserProfile>();
       
-      nameResults.docs.forEach((doc) => {
+      const filterAndAddUser = (doc: DocumentData) => {
+        if (doc.id === currentUser.uid) return;
         const data = doc.data() as FirestoreUser;
         combinedUserResults.set(doc.id, {
           uid: doc.id,
@@ -141,24 +150,15 @@ const Discover: React.FC = () => {
           followers: data.followers || 0,
           following: data.following || 0
         });
-      });
+      };
 
+      nameResults.docs.forEach(filterAndAddUser);
       usernameResults.docs.forEach((doc) => {
         if (!combinedUserResults.has(doc.id)) {
-          const data = doc.data() as FirestoreUser;
-          combinedUserResults.set(doc.id, {
-            uid: doc.id,
-            displayName: data.displayName || 'Anonymous',
-            photoURL: data.photoURL || '',
-            username: data.username || '',
-            bio: data.bio || '',
-            followers: data.followers || 0,
-            following: data.following || 0
-          });
+          filterAndAddUser(doc);
         }
       });
 
-      // Process room results
       const roomResultsList = roomResults.docs.map(doc => {
         const data = doc.data() as FirestoreRoom;
         return {
@@ -168,7 +168,7 @@ const Discover: React.FC = () => {
           memberCount: data.memberCount || 0,
           shareCount: data.shareCount || 0,
           isPrivate: data.isPrivate || false,
-          createdAt: data.createdAt && data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date()
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date()
         } as Room;
       });
 
@@ -176,9 +176,11 @@ const Discover: React.FC = () => {
         users: Array.from(combinedUserResults.values()),
         rooms: roomResultsList
       });
-    } catch (error) {
+
+    } catch (error: any) {
       console.error('Search error:', error);
-      toast.error('Failed to search');
+      setError(`Failed to perform search: ${error.message}`);
+      toast.error(`Search failed: ${error.code || error.message}`);
     } finally {
       setLoading(false);
     }

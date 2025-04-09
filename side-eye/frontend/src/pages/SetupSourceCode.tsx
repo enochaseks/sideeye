@@ -8,131 +8,134 @@ import {
   Button,
   CircularProgress,
   Alert,
-  Paper,
-  Link
+  Paper
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, updateDoc, getDoc, Firestore } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
 import { db } from '../services/firebase';
+import { v4 as uuidv4 } from 'uuid';
 
-const SetupSourceCode: React.FC = (): JSX.Element | null => {
-  const { currentUser, user, loading: authLoading, userProfile, forceCheckEmailVerification } = useAuth();
+const SetupSourceCode: React.FC = () => {
+  const { currentUser, user, loading: authLoading, userProfile } = useAuth();
   const navigate = useNavigate();
   const [code, setCode] = useState('');
   const [confirmCode, setConfirmCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [checkingVerification, setCheckingVerification] = useState(false);
+  const [deviceId, setDeviceId] = useState<string>('');
 
-  // Improved useEffect to prevent redirect loops
+  // Initialize device ID
   useEffect(() => {
-    // Don't do anything while auth is still loading
-    if (authLoading) return;
-
-    const checkAuth = async () => {
-      setCheckingVerification(true);
+    const initializeDevice = async () => {
       try {
-        // If no user at all, redirect to login
-        if (!currentUser && !user) {
-          console.log("No user found, redirecting to login");
+        // Generate or retrieve device ID
+        let storedDeviceId = '';
+        try {
+          storedDeviceId = localStorage.getItem('deviceId') || '';
+        } catch (e) {
+          console.log('localStorage access blocked, generating new device ID');
+        }
+        
+        if (!storedDeviceId) {
+          storedDeviceId = uuidv4();
+          try {
+            localStorage.setItem('deviceId', storedDeviceId);
+          } catch (e) {
+            console.log('Failed to store device ID in localStorage');
+          }
+        }
+        setDeviceId(storedDeviceId);
+
+        // Check auth state
+        if (authLoading) return;
+        
+        const activeUser = currentUser || user;
+        if (!activeUser) {
           navigate('/login');
           return;
         }
 
-        // Get the active user (either currentUser or user)
-        const activeUser = currentUser || user;
-        
-        // If there's a user profile and they've already set up the source code, redirect to home
         if (userProfile?.sourceCodeSetupComplete) {
-          console.log("Source code already set up, redirecting to home");
           navigate('/');
-          return;
         }
-
-        // Only check email verification if specifically needed
-        // This prevents unnecessary bouncing between pages
-        if (activeUser) {
-          const isVerified = await forceCheckEmailVerification(activeUser);
-          if (!isVerified) {
-            console.log("Email not verified, redirecting to verification page");
-            navigate('/verify-email');
-            return;
-          }
-        }
-        
-        // If we get here, stay on this page - it's the right place
-        console.log("User is in the correct state for source code setup");
       } catch (err) {
-        console.error("Error checking auth state:", err);
-        setError("Failed to verify authentication state");
-      } finally {
-        setCheckingVerification(false);
+        console.error('Device initialization error:', err);
+        setError('Failed to initialize device');
       }
     };
 
-    checkAuth();
-  }, [currentUser, user, authLoading, navigate, userProfile, forceCheckEmailVerification]);
+    initializeDevice();
+  }, [currentUser, user, authLoading, navigate, userProfile]);
 
   const validateCode = (): boolean => {
-    if (!/^[0-9]{8}$/.test(code)) {
-      setError('Source code must be exactly 8 digits.');
+    if (!/^\d{8}$/.test(code)) {
+      setError('Source code must be exactly 8 digits');
       return false;
     }
     if (code !== confirmCode) {
-      setError('Codes do not match.');
+      setError('Codes do not match');
       return false;
     }
-    setError(null);
     return true;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Determine which user object to use
+    if (!validateCode()) return;
+
+    if (!deviceId) {
+      setError('Device identification failed. Please refresh the page.');
+      return;
+    }
+
     const activeUser = currentUser || user;
-    
-    if (!validateCode() || !activeUser || !db) {
-      setError('Unable to complete setup. Please try again or log in again.');
+    if (!activeUser || !db) {
+      setError('Authentication error');
       return;
     }
 
     setLoading(true);
     setError(null);
-    setSuccess(null);
 
     try {
-      // Hash the code
       const salt = bcrypt.genSaltSync(10);
       const hashedCode = bcrypt.hashSync(code, salt);
 
-      // Update Firestore
-      const userDocRef = doc(db, 'users', activeUser.uid);
-      await updateDoc(userDocRef, {
+      // First verify the device ID exists
+      if (!deviceId || typeof deviceId !== 'string') {
+        throw new Error('Invalid device ID');
+      }
+
+      await updateDoc(doc(db, 'users', activeUser.uid), {
         sourceCodeHash: hashedCode,
         sourceCodeSetupComplete: true,
+        registeredDevices: arrayUnion(deviceId),
+        lastUpdated: serverTimestamp()
       });
 
-      setSuccess('Source code setup complete! Redirecting to home page...');
-      console.log('Source code setup complete.');
-      
-      // Short delay before redirecting to show success message
-      setTimeout(() => {
-        navigate('/'); // Redirect to home page after setup
-      }, 1500);
+      // Also store in local storage to confirm it persisted
+      localStorage.setItem('deviceId', deviceId);
+
+      setSuccess('Device registration successful! Redirecting...');
+      setTimeout(() => navigate('/'), 1500);
     } catch (err: any) {
-      console.error('Error setting up source code:', err);
-      setError('Failed to set up source code: ' + (err.message || 'Please try again.'));
+      console.error('Setup error:', err);
+      setError(err.code === 'permission-denied' 
+        ? 'Permission denied. Please contact support.' 
+        : err.message.includes('device') 
+          ? 'Device registration failed. Please try again.'
+          : 'Setup failed. Please try again.');
+    } finally {
       setLoading(false);
     }
   };
 
-  if (authLoading || checkingVerification) {
+  if (authLoading) {
     return (
       <Container maxWidth="sm">
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 8 }}>
+        <Box display="flex" justifyContent="center" mt={8}>
           <CircularProgress />
         </Box>
       </Container>
@@ -141,74 +144,59 @@ const SetupSourceCode: React.FC = (): JSX.Element | null => {
 
   return (
     <Container maxWidth="xs">
-      <Paper elevation={0} sx={{ mt: 8, p: 4 }}>
-        <Typography variant="h5" component="h1" gutterBottom align="center">
-          Set Up Your 8-Digit Source Code
+      <Paper elevation={3} sx={{ mt: 8, p: 4 }}>
+        <Typography variant="h5" align="center" gutterBottom>
+          Device Registration
         </Typography>
         <Typography variant="body2" color="text.secondary" align="center" paragraph>
-          This code will be used for account security instead of traditional 2FA. Keep it safe!
+          {deviceId ? `Device ID: ${deviceId.slice(0, 8)}...` : 'Generating device ID...'}
         </Typography>
         
-        {error && (
-          <Alert severity="error" sx={{ mt: 2, mb: 2 }}>
-            {error}
-          </Alert>
-        )}
-        
-        {success && (
-          <Alert severity="success" sx={{ mt: 2, mb: 2 }}>
-            {success}
-          </Alert>
-        )}
-        
-        <Box component="form" onSubmit={handleSubmit} noValidate sx={{ mt: 2 }}>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
+
+        <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
           <TextField
-            margin="normal"
-            required
             fullWidth
-            id="source-code"
-            label="8-Digit Source Code"
-            name="source-code"
-            type="password" // Use password type to obscure input
-            inputProps={{ maxLength: 8, pattern: '[0-9]*', inputMode: 'numeric' }}
+            margin="normal"
+            label="8-Digit Security Code"
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 8))} // Allow only digits
-            autoFocus
-            error={!!error && error.includes('digits')}
-            disabled={loading}
+            type="password"
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+            inputProps={{ 
+              maxLength: 8,
+              inputMode: 'numeric',
+              pattern: '[0-9]*'
+            }}
+            required
           />
           <TextField
-            margin="normal"
-            required
             fullWidth
-            name="confirm-source-code"
-            label="Confirm Source Code"
-            type="password"
-            id="confirm-source-code"
-            inputProps={{ maxLength: 8, pattern: '[0-9]*', inputMode: 'numeric' }}
+            margin="normal"
+            label="Confirm Security Code"
             value={confirmCode}
+            type="password"
             onChange={(e) => setConfirmCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
-            error={!!error && error.includes('match')}
-            disabled={loading}
+            inputProps={{ 
+              maxLength: 8,
+              inputMode: 'numeric',
+              pattern: '[0-9]*'
+            }}
+            required
           />
-          
           <Button
             type="submit"
             fullWidth
             variant="contained"
-            sx={{ mt: 3, mb: 2 }}
-            disabled={loading}
+            sx={{ mt: 3 }}
+            disabled={loading || !deviceId}
           >
-            {loading ? <CircularProgress size={24} /> : 'Set Source Code'}
+            {loading ? <CircularProgress size={24} /> : 'Register This Device'}
           </Button>
-          
-          <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 2 }}>
-            Remember to store this code securely. You'll need it every time you log in.
-          </Typography>
         </Box>
       </Paper>
     </Container>
   );
 };
 
-export default SetupSourceCode; 
+export default SetupSourceCode;

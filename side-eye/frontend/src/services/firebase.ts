@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
-import { initializeFirestore, CACHE_SIZE_UNLIMITED, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { initializeFirestore, CACHE_SIZE_UNLIMITED, Firestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getDatabase } from 'firebase/database';
 
@@ -21,12 +21,6 @@ const app = initializeApp(firebaseConfig);
 // Initialize Auth
 export const auth = getAuth(app);
 
-// Connect to the Auth emulator only in development
-if (process.env.NODE_ENV === 'development') {
-  connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
-  console.log('Connected to Auth emulator on localhost:9099');
-}
-
 // Add auth state change listener for debugging
 auth.onAuthStateChanged((user) => {
   if (user) {
@@ -46,16 +40,6 @@ export const db = initializeFirestore(app, {
   cacheSizeBytes: CACHE_SIZE_UNLIMITED,
   experimentalForceLongPolling: true
 });
-
-// Connect to Firestore emulator if in development
-if (process.env.NODE_ENV === 'development') {
-    try {
-        connectFirestoreEmulator(db, 'localhost', 8080);
-        console.log('Connected to Firestore emulator on localhost:8080');
-    } catch (error) {
-        console.warn('Error connecting to Firestore emulator (maybe already connected?):', error);
-    }
-}
 
 // Initialize Storage
 export const storage = getStorage(app);

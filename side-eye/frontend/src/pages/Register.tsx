@@ -24,6 +24,7 @@ interface FormErrors {
   password?: string;
   confirmPassword?: string;
   dateOfBirth?: string;
+  name?: string;
 }
 
 const Register: React.FC = () => {
@@ -32,6 +33,8 @@ const Register: React.FC = () => {
     email: '',
     password: '',
     confirmPassword: '',
+    dateOfBirth: '',
+    name: '',
   });
   const [dateOfBirth, setDateOfBirth] = useState<Date | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -41,38 +44,73 @@ const Register: React.FC = () => {
   const navigate = useNavigate();
   const { register } = useAuth();
 
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-    
-    if (!formData.username.trim()) {
-      newErrors.username = 'Username is required';
-    } else if (formData.username.length < 3) {
-      newErrors.username = 'Username must be at least 3 characters';
-    }
+  const validateForm = () => {
+    const newErrors: Record<string, string> = {};
 
-    if (!formData.email.trim()) {
+    // Email validation
+    if (!formData.email) {
       newErrors.email = 'Email is required';
     } else if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(formData.email)) {
-      newErrors.email = 'Invalid email address';
+      newErrors.email = 'Invalid email format';
     }
 
+    // Password validation
     if (!formData.password) {
       newErrors.password = 'Password is required';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
+    } else {
+      const password = formData.password;
+      if (password.length < 8) {
+        newErrors.password = 'Password must be at least 8 characters long';
+      } else if (!/[A-Z]/.test(password)) {
+        newErrors.password = 'Password must contain at least one uppercase letter';
+      } else if (!/[a-z]/.test(password)) {
+        newErrors.password = 'Password must contain at least one lowercase letter';
+      } else if (!/[0-9]/.test(password)) {
+        newErrors.password = 'Password must contain at least one number';
+      } else if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+        newErrors.password = 'Password must contain at least one special character';
+      }
     }
 
+    // Confirm password validation
     if (formData.password !== formData.confirmPassword) {
       newErrors.confirmPassword = 'Passwords do not match';
     }
 
+    // Username validation
+    if (!formData.username) {
+      newErrors.username = 'Username is required';
+    } else if (formData.username.length < 3) {
+      newErrors.username = 'Username must be at least 3 characters long';
+    } else if (!/^[a-zA-Z0-9_-]+$/.test(formData.username)) {
+      newErrors.username = 'Username can only contain letters, numbers, underscores, and hyphens';
+    }
+
+    // Name validation
+    if (!formData.name) {
+      newErrors.name = 'Name is required';
+    } else if (formData.name.length < 2) {
+      newErrors.name = 'Name must be at least 2 characters long';
+    } else if (!/^[a-zA-Z\s-']+$/.test(formData.name)) {
+      newErrors.name = 'Name can only contain letters, spaces, hyphens, and apostrophes';
+    }
+
+    // Date of birth validation
     if (!dateOfBirth) {
-      newErrors.dateOfBirth = 'Date of Birth is required';
+      newErrors.dateOfBirth = 'Date of birth is required';
     } else {
       const today = new Date();
-      const sixteenYearsAgo = new Date(today.getFullYear() - 16, today.getMonth(), today.getDate());
-      if (dateOfBirth > sixteenYearsAgo) {
-        newErrors.dateOfBirth = 'You must be at least 16 years old to register';
+      let age = today.getFullYear() - dateOfBirth.getFullYear();
+      const monthDiff = today.getMonth() - dateOfBirth.getMonth();
+      
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dateOfBirth.getDate())) {
+        age--;
+      }
+      
+      if (age < 16) {
+        newErrors.dateOfBirth = 'You must be at least 16 years old';
+      } else if (age > 120) {
+        newErrors.dateOfBirth = 'Please enter a valid date of birth';
       }
     }
 
@@ -96,7 +134,18 @@ const Register: React.FC = () => {
 
   const handleDateChange = (newValue: Date | null) => {
     setDateOfBirth(newValue);
-    if (errors.dateOfBirth && newValue) {
+    if (newValue && !isNaN(newValue.getTime())) {
+      setFormData(prev => ({
+        ...prev,
+        dateOfBirth: newValue.toISOString()
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        dateOfBirth: ''
+      }));
+    }
+    if (errors.dateOfBirth) {
       setErrors(prev => ({...prev, dateOfBirth: undefined}));
     }
   };
@@ -105,12 +154,23 @@ const Register: React.FC = () => {
     e.preventDefault();
     setError(null);
 
-    if (!validateForm() || !dateOfBirth) return;
+    if (!validateForm()) return;
 
     try {
       setLoading(true);
-      const dobTimestamp = Timestamp.fromDate(dateOfBirth);
-      await register(formData.email, formData.password, formData.username, dobTimestamp);
+      if (!dateOfBirth || isNaN(dateOfBirth.getTime())) {
+        throw new Error('Invalid date of birth');
+      }
+
+      // Call register function with all required data
+      await register(
+        formData.email,
+        formData.password,
+        formData.username,
+        Timestamp.fromDate(dateOfBirth)
+      );
+
+      // Only navigate if registration was successful
       navigate('/verify-email', { replace: true });
     } catch (error: any) {
       console.error('Registration error:', error);
@@ -118,8 +178,10 @@ const Register: React.FC = () => {
         setError('Email is already in use');
       } else if (error.code === 'auth/weak-password') {
         setError('Password is too weak');
+      } else if (error.message === 'Invalid date of birth') {
+        setError('Please enter a valid date of birth');
       } else {
-        setError('Error creating account. Please try again.');
+        setError(error.message || 'Error creating account. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -154,6 +216,17 @@ const Register: React.FC = () => {
           )}
 
           <form onSubmit={handleSubmit}>
+          <TextField
+              fullWidth
+              label="Full Name"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              margin="normal"
+              required
+              error={!!errors.name}
+              helperText={errors.name}
+            />
             <TextField
               fullWidth
               label="Username"
@@ -217,16 +290,19 @@ const Register: React.FC = () => {
               label="Date of Birth"
               value={dateOfBirth}
               onChange={handleDateChange}
-              slotProps={{ textField: { 
-                margin: "normal", 
-                required: true, 
-                fullWidth: true, 
-                error: !!errors.dateOfBirth, 
-                helperText: errors.dateOfBirth 
-              }}}
+              slotProps={{ 
+                textField: { 
+                  margin: "normal", 
+                  required: true, 
+                  fullWidth: true, 
+                  error: !!errors.dateOfBirth, 
+                  helperText: errors.dateOfBirth 
+                }
+              }}
               disableFuture
               maxDate={new Date()}
             />
+            
             <Button
               type="submit"
               variant="contained"
@@ -236,6 +312,9 @@ const Register: React.FC = () => {
             >
               Create Account
             </Button>
+            <Typography variant="body2" sx={{ mt: 2 }} align="center">
+              Already have an account? <Link to="/login">Log in</Link>
+            </Typography>
           </form>
         </Paper>
       </Box>
@@ -243,4 +322,4 @@ const Register: React.FC = () => {
   );
 };
 
-export default Register; 
+export default Register;

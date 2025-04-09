@@ -24,6 +24,8 @@ import {
   Home as HomeIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
+  MeetingRoom,
+  Palette,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { NotificationIcon } from './NotificationIcon';
@@ -181,7 +183,7 @@ const Navbar: React.FC = () => {
           >
             <MenuItem onClick={() => handleNavigation('/side-rooms')}>
               <ListItemIcon>
-                <LocalCafe />
+                <MeetingRoom />
               </ListItemIcon>
               <ListItemText primary="Side Rooms" />
             </MenuItem>
@@ -190,6 +192,12 @@ const Navbar: React.FC = () => {
                 <TrendingUpIcon />
               </ListItemIcon>
               <ListItemText primary="Discover" />
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/creators-hub')}>
+              <ListItemIcon>
+                <Palette />
+              </ListItemIcon>
+              <ListItemText primary="Creators Hub" />
             </MenuItem>
             <Divider />
             <MenuItem onClick={() => handleNavigation('/settings')}>

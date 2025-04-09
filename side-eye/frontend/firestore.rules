@@ -1,250 +1,210 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
+    // ======================
+    // Enhanced Helper Functions
+    // ======================
     function isAuthenticated() {
       return request.auth != null;
     }
     
-    function isOwner(userId) {
+    function isUser(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
-    function isMember(userId) {
-      return request.auth.uid in resource.data.members;
-    }
-    
-    function isRoomMember(roomId) {
-      return isAuthenticated() && exists(/databases/$(database)/documents/sideRooms/$(roomId)/members/$(request.auth.uid));
+    function isDocumentMember(docRef) {
+      let docData = get(docRef).data;
+      return request.auth.uid in docData.members || 
+             (docData.members is list && docData.members.hasAny([request.auth.uid]));
     }
 
-    function isValidTimestamp() {
-      return request.time != null;
+      function hasValidDeviceId() {
+      return 'deviceId' in request.resource.data && 
+             request.resource.data.deviceId is string &&
+             request.resource.data.deviceId.size() > 0;
+    }
+
+    function isRegisteredDevice(userId, deviceId) {
+      let userDoc = get(/databases/$(database)/documents/users/$(userId));
+      return deviceId in userDoc.data.registeredDevices ||
+             (userDoc.data.registeredDevices is list && 
+              userDoc.data.registeredDevices.hasAny([deviceId]));
+    }
+
+
+    function isValidTimeValue(timeVal) {
+      return timeVal is timestamp && 
+             timeVal <= request.time && 
+             timeVal >= timestamp.date(2000, 1, 1);
     }
 
     function isNotDeleted() {
-      return !resource.data.deleted;
+      return !('deleted' in resource.data) || 
+             (resource.data.deleted is bool && !resource.data.deleted);
     }
 
-    function isFollowing(userId) {
-      return userId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.following;
+    function isFollowing(targetUserId) {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return targetUserId in userDoc.data.following || 
+             (userDoc.data.following is list && userDoc.data.following.hasAny([targetUserId]));
     }
 
-    function isFollower(userId) {
-      let userData = get(/databases/$(database)/documents/users/$(userId)).data;
-      return ('followers' in userData) && (request.auth.uid in userData.followers || userData.followers.hasAny([request.auth.uid]));
+    function isAdmin() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // Check if the requesting user is a member of a specific forum
-    function isForumMember(forumId) {
-      // Assumes members are stored in an array on the forum document
-      return isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/forums/$(forumId)).data.members;
+    function isValidProfileUpdate() {
+      let allowedFields = ['name', 'profilePic', 'bio', 'settings', 'lastUpdated'];
+      let isVerificationUpdate = request.resource.data.isVerified != resource.data.isVerified;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields) &&
+             (!isVerificationUpdate || isAdmin()) &&
+             isValidTimeValue(request.resource.data.lastUpdated);
     }
 
-    // Users collection
+    function isValidSessionUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sessions']) &&
+             request.resource.data.sessions is map &&
+             request.resource.data.sessions.verifications is list;
+    }
+
+    match /passcodeVerifications/{verificationId} {
+      allow create: if isAuthenticated() &&
+                    hasValidDeviceId() &&
+                    isRegisteredDevice(request.auth.uid, request.resource.data.deviceId) &&
+                    'passcodeHash' in request.resource.data &&
+                    request.resource.data.passcodeHash is string;
+      
+      allow read: if isAuthenticated() && 
+                  (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow delete: if isAdmin();
+    }
+
+    // ======================
+    // Core Collections
+    // ======================
+
+    // Users Collection
     match /users/{userId} {
-      // Allow reading public profile data by any authenticated user
-      allow read: if request.auth != null;
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
 
-      // Allow creating a user document only if the userId matches the authenticated user's UID
-      allow create: if isOwner(userId);
+      allow create: if isUser(userId) &&
+                    request.resource.data.keys().hasAll([
+                      'username',
+                      'email',
+                      'sourceCodeHash',
+                      'sourceCodeSetupComplete'
+                    ]) &&
+                    request.resource.data.sourceCodeHash is string &&
+                    request.resource.data.sourceCodeHash.size() >= 8 &&
+                    request.resource.data.sourceCodeSetupComplete is bool;
 
-      // Allow users to update their own specific profile fields (e.g., from settings page)
-      allow update: if isOwner(userId) &&
-                      request.resource.data.keys().hasOnly([
-                        'name', 'username', 'profilePic', 'bio', 'location', 'website',
-                        'isVerified', 'sourceCodeHash', 'sourceCodeSetupComplete',
-                        'lastLogin', 'settings', 'preferences', 'updatedAt'
-                      ]);
+      allow update: if isUser(userId) && (
+        // Source code setup
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'sourceCodeHash',
+          'sourceCodeSetupComplete',
+          'lastUpdated'
+        ]) &&
+        !resource.data.sourceCodeSetupComplete &&
+        request.resource.data.sourceCodeSetupComplete == true) ||
+        // Profile updates
+        isValidProfileUpdate() ||
+        // Session updates
+        isValidSessionUpdate()
+      );
 
-      // Allow updating ONLY the 'devices' array (specifically for source code verification flow)
-      // Use request.writeFields which is specific to update operations
-      allow update: if isOwner(userId) &&
-                      request.writeFields.hasOnly(['devices']);
+      allow delete: if isUser(userId);
 
-      // Allow users to delete their own account
-      allow delete: if isOwner(userId);
-
-      // Subcollection for users followed by {userId}
-      match /following/{followingId} {
-        allow read: if isAuthenticated(); // Anyone can see who a user follows
-        allow write: if isOwner(userId); // Only the owner can modify their following list
+      match /security/{document} {
+        allow read, write: if isUser(userId);
       }
 
-      // Subcollection for users who follow {userId}
+      match /following/{targetUserId} {
+        allow read: if isAuthenticated();
+        allow write: if isUser(userId);
+      }
+      
       match /followers/{followerId} {
-        allow read: if isAuthenticated(); // Anyone can see who follows a user
-        // Allow a user (followerId) to add/remove themselves from {userId}'s followers list
+        allow read: if isAuthenticated();
         allow write: if isAuthenticated() && request.auth.uid == followerId;
       }
-
-      // Allow owner full access to their notifications
-      match /notifications/{notificationId} {
-        allow list, read, write, delete: if isOwner(userId);
-      }
     }
 
-    // Posts collection
+    // Posts Collection
     match /posts/{postId} {
-      // Anyone authenticated can read any post
-      allow read: if request.auth != null;
-
-      // Allow creating posts if authenticated, authorId matches, userId matches and required fields are present
+      allow read: if isAuthenticated() && isNotDeleted();
+      
       allow create: if isAuthenticated() &&
-                      request.resource.data.authorId == request.auth.uid &&
-                      request.resource.data.userId == request.auth.uid && // Verify userId as well
-                      // Ensure required fields from PostData type (based on client code) exist
-                      request.resource.data.content is string &&
-                      request.resource.data.timestamp is timestamp && // Check 'timestamp'
-                      request.resource.data.likes is number && // Check 'likes' is number
-                      request.resource.data.likedBy is list && // Check 'likedBy' is list
-                      request.resource.data.authorName is string && // Check 'authorName'
-                      request.resource.data.authorAvatar is string && // Check authorAvatar
-                      request.resource.data.comments is list && // Check comments is list
-                      request.resource.data.tags is list && // Check tags is list
-                      request.resource.data.isPrivate is bool &&
-                      request.resource.data.reposts is number &&
-                      request.resource.data.views is number &&
-                      request.resource.data.isPinned is bool &&
-                      request.resource.data.isEdited is bool &&
-                      request.resource.data.isArchived is bool &&
-                      request.resource.data.deleted is bool;
-                      // Check for imageUrl only if present (optional)
-                      // (request.resource.data.imageUrl == null || request.resource.data.imageUrl is string);
+                    request.resource.data.authorId == request.auth.uid &&
+                    isValidTimeValue(request.resource.data.timestamp) &&
+                    request.resource.data.keys().hasAll([
+                      'content',
+                      'authorName',
+                      'authorAvatar'
+                    ]);
 
-      // Allow the author to update specific fields of their post
-      allow update: if isAuthenticated() && resource.data.authorId == request.auth.uid &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                        'content', 'imageUrl', 'isPrivate', 'deleted', 'isEdited', 'updatedAt'
-                      ]);
+      allow update: if isAuthenticated() && (
+        (resource.data.authorId == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+           'content',
+           'imageUrl',
+           'updatedAt'
+         ])) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']))
+      );
 
-      // Allow *any* authenticated user to update *only* the 'likes' field (for liking/unliking)
-      allow update: if isAuthenticated() &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']);
-
-      // Allow the author to delete their post
-      allow delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
-
-      // Comments subcollection
-      match /comments/{commentId} {
-        allow read: if request.auth != null;
-        // Allow creating comments if authenticated and authorId matches
-        allow create: if isAuthenticated() &&
-                        request.resource.data.authorId == request.auth.uid &&
-                        request.resource.data.createdAt == request.time; // Ensure createdAt
-        // Allow author to update/delete their comment
-        allow update, delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
-      }
+      allow delete: if isAuthenticated() && 
+                    (resource.data.authorId == request.auth.uid || isAdmin());
     }
 
-    // Forums collection
+    // Forums Collection
     match /forums/{forumId} {
       allow read: if isAuthenticated() && isNotDeleted();
       allow create: if isAuthenticated() && 
-        request.resource.data.ownerId == request.auth.uid &&
-        request.auth.uid in request.resource.data.members; // Ensure creator is a member
-      allow update: if isAuthenticated() && (
-        resource.data.ownerId == request.auth.uid ||
-        isForumMember(forumId) // Use helper function
-      );
+                    request.resource.data.ownerId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    (resource.data.ownerId == request.auth.uid ||
+                    isDocumentMember(resource));
       allow delete: if isAuthenticated() && 
-        resource.data.ownerId == request.auth.uid;
-
-      // Forum posts subcollection
-      match /posts/{postId} {
-        allow read: if isAuthenticated() && isNotDeleted() && (
-          isForumMember(forumId) || // Use helper function
-          get(/databases/$(database)/documents/forums/$(forumId)).data.ownerId == request.auth.uid
-        );
-        allow create: if isAuthenticated() && 
-          isForumMember(forumId) && // Use helper function
-          request.resource.data.authorId == request.auth.uid;
-        allow update: if isAuthenticated() && 
-          resource.data.authorId == request.auth.uid;
-        allow delete: if isAuthenticated() && (
-          resource.data.authorId == request.auth.uid ||
-          get(/databases/$(database)/documents/forums/$(forumId)).data.ownerId == request.auth.uid
-        );
-      }
+                    resource.data.ownerId == request.auth.uid;
     }
 
-    // Side Rooms collection
+    // Side Rooms Collection
     match /sideRooms/{roomId} {
-      allow read: if isAuthenticated() && (
-        !resource.data.isPrivate || // Public rooms
-        isSideRoomMember(roomId)    // Or members of private rooms
-      );
-      
+      allow read: if isAuthenticated() && 
+                  (!resource.data.isPrivate || isDocumentMember(resource));
       allow create: if isAuthenticated() && 
-        request.resource.data.ownerId == request.auth.uid; // Must be owner
-        
-      allow update: if isAuthenticated() && (
-        resource.data.ownerId == request.auth.uid ||
-        isSideRoomMember(roomId) // Use helper function
-      );
-        
+                    request.resource.data.ownerId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    (resource.data.ownerId == request.auth.uid || 
+                    isDocumentMember(resource));
       allow delete: if isAuthenticated() && 
-        resource.data.ownerId == request.auth.uid; // Only owner can delete
-
-      // Room members subcollection
-      match /members/{userId} {
-        allow read: if isAuthenticated();
-        // Allow owner to add members, or users to add themselves? (Current allows self-add)
-        allow create: if isAuthenticated() && (request.auth.uid == userId || get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid);
-        allow update: if isAuthenticated() && request.auth.uid == userId; // Can users update their member status?
-        // Allow owner to remove members, or users to remove themselves
-        allow delete: if isAuthenticated() && (
-          request.auth.uid == userId ||
-          get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid
-        );
-      }
-
-      // Room messages subcollection
-      match /messages/{messageId} {
-        allow read: if isAuthenticated() && isSideRoomMember(roomId) && isNotDeleted();
-        allow create: if isAuthenticated() && 
-          isSideRoomMember(roomId) &&
-          request.resource.data.authorId == request.auth.uid;
-        // Allow author to update own message
-        allow update: if isAuthenticated() &&
-          resource.data.authorId == request.auth.uid;
-        // Allow author or room owner to delete messages
-        allow delete: if isAuthenticated() && (
-          resource.data.authorId == request.auth.uid ||
-          get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid
-        );
-      }
-
-      // WebRTC signaling subcollection
-      match /signaling/{signalId} {
-        allow read, write: if isAuthenticated() && isSideRoomMember(roomId);
-      }
+                    resource.data.ownerId == request.auth.uid;
     }
 
-    // Trash collection
-    match /trash/{itemId} {
-      allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    // ======================
+    // Security Collections
+    // ======================
+    match /sourceCodeVerifications/{verificationId} {
+      allow create: if isAuthenticated() &&
+                   request.resource.data.userId == request.auth.uid;
+      
+      allow read: if isAdmin() || 
+                  (isAuthenticated() && resource.data.userId == request.auth.uid);
+      
+      allow delete: if isAdmin();
     }
 
-    // Content moderation collection
-    match /moderation/{itemId} {
-      allow read: if isAuthenticated() && (
-        resource.data.authorId == request.auth.uid ||
-        resource.data.moderatorId == request.auth.uid
-      );
-      allow create: if isAuthenticated() && request.resource.data.moderatorId == request.auth.uid;
-      allow update: if isAuthenticated() && resource.data.moderatorId == request.auth.uid;
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if true;
     }
 
-    // Notifications collection
-    match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && request.auth.uid == resource.data.recipientId;
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && request.auth.uid == resource.data.recipientId;
-      allow delete: if isAuthenticated() && request.auth.uid == resource.data.recipientId;
+    match /adminOverrides/{overrideId} {
+      allow read, write: if isAdmin();
     }
   }
 }
