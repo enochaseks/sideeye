@@ -38,10 +38,15 @@ service cloud.firestore {
 
       // Users collection
     match /users/{userId} {
-      allow read: if true;
+      allow read: if isAuthenticated() && request.auth.uid == userId;
       allow create: if request.auth != null && request.auth.uid == userId;
       allow update: if request.auth != null && request.auth.uid == userId;
       allow delete: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow owner full access to their notifications
+      match /notifications/{notificationId} {
+        allow list, read, write, delete: if isAuthenticated() && request.auth.uid == userId;
+      }
       
       // User's following subcollection
       match /following/{followingId} {
@@ -51,16 +56,7 @@ service cloud.firestore {
 
     // Posts collection
     match /posts/{postId} {
-      allow read: if isAuthenticated() && (
-        // Allow reading if:
-        // 1. User is the author
-        // 2. Post is not private and not deleted
-        // 3. User is following the author and post is not private
-        // 4. Post is being queried for trending content
-        resource.data.authorId == request.auth.uid ||
-        (!resource.data.isPrivate && !resource.data.deleted) ||
-        (isFollowing(resource.data.authorId) && !resource.data.isPrivate)
-      );
+      allow read: if isAuthenticated();
       
       allow create: if isAuthenticated() && 
         request.resource.data.authorId == request.auth.uid &&

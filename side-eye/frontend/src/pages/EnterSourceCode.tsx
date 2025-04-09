@@ -14,29 +14,35 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 const EnterSourceCode: React.FC = () => {
-  const { verifySourceCodeAndCompleteLogin, loading, error, setError, tempUserForSourceCode } = useAuth();
+  const { 
+    verifySourceCodeAndCompleteLogin, 
+    loading, 
+    error, 
+    setError, 
+    tempUserForSourceCode, 
+    currentUser
+  } = useAuth();
   const navigate = useNavigate();
   const [code, setCode] = useState('');
 
-  // Redirect to login if the temporary user state is lost (e.g., page refresh)
   useEffect(() => {
-    if (!tempUserForSourceCode && !loading) {
-        console.log('No temporary user found, redirecting to login.');
-        navigate('/login');
+    if (!currentUser && !tempUserForSourceCode && !loading) { 
+        console.log('No temporary or current user found, redirecting to login.');
+        navigate('/login', { replace: true });
+        return;
     }
-    // Clear previous errors when component mounts or temp user changes
+    
     setError(null);
-  }, [tempUserForSourceCode, navigate, loading, setError]);
+  }, [currentUser, tempUserForSourceCode, navigate, loading, setError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null); // Clear previous errors
+    setError(null);
     if (!/^[0-9]{8}$/.test(code)) {
         setError('Source code must be exactly 8 digits.');
         return;
     }
     await verifySourceCodeAndCompleteLogin(code);
-    // Navigation is handled inside verifySourceCodeAndCompleteLogin on success/failure
   };
 
   return (
@@ -56,10 +62,10 @@ const EnterSourceCode: React.FC = () => {
             id="source-code"
             label="8-Digit Source Code"
             name="source-code"
-            type="password" // Use password type to obscure input
+            type="password"
             inputProps={{ maxLength: 8, pattern: '[0-9]*', inputMode: 'numeric' }}
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\\D/g, '').slice(0, 8))} // Allow only digits
+            onChange={(e) => setCode(e.target.value.replace(/\\D/g, '').slice(0, 8))}
             autoFocus
           />
           {error && (

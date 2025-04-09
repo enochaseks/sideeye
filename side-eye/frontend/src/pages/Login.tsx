@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import { TextField, Button, Container, Typography, Box, Link as MuiLink, Paper, Alert, Grid } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
@@ -7,24 +7,89 @@ import { CircularProgress } from '@mui/material';
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { login, loading, error, setError } = useAuth();
+  const [localLoading, setLocalLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{type: 'success' | 'info' | 'warning' | 'error', message: string} | null>(null);
+  const { login, loading: authLoading, error: authError, setError, currentUser, userProfile } = useAuth();
   const navigate = useNavigate();
+
+  // Clear status messages when email/password changes
+  useEffect(() => {
+    setStatusMessage(null);
+  }, [email, password]);
+
+  // Redirect logged in users
+  useEffect(() => {
+    if (currentUser) {
+      // User is already logged in and fully authenticated - redirect to home
+      if (userProfile && userProfile.sourceCodeSetupComplete) {
+        navigate('/');
+      }
+      // Don't redirect otherwise - let onAuthStateChanged handle navigation
+    }
+  }, [currentUser, userProfile, navigate]);
+  
+  useEffect(() => {
+    // Display auth errors from context
+    if (authError) {
+      setStatusMessage({type: 'error', message: authError});
+    }
+  }, [authError]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (setError) setError(null);
+    setStatusMessage(null);
+    
+    // Basic validation
+    if (!email.trim()) {
+      setStatusMessage({type: 'error', message: 'Email is required'});
+      return;
+    }
+    if (!password) {
+      setStatusMessage({type: 'error', message: 'Password is required'});
+      return;
+    }
 
     try {
+      setLocalLoading(true);
+      setStatusMessage({type: 'info', message: 'Logging in...'});
+      
       await login(email, password);
-    } catch (err) {
+      
+      // Login success message - though this might not show if redirected quickly
+      setStatusMessage({type: 'success', message: 'Login successful! Redirecting...'});
+      
+      // Note: No need to navigate here - onAuthStateChanged will handle that
+    } catch (err: any) {
       console.error('Login component caught error:', err);
+      // Display user-friendly error message
+      if (err.code === 'auth/too-many-requests') {
+        setStatusMessage({
+          type: 'error', 
+          message: 'Too many failed login attempts. Please try again later or reset your password.'
+        });
+      } else if (err.code === 'auth/invalid-credential') {
+        setStatusMessage({
+          type: 'error', 
+          message: 'Invalid email or password. Please try again.'
+        });
+      } else {
+        setStatusMessage({
+          type: 'error',
+          message: 'Login failed. Please try again.'
+        });
+      }
+    } finally {
+      setLocalLoading(false);
     }
   };
+
+  const isLoading = authLoading || localLoading;
 
   return (
     <Container maxWidth="xs">
       <Paper elevation={0} sx={{ mt: 8, p: 4 }}>
-        <Typography component="h1" variant="h5">
+        <Typography component="h1" variant="h5" align="center" gutterBottom>
           Login to Side Eye
         </Typography>
         <Box component="form" onSubmit={handleLogin} noValidate sx={{ mt: 1 }}>
@@ -39,6 +104,7 @@ const Login: React.FC = () => {
             autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            disabled={isLoading}
           />
           <TextField
             margin="normal"
@@ -51,10 +117,11 @@ const Login: React.FC = () => {
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            disabled={isLoading}
           />
-          {error && (
-            <Alert severity="error" sx={{ mt: 2 }}>
-              {error}
+          {statusMessage && (
+            <Alert severity={statusMessage.type} sx={{ mt: 2 }}>
+              {statusMessage.message}
             </Alert>
           )}
           <Button
@@ -62,9 +129,9 @@ const Login: React.FC = () => {
             fullWidth
             variant="contained"
             sx={{ mt: 3, mb: 2 }}
-            disabled={loading}
+            disabled={isLoading}
           >
-            {loading ? <CircularProgress size={24} /> : 'Sign In'}
+            {isLoading ? <CircularProgress size={24} /> : 'Sign In'}
           </Button>
           <Grid container justifyContent="space-between">
             <Grid item>

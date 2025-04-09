@@ -14,30 +14,34 @@ import { PostComponent } from '../components/PostComponent';
 import Post from '../components/Post';
 
 const Feed: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, loading: authLoading } = useAuth();
   const { db } = useFirestore();
   const navigate = useNavigate();
   const [posts, setPosts] = useState<PostData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [feedLoading, setFeedLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [following, setFollowing] = useState<string[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
 
   useEffect(() => {
-    if (!currentUser) {
-      navigate('/login');
+    if (authLoading || !currentUser) {
+      if (!authLoading && !currentUser) {
+        navigate('/login');
+      }
       return;
     }
 
     if (!db) return;
 
+    console.log("Feed: Auth finished, currentUser exists. Loading user profile...");
+    setFeedLoading(true);
     const loadUserProfile = async () => {
       try {
         const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
         if (!userDoc.exists()) {
           setError('User profile not found');
-          setLoading(false);
+          setFeedLoading(false);
           return;
         }
 
@@ -48,56 +52,57 @@ const Feed: React.FC = () => {
       } catch (error) {
         console.error('Error loading user profile:', error);
         setError('Failed to load user profile');
-        setLoading(false);
+        setFeedLoading(false);
       }
     };
 
     loadUserProfile();
-  }, [currentUser, db, navigate]);
+  }, [currentUser, db, navigate, authLoading]);
 
   useEffect(() => {
-    if (!currentUser || !db) {
-      setLoading(false);
+    if (authLoading || !currentUser || !db || !profileLoaded) {
       return;
     }
 
+    console.log("Feed: Auth finished, profile loaded. Setting up posts listener...");
+    setFeedLoading(true);
     const postsRef = collection(db, 'posts');
     
-    // Simpler query that only orders by timestamp
     const postsQuery = query(
       postsRef,
       orderBy('timestamp', 'desc'),
       limit(50)
     );
 
-    // Set up real-time listener
     const unsubscribe = onSnapshot(postsQuery, (snapshot) => {
+      console.log("Feed: Posts snapshot received.");
       const newPosts: PostData[] = [];
       
       snapshot.forEach((doc) => {
         const post = { id: doc.id, ...doc.data() } as PostData;
-        // Filter posts client-side
         if ((!post.deleted) && (post.authorId === currentUser.uid || following.includes(post.authorId))) {
           newPosts.push(post);
         }
       });
 
-      // Filter out posts from blocked users
       const filteredPosts = newPosts.filter(post => 
         !userProfile?.blockedUsers?.includes(post.authorId)
       );
 
       setPosts(filteredPosts);
       setError(null);
-      setLoading(false);
+      setFeedLoading(false);
     }, (error) => {
       console.error('Error fetching posts:', error);
       setError('Error loading posts. Please try again later.');
-      setLoading(false);
+      setFeedLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [currentUser, db, following, userProfile?.blockedUsers]);
+    return () => {
+      console.log("Feed: Unsubscribing posts listener.");
+      unsubscribe();
+    };
+  }, [currentUser, db, following, userProfile?.blockedUsers, authLoading, profileLoaded]);
 
   const uploadImage = async (file: File): Promise<string> => {
     const storageRef = ref(storage, `posts/${Date.now()}_${file.name}`);
@@ -112,7 +117,6 @@ const Feed: React.FC = () => {
     }
 
     try {
-      // Get user profile data
       const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
       const userData = userDoc.exists() ? userDoc.data() : null;
 
@@ -136,7 +140,6 @@ const Feed: React.FC = () => {
         deleted: false
       };
 
-      // Only add imageUrl if an image was uploaded successfully
       if (imageFile) {
         const imageUrl = await uploadImage(imageFile);
         if (imageUrl) {
@@ -144,10 +147,8 @@ const Feed: React.FC = () => {
         }
       }
 
-      // Add the post to Firestore
       const docRef = await addDoc(collection(db, 'posts'), postData);
       
-      // Get the newly created post with its ID
       const newPostDoc = await getDoc(docRef);
       if (newPostDoc.exists()) {
         const newPost: PostData = {
@@ -155,7 +156,6 @@ const Feed: React.FC = () => {
           id: newPostDoc.id
         };
         
-        // Update local state with the new post
         setPosts(prevPosts => [newPost, ...prevPosts]);
         toast.success('Post created successfully');
       }
@@ -207,7 +207,6 @@ const Feed: React.FC = () => {
             : arrayUnion(currentUser.uid)
         });
 
-        // Create notification for like
         if (!isLiked && postData.authorId !== currentUser.uid) {
           await createNotification(
             postData.authorId,
@@ -245,7 +244,6 @@ const Feed: React.FC = () => {
         comments: arrayUnion(commentData)
       });
 
-      // Create notification for comment
       if (postData && postData.authorId !== currentUser.uid) {
         await createNotification(
           postData.authorId,
@@ -256,7 +254,6 @@ const Feed: React.FC = () => {
         );
       }
 
-      // Check for mentions and create notifications
       const mentions = content.match(/@(\w+)/g);
       if (mentions) {
         const uniqueMentions = Array.from(new Set(mentions));
@@ -304,7 +301,6 @@ const Feed: React.FC = () => {
           lastEdited: serverTimestamp()
         });
 
-        // Update local state
         setPosts(prevPosts => 
           prevPosts.map(post => 
             post.id === postId 
@@ -340,20 +336,17 @@ const Feed: React.FC = () => {
           throw new Error('You can only delete your own posts');
         }
 
-        // Delete associated image if it exists
         if (postData.imageUrl) {
           try {
             const imageRef = ref(storage, postData.imageUrl);
             await deleteObject(imageRef);
           } catch (error) {
             console.error('Error deleting image:', error);
-            // Continue with post deletion even if image deletion fails
           }
         }
 
         await deleteDoc(postRef);
         
-        // Update local state
         setPosts(prevPosts => prevPosts.filter(post => post.id !== postId));
         toast.success('Post deleted successfully');
       }
@@ -364,6 +357,14 @@ const Feed: React.FC = () => {
     }
   };
 
+  if (authLoading || feedLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
   if (!currentUser) {
     return (
       <Container maxWidth="md">
@@ -371,14 +372,6 @@ const Feed: React.FC = () => {
           <Typography variant="h6">Please sign in to view your feed</Typography>
         </Box>
       </Container>
-    );
-  }
-
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <CircularProgress />
-      </Box>
     );
   }
 
@@ -392,7 +385,6 @@ const Feed: React.FC = () => {
 
   return (
     <Container maxWidth="lg">
-      {/* Feed Header */}
       <Box 
         sx={{ 
           mb: 4,
@@ -452,18 +444,16 @@ const Feed: React.FC = () => {
         </Alert>
       )}
 
-      {loading ? (
+      {feedLoading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
           <CircularProgress />
         </Box>
       ) : (
         <>
-          {/* Stories Section */}
           <Box sx={{ mb: 4 }}>
             <Stories following={userProfile?.following || []} />
           </Box>
 
-          {/* Create Post Section */}
           <Box sx={{ mb: 4 }}>
             <CreatePost 
               user={{
@@ -476,7 +466,6 @@ const Feed: React.FC = () => {
             />
           </Box>
 
-          {/* Posts Section */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             {posts.length === 0 ? (
               <Typography variant="body1" color="text.secondary" align="center">

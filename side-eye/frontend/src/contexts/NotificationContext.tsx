@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, Timestamp, Firestore, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, Timestamp, Firestore, limit, deleteDoc } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
 import { db } from '../services/firebase';
 
@@ -79,8 +79,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     if (!db || !currentUser) return;
 
     try {
-      const notificationRef = doc(db, 'notifications', notificationId);
-      await updateDoc(notificationRef, { read: true });
+      const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', notificationId);
+      await updateDoc(notificationRef, { isRead: true });
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
@@ -92,7 +92,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     try {
       const promises = notifications
         .filter(n => !n.isRead)
-        .map(n => updateDoc(doc(db, 'notifications', n.id), { read: true }));
+        .map(n => updateDoc(doc(db, 'users', currentUser.uid, 'notifications', n.id), { isRead: true }));
 
       await Promise.all(promises);
     } catch (error) {
@@ -104,8 +104,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     if (!db || !currentUser) return;
 
     try {
-      const notificationRef = doc(db, 'notifications', notificationId);
-      await updateDoc(notificationRef, { deleted: true });
+      const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', notificationId);
+      await deleteDoc(notificationRef);
     } catch (error) {
       console.error('Error deleting notification:', error);
     }

@@ -194,23 +194,32 @@ export interface UserProfile {
   following: string[];
   connections: string[];
   isVerified: boolean;
-  createdAt: Timestamp;
-  lastLogin: Timestamp;
+  createdAt: Date;
+  lastLogin: Date;
+  dateOfBirth?: Date;
   settings: {
-    theme: 'light' | 'dark';
+    theme: string;
     notifications: boolean;
-    privacy: 'public' | 'private';
+    privacy: string;
   };
+  preferences: UserPreferences;
   blockedUsers?: string[];
   updatedAt?: Date;
-  isPrivate?: boolean;
-  isActive?: boolean;
+  isPrivate: boolean;
+  isActive: boolean;
   lastSeen?: Date;
   status?: string;
-  preferences: UserPreferences;
   sourceCodeHash?: string;
-  sourceCodeSetupComplete?: boolean;
-  dateOfBirth?: Timestamp;
+  sourceCodeSetupComplete: boolean;
+  devices?: Array<{
+    id: string;
+    lastLogin: Date;
+    sourceCodeSetupComplete: boolean;
+    deviceInfo: {
+      userAgent: string;
+      platform: string;
+    };
+  }>;
 }
 
 export interface TrendingTopic {
