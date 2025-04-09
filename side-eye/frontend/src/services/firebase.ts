@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
-import { initializeFirestore, enableIndexedDbPersistence, CACHE_SIZE_UNLIMITED, Firestore, connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
+import { initializeFirestore, CACHE_SIZE_UNLIMITED, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getDatabase } from 'firebase/database';
 
@@ -41,8 +41,11 @@ auth.onAuthStateChanged((user) => {
   }
 });
 
-// Initialize Firestore directly
-export const db = getFirestore(app);
+// Initialize Firestore with new cache settings
+export const db = initializeFirestore(app, {
+  cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+  experimentalForceLongPolling: true
+});
 
 // Connect to Firestore emulator if in development
 if (process.env.NODE_ENV === 'development') {
@@ -54,25 +57,41 @@ if (process.env.NODE_ENV === 'development') {
     }
 }
 
-// Attempt to enable persistence (optional, handle errors)
-try {
-    enableIndexedDbPersistence(db)
-        .then(() => console.log('Firestore persistence enabled'))
-        .catch((err: any) => {
-            if (err.code === 'failed-precondition') {
-                console.warn('Firestore Persistence: Multiple tabs open, only works in one.');
-            } else if (err.code === 'unimplemented') {
-                console.warn('Firestore Persistence: Browser does not support.');
-            } else {
-                console.error('Firestore Persistence: Error enabling:', err);
-            }
-        });
-} catch (error) {
-    console.error('Firestore Persistence: General error during setup:', error);
-}
-
 // Initialize Storage
 export const storage = getStorage(app);
 
 // Initialize Realtime Database
-export const rtdb = getDatabase(app); 
+export const rtdb = getDatabase(app);
+
+// Add configuration check function
+export const checkFirebaseConfig = () => {
+  if (process.env.NODE_ENV === 'production') {
+    console.log('Checking Firebase configuration in production...');
+    console.log('Firebase App:', app.name);
+    console.log('Firebase Auth:', auth.app.name);
+    console.log('Firestore:', db.app.name);
+    
+    // Check if we're using the correct project
+    const projectId = app.options.projectId;
+    console.log('Firebase Project ID:', projectId);
+    
+    // Check if we're using the correct API key
+    const apiKey = app.options.apiKey;
+    console.log('Firebase API Key:', apiKey ? 'Present' : 'Missing');
+    
+    // Check if we're using the correct auth domain
+    const authDomain = app.options.authDomain;
+    console.log('Firebase Auth Domain:', authDomain);
+    
+    // Log any configuration issues
+    if (!projectId || !apiKey || !authDomain) {
+      console.error('Firebase configuration is incomplete!');
+      console.error('Project ID:', projectId);
+      console.error('API Key:', apiKey ? 'Present' : 'Missing');
+      console.error('Auth Domain:', authDomain);
+    }
+  }
+};
+
+// Call the check function
+checkFirebaseConfig(); 

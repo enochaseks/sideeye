@@ -43,6 +43,7 @@ import EnterSourceCode from './pages/EnterSourceCode';
 import ResetSourceCode from './pages/ResetSourceCode';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import Debug from './pages/Debug';
 import './App.css';
 
 const App: React.FC = () => {
@@ -86,6 +87,7 @@ const App: React.FC = () => {
                           <Route path="/profile/:userId/followers" element={<ProtectedRoute><FollowersList /></ProtectedRoute>} />
                           <Route path="/profile/:userId/following" element={<ProtectedRoute><FollowingList /></ProtectedRoute>} />
                           <Route path="/notifications" element={<ProtectedRoute><NotificationPage /></ProtectedRoute>} />
+                          <Route path="/debug" element={<Debug />} />
                         </Routes>
                       </Box>
                     </Box>

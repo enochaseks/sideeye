@@ -53,18 +53,16 @@ interface SideRoomData {
   id: string;
   name: string;
   description?: string;
-  createdAt: {
-    toMillis: () => number;
-  };
-  lastActive: {
-    toMillis: () => number;
-  };
+  createdAt: Timestamp;
+  lastActive: Timestamp;
   memberCount: number;
   maxMembers: number;
   members?: SideRoomMember[];
   isPrivate?: boolean;
   password?: string;
   genre?: string;
+  tags?: string[];
+  category?: string;
 }
 
 const GENRES = [
@@ -100,60 +98,102 @@ const SideRoomList: React.FC = () => {
   const { currentUser } = useAuth();
 
   useEffect(() => {
+    if (!db) {
+      setError("Firestore not initialized");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const q = query(collection(db, 'sideRooms'), orderBy('createdAt', 'desc'));
+      setLoading(true); // Start loading
+      const q = query(
+        collection(db, 'sideRooms'),
+        where('isPrivate', '==', false), // Fetch only public rooms
+        orderBy('createdAt', 'desc')
+      );
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const rooms = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          memberCount: doc.data().memberCount || 0,
-          maxMembers: doc.data().maxMembers || 50
-        })) as SideRoomData[];
-        setRooms(rooms);
+        const roomsData = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            name: data.name || '',
+            description: data.description,
+            createdAt: data.createdAt as Timestamp,
+            lastActive: data.lastActive as Timestamp,
+            memberCount: data.memberCount || 0,
+            maxMembers: data.maxMembers || 50,
+            members: data.members as SideRoomMember[] | undefined,
+            isPrivate: data.isPrivate,
+            password: data.password,
+            genre: data.genre,
+            tags: data.tags as string[] | undefined,
+            category: data.category
+          } as SideRoomData;
+        });
+        
+        setRooms(roomsData); // Store the raw public rooms first
+        setLoading(false);
+        setError(null); // Clear previous errors
+
+      }, (err) => {
+        console.error("Error fetching side rooms:", err);
+        setError('Error fetching public rooms. Please check permissions or network.');
         setLoading(false);
       });
 
       return () => unsubscribe();
-    } catch (err) {
-      setError('Error fetching rooms');
+    } catch (err: any) {
+      console.error("Error setting up side rooms query:", err);
+      setError(`Error setting up query: ${err.message}`);
       setLoading(false);
     }
-  }, []);
+  }, [db]); // Depend only on db initialization
 
-  // Filter and search effect
+  // Separate useEffect for filtering/sorting based on user interaction
   useEffect(() => {
-    let result = [...rooms];
-    
-    // Apply search filter
+    let filtered = [...rooms];
+
+    // Apply search query filter
     if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(room => 
-        room.name.toLowerCase().includes(query) ||
-        (room.genre && room.genre.toLowerCase().includes(query))
+      filtered = filtered.filter(room => 
+        room.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (room.description && room.description.toLowerCase().includes(searchQuery.toLowerCase()))
       );
     }
-    
-    // Apply genre filter
+
+    // Apply genre/category/tags filter
     if (selectedGenre !== 'All') {
-      result = result.filter(room => room.genre === selectedGenre);
+      filtered = filtered.filter(room => 
+        room.category === selectedGenre ||
+        room.genre === selectedGenre ||
+        (room.tags && room.tags.includes(selectedGenre))
+      );
     }
-    
+
     // Apply sorting
-    result.sort((a, b) => {
+    filtered.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis() || 0;
+      const timeB = b.createdAt?.toMillis() || 0;
+      const lastActiveA = a.lastActive?.toMillis() || 0;
+      const lastActiveB = b.lastActive?.toMillis() || 0;
+
       switch (sortBy) {
         case 'newest':
-          return b.createdAt.toMillis() - a.createdAt.toMillis();
-        case 'popular':
-          return b.memberCount - a.memberCount;
-        case 'active':
-          return b.lastActive.toMillis() - a.lastActive.toMillis();
+          return timeB - timeA;
+        case 'oldest':
+          return timeA - timeB;
+        case 'members':
+          return (b.memberCount || 0) - (a.memberCount || 0);
+        case 'activity':
+          return lastActiveB - lastActiveA;
         default:
           return 0;
       }
     });
-    
-    setFilteredRooms(result);
-  }, [rooms, searchQuery, selectedGenre, sortBy]);
+
+    setFilteredRooms(filtered);
+
+  }, [rooms, searchQuery, selectedGenre, sortBy]); // Re-run filtering when data or filters change
 
   const handleJoinRoom = async (room: SideRoomData) => {
     if (!db || !currentUser) {
@@ -195,7 +235,7 @@ const SideRoomList: React.FC = () => {
         await updateDoc(roomRef, {
           members: arrayUnion(newMember),
           memberCount: room.memberCount + 1,
-          lastActive: new Date()
+          lastActive: serverTimestamp()
         });
 
         toast.success('Joined room successfully');
@@ -245,7 +285,7 @@ const SideRoomList: React.FC = () => {
         await updateDoc(roomRef, {
           members: arrayUnion(newMember),
           memberCount: (selectedRoom.memberCount || 0) + 1,
-          lastActive: new Date()
+          lastActive: serverTimestamp()
         });
 
         toast.success('Joined room successfully');
@@ -306,10 +346,10 @@ const SideRoomList: React.FC = () => {
           </Grid>
           <Grid item xs={12} md={3}>
             <FormControl fullWidth>
-              <InputLabel>Genre</InputLabel>
+              <InputLabel>Genre/Category</InputLabel>
               <Select
                 value={selectedGenre}
-                label="Genre"
+                label="Genre/Category"
                 onChange={(e) => setSelectedGenre(e.target.value)}
               >
                 {GENRES.map((genre) => (
@@ -329,8 +369,9 @@ const SideRoomList: React.FC = () => {
                 onChange={(e) => setSortBy(e.target.value)}
               >
                 <MenuItem value="newest">Newest First</MenuItem>
-                <MenuItem value="popular">Most Popular</MenuItem>
-                <MenuItem value="active">Most Active</MenuItem>
+                <MenuItem value="oldest">Oldest First</MenuItem>
+                <MenuItem value="members">Most Members</MenuItem>
+                <MenuItem value="activity">Most Active</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -360,30 +401,39 @@ const SideRoomList: React.FC = () => {
                   {room.description}
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  {room.genre && (
+                  {(room.category || room.genre) && (
                     <Chip
                       size="small"
-                      label={room.genre}
-                      color="primary"
+                      label={room.category || room.genre}
+                      color="secondary"
                       variant="outlined"
                     />
                   )}
-                  <Chip
-                    size="small"
-                    icon={<Group />}
-                    label={`${room.memberCount || 0} members`}
-                    variant="outlined"
-                  />
+                  {room.tags?.map(tag => (
+                    <Chip key={tag} size="small" label={tag} variant="outlined" />
+                  ))}
                 </Box>
+                <Chip
+                  size="small"
+                  icon={<Group />}
+                  label={`${room.memberCount || 0} members`}
+                  variant="outlined"
+                />
               </CardContent>
               <CardActions>
                 <Button
                   fullWidth
                   variant="contained"
                   onClick={() => handleJoinRoom(room)}
-                  disabled={isProcessing}
+                  disabled={isProcessing || room.memberCount >= room.maxMembers}
+                  sx={{ 
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
                 >
-                  {isProcessing ? <CircularProgress size={24} /> : 'Join Room'}
+                  {isProcessing ? <CircularProgress size={24} /> : 
+                   (room.memberCount >= room.maxMembers ? 'Room Full' : 'Join Room')}
                 </Button>
               </CardActions>
             </Card>
@@ -415,9 +465,9 @@ const SideRoomList: React.FC = () => {
           <Button 
             onClick={handlePasswordSubmit} 
             variant="contained"
-            disabled={isProcessing}
+            disabled={isProcessing || !password}
           >
-            Join
+            {isProcessing ? <CircularProgress size={24} /> : 'Join'}
           </Button>
         </DialogActions>
       </Dialog>

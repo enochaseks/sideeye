@@ -111,27 +111,36 @@ const Feed: React.FC = () => {
   };
 
   const handleCreatePost = async (content: string, imageFile?: File) => {
-    if (!db || !currentUser) {
-      setError('Please sign in to create a post');
+    if (!db || !currentUser || !userProfile) {
+      setError('Please sign in and ensure profile is loaded to create a post');
       return;
     }
 
-    try {
-      const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-      const userData = userDoc.exists() ? userDoc.data() : null;
+    setFeedLoading(true);
+    setError(null);
+    let imageUrl: string | undefined = undefined;
 
-      const postData = {
+    try {
+      if (imageFile) {
+        const uniqueImageName = `${Date.now()}-${imageFile.name}`;
+        const storageRef = ref(storage, `posts/${currentUser.uid}/${uniqueImageName}`);
+        const uploadResult = await uploadBytes(storageRef, imageFile);
+        imageUrl = await getDownloadURL(uploadResult.ref);
+      }
+
+      const postData: Omit<PostData, 'id'> = {
         content: content.trim(),
         authorId: currentUser.uid,
-        authorName: userData?.name || currentUser.displayName || 'Anonymous',
-        authorAvatar: userData?.profilePic || currentUser.photoURL || '',
-        timestamp: serverTimestamp() as any,
+        userId: currentUser.uid,
+        timestamp: serverTimestamp() as Timestamp,
         likes: 0,
         likedBy: [],
+        authorName: userProfile.name || currentUser.displayName || 'Anonymous',
+        ...(imageUrl && { imageUrl: imageUrl }),
+        authorAvatar: userProfile.profilePic || currentUser.photoURL || '',
         comments: [],
         tags: content.match(/#[a-zA-Z0-9_]+/g) || [],
         isPrivate: false,
-        userId: currentUser.uid,
         reposts: 0,
         views: 0,
         isPinned: false,
@@ -140,29 +149,16 @@ const Feed: React.FC = () => {
         deleted: false
       };
 
-      if (imageFile) {
-        const imageUrl = await uploadImage(imageFile);
-        if (imageUrl) {
-          Object.assign(postData, { imageUrl });
-        }
-      }
-
       const docRef = await addDoc(collection(db, 'posts'), postData);
-      
-      const newPostDoc = await getDoc(docRef);
-      if (newPostDoc.exists()) {
-        const newPost: PostData = {
-          ...newPostDoc.data() as PostData,
-          id: newPostDoc.id
-        };
-        
-        setPosts(prevPosts => [newPost, ...prevPosts]);
-        toast.success('Post created successfully');
-      }
-    } catch (error) {
+
+      toast.success('Post created successfully');
+
+    } catch (error: any) {
       console.error('Error creating post:', error);
-      setError('Failed to create post');
-      toast.error('Failed to create post');
+      setError(`Failed to create post: ${error.message}`);
+      toast.error(`Failed to create post: ${error.code || error.message}`);
+    } finally {
+      setFeedLoading(false);
     }
   };
 

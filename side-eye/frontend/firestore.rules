@@ -8,7 +8,7 @@ service cloud.firestore {
     }
     
     function isOwner(userId) {
-      return request.auth.uid == userId;
+      return isAuthenticated() && request.auth.uid == userId;
     }
     
     function isMember(userId) {
@@ -16,7 +16,7 @@ service cloud.firestore {
     }
     
     function isRoomMember(roomId) {
-      return exists(/databases/$(database)/documents/sideRooms/$(roomId)/members/$(request.auth.uid));
+      return isAuthenticated() && exists(/databases/$(database)/documents/sideRooms/$(roomId)/members/$(request.auth.uid));
     }
 
     function isValidTimestamp() {
@@ -36,43 +36,104 @@ service cloud.firestore {
       return ('followers' in userData) && (request.auth.uid in userData.followers || userData.followers.hasAny([request.auth.uid]));
     }
 
-      // Users collection
+    // Check if the requesting user is a member of a specific forum
+    function isForumMember(forumId) {
+      // Assumes members are stored in an array on the forum document
+      return isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/forums/$(forumId)).data.members;
+    }
+
+    // Users collection
     match /users/{userId} {
-      allow read: if isAuthenticated() && request.auth.uid == userId;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && request.auth.uid == userId;
-      allow delete: if request.auth != null && request.auth.uid == userId;
-      
+      // Allow reading public profile data by any authenticated user
+      allow read: if request.auth != null;
+
+      // Allow creating a user document only if the userId matches the authenticated user's UID
+      allow create: if isOwner(userId);
+
+      // Allow users to update their own specific profile fields (e.g., from settings page)
+      allow update: if isOwner(userId) &&
+                      request.resource.data.keys().hasOnly([
+                        'name', 'username', 'profilePic', 'bio', 'location', 'website',
+                        'isVerified', 'sourceCodeHash', 'sourceCodeSetupComplete',
+                        'lastLogin', 'settings', 'preferences', 'updatedAt'
+                      ]);
+
+      // Allow updating ONLY the 'devices' array (specifically for source code verification flow)
+      // Use request.writeFields which is specific to update operations
+      allow update: if isOwner(userId) &&
+                      request.writeFields.hasOnly(['devices']);
+
+      // Allow users to delete their own account
+      allow delete: if isOwner(userId);
+
+      // Subcollection for users followed by {userId}
+      match /following/{followingId} {
+        allow read: if isAuthenticated(); // Anyone can see who a user follows
+        allow write: if isOwner(userId); // Only the owner can modify their following list
+      }
+
+      // Subcollection for users who follow {userId}
+      match /followers/{followerId} {
+        allow read: if isAuthenticated(); // Anyone can see who follows a user
+        // Allow a user (followerId) to add/remove themselves from {userId}'s followers list
+        allow write: if isAuthenticated() && request.auth.uid == followerId;
+      }
+
       // Allow owner full access to their notifications
       match /notifications/{notificationId} {
-        allow list, read, write, delete: if isAuthenticated() && request.auth.uid == userId;
-      }
-      
-      // User's following subcollection
-      match /following/{followingId} {
-        allow read, write: if isOwner(userId);
+        allow list, read, write, delete: if isOwner(userId);
       }
     }
 
     // Posts collection
     match /posts/{postId} {
-      allow read: if isAuthenticated();
-      
-      allow create: if isAuthenticated() && 
-        request.resource.data.authorId == request.auth.uid &&
-        request.resource.data.deleted == false &&
-        request.resource.data.isPrivate == false;
-        
-      allow update: if isAuthenticated() && 
-        resource.data.authorId == request.auth.uid &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'imageUrl', 'isPrivate', 'deleted', 'isEdited']);
-        
+      // Anyone authenticated can read any post
+      allow read: if request.auth != null;
+
+      // Allow creating posts if authenticated, authorId matches, userId matches and required fields are present
+      allow create: if isAuthenticated() &&
+                      request.resource.data.authorId == request.auth.uid &&
+                      request.resource.data.userId == request.auth.uid && // Verify userId as well
+                      // Ensure required fields from PostData type (based on client code) exist
+                      request.resource.data.content is string &&
+                      request.resource.data.timestamp is timestamp && // Check 'timestamp'
+                      request.resource.data.likes is number && // Check 'likes' is number
+                      request.resource.data.likedBy is list && // Check 'likedBy' is list
+                      request.resource.data.authorName is string && // Check 'authorName'
+                      request.resource.data.authorAvatar is string && // Check authorAvatar
+                      request.resource.data.comments is list && // Check comments is list
+                      request.resource.data.tags is list && // Check tags is list
+                      request.resource.data.isPrivate is bool &&
+                      request.resource.data.reposts is number &&
+                      request.resource.data.views is number &&
+                      request.resource.data.isPinned is bool &&
+                      request.resource.data.isEdited is bool &&
+                      request.resource.data.isArchived is bool &&
+                      request.resource.data.deleted is bool;
+                      // Check for imageUrl only if present (optional)
+                      // (request.resource.data.imageUrl == null || request.resource.data.imageUrl is string);
+
+      // Allow the author to update specific fields of their post
+      allow update: if isAuthenticated() && resource.data.authorId == request.auth.uid &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'content', 'imageUrl', 'isPrivate', 'deleted', 'isEdited', 'updatedAt'
+                      ]);
+
+      // Allow *any* authenticated user to update *only* the 'likes' field (for liking/unliking)
+      allow update: if isAuthenticated() &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']);
+
+      // Allow the author to delete their post
       allow delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
 
       // Comments subcollection
       match /comments/{commentId} {
-        allow read: if isAuthenticated();
-        allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
+        allow read: if request.auth != null;
+        // Allow creating comments if authenticated and authorId matches
+        allow create: if isAuthenticated() &&
+                        request.resource.data.authorId == request.auth.uid &&
+                        request.resource.data.createdAt == request.time; // Ensure createdAt
+        // Allow author to update/delete their comment
         allow update, delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
       }
     }
@@ -82,10 +143,10 @@ service cloud.firestore {
       allow read: if isAuthenticated() && isNotDeleted();
       allow create: if isAuthenticated() && 
         request.resource.data.ownerId == request.auth.uid &&
-        request.resource.data.members.hasAny([request.auth.uid]);
+        request.auth.uid in request.resource.data.members; // Ensure creator is a member
       allow update: if isAuthenticated() && (
         resource.data.ownerId == request.auth.uid ||
-        request.auth.uid in resource.data.members
+        isForumMember(forumId) // Use helper function
       );
       allow delete: if isAuthenticated() && 
         resource.data.ownerId == request.auth.uid;
@@ -93,11 +154,11 @@ service cloud.firestore {
       // Forum posts subcollection
       match /posts/{postId} {
         allow read: if isAuthenticated() && isNotDeleted() && (
-          request.auth.uid in get(/databases/$(database)/documents/forums/$(forumId)).data.members ||
+          isForumMember(forumId) || // Use helper function
           get(/databases/$(database)/documents/forums/$(forumId)).data.ownerId == request.auth.uid
         );
         allow create: if isAuthenticated() && 
-          request.auth.uid in get(/databases/$(database)/documents/forums/$(forumId)).data.members &&
+          isForumMember(forumId) && // Use helper function
           request.resource.data.authorId == request.auth.uid;
         allow update: if isAuthenticated() && 
           resource.data.authorId == request.auth.uid;
@@ -111,30 +172,28 @@ service cloud.firestore {
     // Side Rooms collection
     match /sideRooms/{roomId} {
       allow read: if isAuthenticated() && (
-        // Allow reading if:
-        // 1. Room is public
-        // 2. User is a member
-        // 3. Room is being queried for trending content
-        !resource.data.isPrivate ||
-        request.auth.uid in resource.data.members
+        !resource.data.isPrivate || // Public rooms
+        isSideRoomMember(roomId)    // Or members of private rooms
       );
       
       allow create: if isAuthenticated() && 
-        request.resource.data.ownerId == request.auth.uid;
+        request.resource.data.ownerId == request.auth.uid; // Must be owner
         
       allow update: if isAuthenticated() && (
         resource.data.ownerId == request.auth.uid ||
-        request.auth.uid in resource.data.members
+        isSideRoomMember(roomId) // Use helper function
       );
         
       allow delete: if isAuthenticated() && 
-        resource.data.ownerId == request.auth.uid;
+        resource.data.ownerId == request.auth.uid; // Only owner can delete
 
       // Room members subcollection
       match /members/{userId} {
         allow read: if isAuthenticated();
-        allow create: if isAuthenticated() && request.auth.uid == userId;
-        allow update: if isAuthenticated() && request.auth.uid == userId;
+        // Allow owner to add members, or users to add themselves? (Current allows self-add)
+        allow create: if isAuthenticated() && (request.auth.uid == userId || get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid);
+        allow update: if isAuthenticated() && request.auth.uid == userId; // Can users update their member status?
+        // Allow owner to remove members, or users to remove themselves
         allow delete: if isAuthenticated() && (
           request.auth.uid == userId ||
           get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid
@@ -143,12 +202,14 @@ service cloud.firestore {
 
       // Room messages subcollection
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && isRoomMember(roomId) && isNotDeleted();
+        allow read: if isAuthenticated() && isSideRoomMember(roomId) && isNotDeleted();
         allow create: if isAuthenticated() && 
-          isRoomMember(roomId) &&
+          isSideRoomMember(roomId) &&
           request.resource.data.authorId == request.auth.uid;
-        allow update: if isAuthenticated() && 
+        // Allow author to update own message
+        allow update: if isAuthenticated() &&
           resource.data.authorId == request.auth.uid;
+        // Allow author or room owner to delete messages
         allow delete: if isAuthenticated() && (
           resource.data.authorId == request.auth.uid ||
           get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid
@@ -157,7 +218,7 @@ service cloud.firestore {
 
       // WebRTC signaling subcollection
       match /signaling/{signalId} {
-        allow read, write: if isAuthenticated() && isRoomMember(roomId);
+        allow read, write: if isAuthenticated() && isSideRoomMember(roomId);
       }
     }
 
