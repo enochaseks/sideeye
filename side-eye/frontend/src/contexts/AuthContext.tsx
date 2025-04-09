@@ -4,7 +4,7 @@ import { auth } from '../services/firebase';
 import { User, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification } from 'firebase/auth';
 import { UserProfile } from '../types/index';
 import { getDoc, doc, setDoc, Firestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, increment, Timestamp, getDocs } from 'firebase/firestore';
-import { getDb } from '../services/firebase';
+import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 import bcrypt from 'bcryptjs';
 
@@ -56,28 +56,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [db, setDb] = useState<Firestore | null>(null);
   const [tempUserForSourceCode, setTempUserForSourceCode] = useState<User | null>(null);
   const navigate = useNavigate();
 
-  // Initialize Firestore
   useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const firestore = await getDb();
-        setDb(firestore);
-      } catch (err) {
-        console.error('Error initializing Firestore:', err);
-        setError('Failed to initialize database');
-      }
-    };
-
-    initializeDb();
-  }, []);
-
-  useEffect(() => {
-    if (!db) return;
-
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       // If the context already has a fully authenticated currentUser, 
       // don't interfere with ongoing operations (like post-verification redirect).
@@ -105,36 +87,85 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               throw new Error('User state lost after reload.');
           }
 
+          console.log('Auth state changed, processing user:', refreshedUser.uid);
           // Fetch user profile from Firestore
-          const userDoc = await getDoc(doc(db, 'users', refreshedUser.uid));
           let profileData: UserProfile | null = null;
+          let userProfileExists = false;
 
-          if (userDoc.exists()) {
-            profileData = userDoc.data() as UserProfile;
-            // Update profile state immediately for potential use elsewhere
-            setUserProfile(profileData);
-          } else {
-            // Profile doesn't exist - this shouldn't happen for an existing session
-            // but if it does, maybe treat as needing setup?
-            console.warn('User profile not found for existing session UID:', refreshedUser.uid);
-            // For safety, let's log them out if profile is missing
-            await firebaseSignOut(auth);
-            setCurrentUser(null);
-            setUser(null);
-            setUserProfile(null);
-            setLoading(false);
-            navigate('/login');
-            return;
+          if (db) { // Ensure db is initialized
+            const userDoc = await getDoc(doc(db, 'users', refreshedUser.uid));
+            if (userDoc.exists()) {
+              profileData = userDoc.data() as UserProfile;
+              userProfileExists = true;
+              setUserProfile(profileData);
+              console.log('Auth state: Found existing profile for', refreshedUser.uid);
+            }
           }
-          
-          // Check email verification first using the refreshed user
-          console.log(`Checking email verification status for ${refreshedUser.uid}:`, refreshedUser.emailVerified);
+
+          // Check email verification status first
           if (!refreshedUser.emailVerified) {
-            console.log('Session restored, but email not verified (after reload). Navigating to /verify-email');
-            setUser(refreshedUser); // Keep basic user info
+            console.log('Auth state: Email not verified. Navigating to /verify-email');
+            setUser(refreshedUser);
             setLoading(false);
             navigate('/verify-email', { replace: true });
             return;
+          }
+
+          // If email IS verified, but profile did NOT exist, CREATE it now.
+          if (!userProfileExists && db) {
+            console.log('Auth state: Email verified, but profile missing. Creating profile for', refreshedUser.uid);
+            try {
+              // IMPORTANT: Need username and dob here. If they are not available in refreshedUser,
+              // we might need to store them temporarily after registration or fetch differently.
+              // Assuming for now they might be part of refreshedUser or we skip fields.
+              // You will likely need to adjust this profile creation logic.
+              const newProfileData: Partial<UserProfile> = { // Using Partial as some data might be missing
+                id: refreshedUser.uid,
+                email: refreshedUser.email || '',
+                // name: refreshedUser.displayName || '', // Likely not set yet
+                // username: ???, // NEED TO GET THIS
+                profilePic: refreshedUser.photoURL || '',
+                isVerified: true, // Email is verified
+                createdAt: Timestamp.fromDate(new Date()),
+                updatedAt: new Date(),
+                lastLogin: Timestamp.fromDate(new Date()),
+                // dateOfBirth: ???, // NEED TO GET THIS
+                // Default other fields as needed...
+                sourceCodeSetupComplete: false // Definitely false for new profile
+              };
+              await setDoc(doc(db, 'users', refreshedUser.uid), newProfileData, { merge: true }); // Use merge to be safe
+              profileData = newProfileData as UserProfile; // Assume creation worked for subsequent logic
+              setUserProfile(profileData);
+              console.log('Auth state: Profile created successfully.');
+            } catch (profileCreateError) {
+              console.error('Auth state: CRITICAL - Failed to create profile after verification:', profileCreateError);
+              setError('Failed to initialize user profile. Please contact support.');
+              await firebaseSignOut(auth);
+              setCurrentUser(null); setUser(null); setUserProfile(null);
+              setLoading(false);
+              navigate('/login');
+              return;
+            }
+          } else if (!userProfileExists && !db) {
+              console.error('Auth state: DB not initialized, cannot create profile.');
+              // Handle appropriately - maybe logout?
+              await firebaseSignOut(auth);
+              setCurrentUser(null); setUser(null); setUserProfile(null);
+              setLoading(false);
+              navigate('/login');
+              return;
+          }
+          
+          // --- Resume normal logic checking source code --- 
+          // Ensure profileData is loaded before proceeding
+          if (!profileData) {
+              console.error('Auth state: Profile data still unavailable after creation attempt.');
+              setError('Failed to load profile data.');
+              await firebaseSignOut(auth);
+              setCurrentUser(null); setUser(null); setUserProfile(null);
+              setLoading(false);
+              navigate('/login');
+              return;
           }
 
           // Check if source code needs to be entered (using profileData)
@@ -163,8 +194,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // setUser(user);
 
         } catch (err) {
-          console.error('Error in onAuthStateChanged processing user session:', err);
+          console.error('CRITICAL Error in onAuthStateChanged processing user session:', err);
           setError('Failed to process user session');
+          console.log('Navigating to /login due to CRITICAL error.');
           // Maybe log out on error?
           await firebaseSignOut(auth); 
           setCurrentUser(null);
@@ -186,67 +218,117 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // NOTE: We intentionally DO NOT include currentUser in the dependency array
   // to prevent loops. We only want this to run on db/navigate changes or
   // when the auth state *itself* changes from Firebase.
-  }, [db, navigate]); 
+  }, [navigate]); 
 
   const login = async (email: string, password: string) => {
     setLoading(true);
     setError(null);
-    setTempUserForSourceCode(null);
+    setTempUserForSourceCode(null); // Clear any pending source code state
 
-    let retryCount = 0;
-    const maxRetries = 3;
-
-    while (retryCount < maxRetries) {
-      try {
+    // Remove retry logic for simplicity
+    try {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-        
+        let user = userCredential.user; // Use 'let' as we reload it
+
+        // Force reload user state to get latest emailVerified status
+        await user.reload();
+        user = auth.currentUser!; // Get the reloaded user object (non-null asserted as login succeeded)
+
         if (!user.emailVerified) {
-          setError('Please verify your email before logging in');
-          await firebaseSignOut(auth);
+          console.log('Login attempt: Email not verified.');
+          setError('Please verify your email before logging in.');
+          await firebaseSignOut(auth); // Log out the unverified user
           setLoading(false);
-          navigate('/verify-email');
+          navigate('/verify-email'); // Redirect to verify page
           return;
         }
 
+        // Email is verified, now fetch profile
         let profileData: UserProfile | null = null;
+        let userProfileExists = false;
+        
         if (db) {
           const userDoc = await getDoc(doc(db, 'users', user.uid));
           if (userDoc.exists()) {
             profileData = userDoc.data() as UserProfile;
+            userProfileExists = true;
+            setUserProfile(profileData);
+            console.log('Login: Found existing profile for', user.uid);
           } else {
-            console.warn('User profile not found during login for UID:', user.uid);
-            setError('User profile incomplete. Please contact support or try registering again.');
+              // Profile missing during login - attempt to create it
+              console.log('Login: Profile missing for verified user. Attempting to create profile for', user.uid);
+              try {
+                // You will likely need to adjust this profile creation logic.
+                const newProfileData: Partial<UserProfile> = { // Using Partial as some data might be missing
+                  id: user.uid,
+                  email: user.email || '',
+                  profilePic: user.photoURL || '',
+                  isVerified: true, // Email is verified
+                  createdAt: Timestamp.fromDate(new Date()),
+                  updatedAt: new Date(),
+                  lastLogin: Timestamp.fromDate(new Date()),
+                  sourceCodeSetupComplete: false // Definitely false for new profile
+                };
+                await setDoc(doc(db, 'users', user.uid), newProfileData, { merge: true }); // Use merge to be safe
+                profileData = newProfileData as UserProfile; // Assume creation worked for subsequent logic
+                userProfileExists = true; // Mark as existing now
+                setUserProfile(profileData);
+                console.log('Login: Profile created successfully.');
+              } catch (profileCreateError) {
+                console.error('Login: CRITICAL - Failed to create profile during login:', profileCreateError);
+                setError('Failed to initialize user profile. Please contact support.');
+                await firebaseSignOut(auth);
+                setLoading(false);
+                navigate('/login');
+                return;
+              }
+          }
+        } else {
+           // Handle db not initialized error
+           console.error('Login failed: Database not initialized.');
+           setError('Database connection error. Please try again later.');
+           await firebaseSignOut(auth); // Log out if db fails
+           setLoading(false);
+           navigate('/login');
+           return;
+        }
+
+        // Ensure profileData is loaded before proceeding
+        if (!profileData) {
+            console.error('Login: Profile data still unavailable after creation attempt.');
+            setError('Failed to load profile data.');
             await firebaseSignOut(auth);
             setLoading(false);
+            navigate('/login');
             return;
-          }
         }
         
+        // --- Resume normal logic checking source code --- 
+        // Profile exists, check source code setup
         if (profileData?.sourceCodeSetupComplete) {
-            setTempUserForSourceCode(user);
-            setUserProfile(profileData);
+            console.log('Login: Source code required. Navigating to /enter-source-code');
+            setTempUserForSourceCode(user); // Store user temporarily for source code entry
+            setUser(user); // Set basic user state
+            // No need to set currentUser fully here, source code entry handles that
+            setUserProfile(profileData); // Ensure profile state is set
             setLoading(false);
             navigate('/enter-source-code');
             return;
         } else {
-            setCurrentUser(user);
+            console.log('Login: Email verified, source code setup needed. Navigating to /setup-source-code');
+            setCurrentUser(user); // Set as fully logged in
             setUser(user);
-            setUserProfile(profileData);
+            setUserProfile(profileData); // Ensure profile state is set
             setLoading(false);
-            navigate('/setup-source-code');
+            navigate('/setup-source-code'); // Navigate to setup
             return;
         }
       } catch (error: any) {
-        retryCount++;
-        if (retryCount === maxRetries) {
-          setError(getAuthErrorMessage(error.code));
-          setLoading(false);
-          return;
-        }
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+        console.error("Login error:", error);
+        setError(getAuthErrorMessage(error.code));
+        setLoading(false);
+        // Don't navigate here, just show error on login page
       }
-    }
   };
 
   const verifySourceCodeAndCompleteLogin = async (code: string) => {
@@ -289,70 +371,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
 
     try {
-      // Create the user account first
+      // 1. Create user with Firebase Auth
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // Send verification email immediately with actionCodeSettings
-      const actionCodeSettings = {
-        url: window.location.origin + '/setup-source-code',
-        handleCodeInApp: true
-      };
-      await firebaseSendEmailVerification(user, actionCodeSettings);
+      // 2. Send verification email
+      await firebaseSendEmailVerification(user);
+      console.log("Verification email sent to:", user.email); // Log success
 
-      // Then create the user profile
+      // REMOVE Firestore profile creation block from register
+      /*
+      // 3. Create user profile in Firestore
+      const userProfileData: UserProfile = {
+        id: user.uid,
+        email: user.email || '',
+        // ... other fields ...
+      };
+
       if (db) {
         try {
-          const newUserProfile: UserProfile = {
-            id: user.uid,
-            email: user.email || '',
-            name: user.displayName || '',
-            username: username.toLowerCase(),
-            profilePic: user.photoURL || '',
-            bio: '',
-            location: '',
-            website: '',
-            followers: [],
-            following: [],
-            connections: [],
-            isVerified: false,
-            createdAt: Timestamp.fromDate(new Date()),
-            lastLogin: Timestamp.fromDate(new Date()),
-            dateOfBirth: dateOfBirth,
-            settings: {
-              theme: 'light',
-              notifications: true,
-              privacy: 'public'
-            },
-            updatedAt: new Date(),
-            isPrivate: false,
-            isActive: true,
-            lastSeen: new Date(),
-            status: 'online',
-            preferences: {
-              theme: 'light',
-              language: 'en',
-              notifications: true,
-              emailNotifications: true,
-              pushNotifications: true
-            }
-          };
-  
           console.log('Attempting to create user profile in Firestore for UID:', user.uid);
-          await setDoc(doc(db, 'users', user.uid), newUserProfile);
+          console.log('UserProfile Data being sent:', JSON.stringify(userProfileData)); 
+          await setDoc(doc(db, 'users', user.uid), userProfileData);
           console.log('Successfully created user profile in Firestore.');
-          setUserProfile(newUserProfile);
+          setUserProfile(userProfileData);
         } catch (firestoreError: any) {
           console.error('Firestore error creating user profile:', firestoreError);
-          // Re-throw the error or handle it specifically if needed
-          // For now, let's re-throw to ensure it bubbles up
           throw firestoreError;
         }
+      } else {
+          console.error('Firestore DB object is NULL, cannot write profile.');
+          throw new Error('Firestore DB not initialized');
       }
+      */
 
-      // Update local state
-      setCurrentUser(user);
-      setUser(user);
     } catch (error: any) {
       console.error('Registration error:', error);
       setError(getAuthErrorMessage(error.code));
@@ -414,11 +466,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       setLoading(true);
-      const actionCodeSettings = {
-        url: window.location.origin + '/setup-source-code',
-        handleCodeInApp: true
-      };
-      await firebaseSendEmailVerification(currentUser, actionCodeSettings);
+      await firebaseSendEmailVerification(currentUser);
     } catch (error: any) {
       setError(error.message);
       throw error;

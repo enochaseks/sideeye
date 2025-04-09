@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
-import { initializeFirestore, enableIndexedDbPersistence, CACHE_SIZE_UNLIMITED, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { initializeFirestore, enableIndexedDbPersistence, CACHE_SIZE_UNLIMITED, Firestore, connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getDatabase } from 'firebase/database';
 
@@ -41,73 +41,38 @@ auth.onAuthStateChanged((user) => {
   }
 });
 
-// Initialize Firestore with specific settings
-const firestoreSettings = {
-  cacheSizeBytes: CACHE_SIZE_UNLIMITED,
-  experimentalForceLongPolling: true
-};
+// Initialize Firestore directly
+export const db = getFirestore(app);
 
-let db: Firestore | null = null;
-let firestoreEmulatorConnected = false; // Flag to prevent multiple connections
-
-// Initialize Firestore and enable persistence
-const initializeFirestoreWithPersistence = async (): Promise<Firestore> => {
-  if (db) {
-    return db;
-  }
-
-  try {
-    // Initialize Firestore
-    db = initializeFirestore(app, firestoreSettings);
-
-    // Connect to Firestore emulator if not already connected
-    if (process.env.NODE_ENV === 'development' && !firestoreEmulatorConnected) {
-      connectFirestoreEmulator(db, 'localhost', 8080);
-      firestoreEmulatorConnected = true;
-      console.log('Connected to Firestore emulator on localhost:8080');
+// Connect to Firestore emulator if in development
+if (process.env.NODE_ENV === 'development') {
+    try {
+        connectFirestoreEmulator(db, 'localhost', 8080);
+        console.log('Connected to Firestore emulator on localhost:8080');
+    } catch (error) {
+        console.warn('Error connecting to Firestore emulator (maybe already connected?):', error);
     }
+}
 
-    // Enable persistence
-    await enableIndexedDbPersistence(db);
-    console.log('Firestore persistence enabled');
-    return db;
-  } catch (err: any) {
-    if (err.code === 'failed-precondition') {
-      console.warn('Multiple tabs open, persistence can only be enabled in one tab at a time.');
-      // Still return the db instance even if persistence fails in other tabs
-      return db!;
-    } else if (err.code === 'unimplemented') {
-      console.warn('The current browser does not support persistence.');
-      // Still return the db instance even if persistence is unsupported
-      return db!;
-    } else {
-      console.error('Error initializing Firestore or enabling persistence:', err);
-      throw err;
-    }
-  }
-};
+// Attempt to enable persistence (optional, handle errors)
+try {
+    enableIndexedDbPersistence(db)
+        .then(() => console.log('Firestore persistence enabled'))
+        .catch((err: any) => {
+            if (err.code === 'failed-precondition') {
+                console.warn('Firestore Persistence: Multiple tabs open, only works in one.');
+            } else if (err.code === 'unimplemented') {
+                console.warn('Firestore Persistence: Browser does not support.');
+            } else {
+                console.error('Firestore Persistence: Error enabling:', err);
+            }
+        });
+} catch (error) {
+    console.error('Firestore Persistence: General error during setup:', error);
+}
 
 // Initialize Storage
 export const storage = getStorage(app);
 
 // Initialize Realtime Database
-export const rtdb = getDatabase(app);
-
-// Export a getter function for db that ensures initialization
-export const getDb = async (): Promise<Firestore> => {
-  if (!db) {
-    db = await initializeFirestoreWithPersistence();
-  }
-  return db;
-};
-
-// Function to reset Firestore state if needed
-export const resetFirestore = async (): Promise<Firestore> => {
-  try {
-    db = null;
-    return await initializeFirestoreWithPersistence();
-  } catch (error) {
-    console.error('Error resetting Firestore:', error);
-    throw error;
-  }
-}; 
+export const rtdb = getDatabase(app); 

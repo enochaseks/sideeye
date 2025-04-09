@@ -2,9 +2,192 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow all operations for authenticated users
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isMember(userId) {
+      return request.auth.uid in resource.data.members;
+    }
+    
+    function isRoomMember(roomId) {
+      return exists(/databases/$(database)/documents/sideRooms/$(roomId)/members/$(request.auth.uid));
+    }
+
+    function isValidTimestamp() {
+      return request.time != null;
+    }
+
+    function isNotDeleted() {
+      return !resource.data.deleted;
+    }
+
+    function isFollowing(userId) {
+      return userId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.following;
+    }
+
+    function isFollower(userId) {
+      let userData = get(/databases/$(database)/documents/users/$(userId)).data;
+      return ('followers' in userData) && (request.auth.uid in userData.followers || userData.followers.hasAny([request.auth.uid]));
+    }
+
+      // Users collection
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+      
+      // User's following subcollection
+      match /following/{followingId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // Posts collection
+    match /posts/{postId} {
+      allow read: if isAuthenticated() && (
+        // Allow reading if:
+        // 1. User is the author
+        // 2. Post is not private and not deleted
+        // 3. User is following the author and post is not private
+        // 4. Post is being queried for trending content
+        resource.data.authorId == request.auth.uid ||
+        (!resource.data.isPrivate && !resource.data.deleted) ||
+        (isFollowing(resource.data.authorId) && !resource.data.isPrivate)
+      );
+      
+      allow create: if isAuthenticated() && 
+        request.resource.data.authorId == request.auth.uid &&
+        request.resource.data.deleted == false &&
+        request.resource.data.isPrivate == false;
+        
+      allow update: if isAuthenticated() && 
+        resource.data.authorId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'imageUrl', 'isPrivate', 'deleted', 'isEdited']);
+        
+      allow delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
+
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
+        allow update, delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
+      }
+    }
+
+    // Forums collection
+    match /forums/{forumId} {
+      allow read: if isAuthenticated() && isNotDeleted();
+      allow create: if isAuthenticated() && 
+        request.resource.data.ownerId == request.auth.uid &&
+        request.resource.data.members.hasAny([request.auth.uid]);
+      allow update: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        request.auth.uid in resource.data.members
+      );
+      allow delete: if isAuthenticated() && 
+        resource.data.ownerId == request.auth.uid;
+
+      // Forum posts subcollection
+      match /posts/{postId} {
+        allow read: if isAuthenticated() && isNotDeleted() && (
+          request.auth.uid in get(/databases/$(database)/documents/forums/$(forumId)).data.members ||
+          get(/databases/$(database)/documents/forums/$(forumId)).data.ownerId == request.auth.uid
+        );
+        allow create: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/forums/$(forumId)).data.members &&
+          request.resource.data.authorId == request.auth.uid;
+        allow update: if isAuthenticated() && 
+          resource.data.authorId == request.auth.uid;
+        allow delete: if isAuthenticated() && (
+          resource.data.authorId == request.auth.uid ||
+          get(/databases/$(database)/documents/forums/$(forumId)).data.ownerId == request.auth.uid
+        );
+      }
+    }
+
+    // Side Rooms collection
+    match /sideRooms/{roomId} {
+      allow read: if isAuthenticated() && (
+        // Allow reading if:
+        // 1. Room is public
+        // 2. User is a member
+        // 3. Room is being queried for trending content
+        !resource.data.isPrivate ||
+        request.auth.uid in resource.data.members
+      );
+      
+      allow create: if isAuthenticated() && 
+        request.resource.data.ownerId == request.auth.uid;
+        
+      allow update: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        request.auth.uid in resource.data.members
+      );
+        
+      allow delete: if isAuthenticated() && 
+        resource.data.ownerId == request.auth.uid;
+
+      // Room members subcollection
+      match /members/{userId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.auth.uid == userId;
+        allow update: if isAuthenticated() && request.auth.uid == userId;
+        allow delete: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid
+        );
+      }
+
+      // Room messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && isRoomMember(roomId) && isNotDeleted();
+        allow create: if isAuthenticated() && 
+          isRoomMember(roomId) &&
+          request.resource.data.authorId == request.auth.uid;
+        allow update: if isAuthenticated() && 
+          resource.data.authorId == request.auth.uid;
+        allow delete: if isAuthenticated() && (
+          resource.data.authorId == request.auth.uid ||
+          get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid
+        );
+      }
+
+      // WebRTC signaling subcollection
+      match /signaling/{signalId} {
+        allow read, write: if isAuthenticated() && isRoomMember(roomId);
+      }
+    }
+
+    // Trash collection
+    match /trash/{itemId} {
+      allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Content moderation collection
+    match /moderation/{itemId} {
+      allow read: if isAuthenticated() && (
+        resource.data.authorId == request.auth.uid ||
+        resource.data.moderatorId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.resource.data.moderatorId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.moderatorId == request.auth.uid;
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.recipientId;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.recipientId;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.recipientId;
     }
   }
 }
