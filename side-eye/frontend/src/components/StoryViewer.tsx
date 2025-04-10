@@ -9,26 +9,30 @@ import {
   CircularProgress,
   Menu,
   MenuItem,
+  Collapse,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemText,
+  Divider,
+  Paper,
 } from '@mui/material';
-import { Close as CloseIcon, NavigateNext, NavigateBefore, MoreVert } from '@mui/icons-material';
-import { collection, doc, updateDoc, deleteDoc, arrayUnion } from 'firebase/firestore';
+import { 
+  Close as CloseIcon, 
+  NavigateNext as NextIcon, 
+  NavigateBefore as PrevIcon, 
+  MoreVert, 
+  ExpandMore, 
+  ExpandLess,
+  PlayArrow,
+  Pause
+} from '@mui/icons-material';
+import { collection, doc, updateDoc, deleteDoc, arrayUnion, query, where, orderBy, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
-
-interface Story {
-  id: string;
-  mediaUrl: string;
-  mediaType: 'image' | 'video';
-  author: {
-    name: string;
-    avatar: string;
-    username: string;
-  };
-  authorId: string;
-  timestamp: Date;
-  expiresAt: Date;
-  views: string[];
-}
+import { formatDistanceToNow } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
+import { Story } from '../types/story';
 
 interface StoryViewerProps {
   stories: Story[];
@@ -37,16 +41,29 @@ interface StoryViewerProps {
   onClose: () => void;
 }
 
+interface Viewer {
+  userId: string;
+  timestamp: Date;
+  userAvatar?: string;
+  userName?: string;
+}
+
 const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, onClose }) => {
   const { currentUser } = useAuth();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const [showViewers, setShowViewers] = useState(false);
+  const [viewers, setViewers] = useState<Viewer[]>([]);
+  const progressInterval = useRef<NodeJS.Timeout>();
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [isHolding, setIsHolding] = useState(false);
+  const holdTimeoutRef = useRef<NodeJS.Timeout>();
+  const navigate = useNavigate();
 
   const currentStory = stories[currentIndex];
 
@@ -55,6 +72,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
       setCurrentIndex(initialIndex);
       setProgress(0);
       setIsPaused(false);
+      setShowViewers(false);
     }
   }, [open, initialIndex]);
 
@@ -77,31 +95,61 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
   }, [currentStory, currentUser]);
 
   useEffect(() => {
-    if (!open || !currentStory || isPaused) return;
+    if (!currentStory) return;
 
-    const duration = 5000; // 5 seconds per story
-    let startTime: number;
-    let animationFrameId: number;
+    const fetchViewers = async () => {
+      try {
+        const storyRef = doc(db, 'stories', currentStory.id);
+        const unsubscribe = onSnapshot(storyRef, (doc) => {
+          if (doc.exists()) {
+            const data = doc.data();
+            setViewers(data.viewDetails || []);
+          }
+        });
 
-    const animate = (timestamp: number) => {
-      if (!startTime) startTime = timestamp;
-      const elapsed = timestamp - startTime;
-      const newProgress = Math.min((elapsed / duration) * 100, 100);
-      setProgress(newProgress);
-
-      if (newProgress < 100) {
-        animationFrameId = requestAnimationFrame(animate);
-      } else {
-        handleNext();
+        return () => unsubscribe();
+      } catch (err) {
+        console.error('Error fetching viewers:', err);
       }
     };
 
-    animationFrameId = requestAnimationFrame(animate);
+    fetchViewers();
+  }, [currentStory]);
+
+  useEffect(() => {
+    if (!open || !currentStory || isPaused) return;
+
+    const startTime = Date.now();
+    const duration = 5000; // 5 seconds per story
+
+    progressInterval.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const newProgress = (elapsed / duration) * 100;
+
+      if (newProgress >= 100) {
+        clearInterval(progressInterval.current);
+        handleNext();
+      } else {
+        setProgress(newProgress);
+      }
+    }, 50);
 
     return () => {
-      cancelAnimationFrame(animationFrameId);
+      if (progressInterval.current) {
+        clearInterval(progressInterval.current);
+      }
     };
   }, [open, currentStory, isPaused]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isPaused) {
+        videoRef.current.pause();
+      } else {
+        videoRef.current.play();
+      }
+    }
+  }, [isPaused]);
 
   const handleNext = () => {
     if (currentIndex < stories.length - 1) {
@@ -132,13 +180,79 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
     }
   };
 
+  const handlePause = () => {
+    setIsPaused(true);
+    if (progressInterval.current) {
+      clearInterval(progressInterval.current);
+    }
+  };
+
+  const handleResume = () => {
+    setIsPaused(false);
+  };
+
+  const handleClose = () => {
+    if (progressInterval.current) {
+      clearInterval(progressInterval.current);
+    }
+    onClose();
+  };
+
+  const handleTouchStart = () => {
+    holdTimeoutRef.current = setTimeout(() => {
+      setIsHolding(true);
+      handlePause();
+    }, 300); // 300ms hold time
+  };
+
+  const handleTouchEnd = () => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+    }
+    if (isHolding) {
+      setIsHolding(false);
+      handleResume();
+    }
+  };
+
+  const handleMouseDown = () => {
+    holdTimeoutRef.current = setTimeout(() => {
+      setIsHolding(true);
+      handlePause();
+    }, 300);
+  };
+
+  const handleMouseUp = () => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+    }
+    if (isHolding) {
+      setIsHolding(false);
+      handleResume();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (holdTimeoutRef.current) {
+        clearTimeout(holdTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleProfileClick = (e: React.MouseEvent, userId: string) => {
+    e.stopPropagation();
+    onClose();
+    navigate(`/profile/${userId}`);
+  };
+
   if (!currentStory) return null;
 
   return (
     <Dialog
       fullScreen
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       PaperProps={{
         sx: {
           bgcolor: 'black',
@@ -153,6 +267,11 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
           display: 'flex',
           flexDirection: 'column'
         }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
       >
         {/* Progress bar */}
         <Box sx={{ 
@@ -227,7 +346,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
               </Menu>
             </>
           )}
-          <IconButton onClick={onClose} color="inherit">
+          <IconButton onClick={handleClose} color="inherit">
             <CloseIcon />
           </IconButton>
         </Box>
@@ -289,7 +408,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
               visibility: currentIndex > 0 ? 'visible' : 'hidden'
             }}
           >
-            <NavigateBefore />
+            <PrevIcon />
           </IconButton>
           <IconButton
             onClick={handleNext}
@@ -298,9 +417,126 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
               visibility: currentIndex < stories.length - 1 ? 'visible' : 'hidden'
             }}
           >
-            <NavigateNext />
+            <NextIcon />
           </IconButton>
         </Box>
+
+        {/* Pause/Play button with hold indicator */}
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 16,
+            right: 16,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
+          {isHolding && (
+            <Typography variant="caption" sx={{ color: 'white' }}>
+              Holding to pause
+            </Typography>
+          )}
+          <IconButton
+            onClick={isPaused ? handleResume : handlePause}
+            sx={{
+              color: 'white',
+              bgcolor: 'rgba(0, 0, 0, 0.3)',
+              '&:hover': { bgcolor: 'rgba(0, 0, 0, 0.5)' },
+            }}
+          >
+            {isPaused ? <PlayArrow /> : <Pause />}
+          </IconButton>
+        </Box>
+
+        {/* Author info with clickable profile */}
+        <Box
+          onClick={(e) => handleProfileClick(e, currentStory.authorId)}
+          sx={{
+            position: 'absolute',
+            top: 16,
+            left: 16,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            bgcolor: 'rgba(0, 0, 0, 0.3)',
+            p: 1,
+            borderRadius: 1,
+            cursor: 'pointer',
+            '&:hover': {
+              bgcolor: 'rgba(0, 0, 0, 0.5)',
+            },
+          }}
+        >
+          <Avatar 
+            src={currentStory.author.avatar} 
+            sx={{ 
+              width: 32, 
+              height: 32,
+              border: '2px solid white',
+            }} 
+          />
+          <Box>
+            <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+              {currentStory.author.name}
+            </Typography>
+            <Typography variant="caption" sx={{ opacity: 0.8 }}>
+              @{currentStory.author.username}
+            </Typography>
+          </Box>
+        </Box>
+
+        {/* Viewers section */}
+        <Paper
+          sx={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            bgcolor: 'rgba(0, 0, 0, 0.7)',
+            color: 'white',
+            borderRadius: 0,
+          }}
+        >
+          <Box
+            onClick={() => setShowViewers(!showViewers)}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              p: 2,
+              cursor: 'pointer',
+            }}
+          >
+            <Typography variant="subtitle1">
+              {viewers.length} {viewers.length === 1 ? 'view' : 'views'}
+            </Typography>
+            {showViewers ? <ExpandLess /> : <ExpandMore />}
+          </Box>
+
+          <Collapse in={showViewers}>
+            <Divider sx={{ bgcolor: 'rgba(255, 255, 255, 0.1)' }} />
+            <List sx={{ maxHeight: 200, overflow: 'auto' }}>
+              {viewers.map((viewer, index) => (
+                <React.Fragment key={viewer.userId}>
+                  <ListItem>
+                    <ListItemAvatar>
+                      <Avatar src={viewer.userAvatar || ''} />
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary={viewer.userName || 'Anonymous User'}
+                      secondary={formatDistanceToNow(viewer.timestamp, { addSuffix: true })}
+                      secondaryTypographyProps={{ color: 'rgba(255, 255, 255, 0.7)' }}
+                    />
+                  </ListItem>
+                  {index < viewers.length - 1 && (
+                    <Divider sx={{ bgcolor: 'rgba(255, 255, 255, 0.1)' }} />
+                  )}
+                </React.Fragment>
+              ))}
+            </List>
+          </Collapse>
+        </Paper>
       </Box>
     </Dialog>
   );

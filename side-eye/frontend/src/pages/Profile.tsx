@@ -27,7 +27,9 @@ import {
   DialogActions,
   Divider,
   Badge,
-  Alert
+  Alert,
+  Menu,
+  MenuItem
 } from '@mui/material';
 import { 
   Edit as EditIcon,
@@ -163,6 +165,8 @@ const Profile: React.FC = () => {
   const [showPostDialog, setShowPostDialog] = useState(false);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [targetUserId, setTargetUserId] = useState<string | null>(null);
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [showCreateStory, setShowCreateStory] = useState(false);
   
   // Get the user ID from URL params or current user
   const userId = targetUserId || currentUser?.uid || '';
@@ -355,6 +359,10 @@ const Profile: React.FC = () => {
         });
         const followingData = await Promise.all(followingPromises);
         setFollowingList(followingData.filter(Boolean) as UserProfile[]);
+
+        // Log the following list and connections
+        console.log('Following List:', followingData);
+        console.log('Connections:', connections);
       } catch (error) {
         console.error('Error fetching user lists:', error);
         setError('Failed to fetch user lists');
@@ -1094,6 +1102,16 @@ const Profile: React.FC = () => {
     </Dialog>
   );
 
+  // Handle menu open
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  // Handle menu close
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+  };
+
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -1129,18 +1147,13 @@ const Profile: React.FC = () => {
                     <IconButton
                       component="label"
                       size="small"
+                      onClick={handleMenuOpen}
                       sx={{
                         bgcolor: 'background.paper',
                         '&:hover': { bgcolor: 'background.default' }
                       }}
                     >
                       <PhotoCamera fontSize="small" />
-                      <input
-                        type="file"
-                        hidden
-                        accept="image/*"
-                        onChange={handleProfilePicChange}
-                      />
                     </IconButton>
                   )
                 }
@@ -1533,6 +1546,20 @@ const Profile: React.FC = () => {
           <Button onClick={() => setShowPostDialog(false)}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Menu */}
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={handleMenuClose}
+      >
+        <MenuItem onClick={() => { handleMenuClose(); fileInputRef.current?.click(); }}>
+          Change Profile Picture
+        </MenuItem>
+        <MenuItem onClick={() => { handleMenuClose(); setShowCreateStory(true); }}>
+          Add to Story
+        </MenuItem>
+      </Menu>
     </Container>
   );
 };

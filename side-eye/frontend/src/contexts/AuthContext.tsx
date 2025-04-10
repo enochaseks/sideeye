@@ -65,18 +65,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let isMounted = true;
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let profileUnsubscribe: (() => void) | null = null; // Variable to hold profile listener unsubscribe
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (!isMounted) return;
       
+      // Cancel previous profile listener if exists
+      if (profileUnsubscribe) {
+          profileUnsubscribe();
+          profileUnsubscribe = null;
+      }
+
       setLoading(true);
       
       if (user) {
         try {
-          // Get user profile
           const userRef = doc(db, 'users', user.uid);
+          
+          // --- Add onSnapshot listener for user profile --- 
+          profileUnsubscribe = onSnapshot(userRef, (docSnapshot) => {
+            if (!isMounted) return; // Check mount status inside listener too
+            
+            if (docSnapshot.exists()) {
+              const profileData = docSnapshot.data() as UserProfile;
+              console.log("AuthContext: User profile updated", profileData); // Debug log
+              setUserProfile(profileData);
+              // Optionally update currentUser/user if needed, though less common here
+              setCurrentUser(prevUser => prevUser ? { ...prevUser } : null); // Trigger re-render if needed
+            } else {
+              console.error("AuthContext: User profile document deleted?");
+              setError('User profile not found');
+              // Handle profile deletion scenario - log out?
+              setCurrentUser(null);
+              setUser(null);
+              setUserProfile(null);
+              if (isMounted) navigate('/login', { replace: true });
+            }
+            // Set loading false *after* profile is initially loaded or updated
+            // Avoid setting loading false on every minor profile update if not desired
+            // setLoading(false); // Decide if needed here
+          }, (error) => {
+             console.error("AuthContext: Error listening to user profile:", error);
+             setError('Failed to sync user profile');
+             // Potentially log out or show persistent error
+             setLoading(false); // Set loading false on listener error
+          });
+          // --- End of onSnapshot listener ---
+          
+          // Initial fetch (snapshot listener also provides initial data, but getDoc might be faster first time)
           const userDoc = await getDoc(userRef);
           
           if (!userDoc.exists()) {
+             console.error("AuthContext: Initial fetch failed - User profile not found");
             setError('User profile not found');
             setCurrentUser(null);
             setUser(null);
@@ -86,57 +126,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
           }
 
-          const profileData = userDoc.data() as UserProfile;
+          const initialProfileData = userDoc.data() as UserProfile;
 
-          // Set all states together
+          // Set initial states together (snapshot will update later if needed)
           setCurrentUser(user);
           setUser(user);
-          setUserProfile(profileData);
+          setUserProfile(initialProfileData);
 
-          // Only navigate on initial auth state change
+          // Navigation logic (keep as is)
           const currentPath = window.location.pathname;
           if (currentPath === '/login' || currentPath === '/register' || currentPath === '/') {
-            const isSetupComplete = profileData.sourceCodeSetupComplete || false;
+            const isSetupComplete = initialProfileData.sourceCodeSetupComplete || false;
             if (isSetupComplete) {
               if (isMounted) {
-                setLoading(false);
+                // setLoading(false); // Already handled by listener? Move loading logic
                 navigate('/', { replace: true });
               }
             } else {
               if (isMounted) {
-                setLoading(false);
+                // setLoading(false);
                 navigate('/setup-source-code', { replace: true });
               }
             }
-          } else {
-            setLoading(false);
-          }
+          } 
+          // Set loading false after initial setup/navigation logic is decided
+          setLoading(false); 
+
         } catch (error) {
+          console.error("AuthContext: Error during auth state processing:", error);
           setError('An error occurred while processing your login');
           setCurrentUser(null);
           setUser(null);
           setUserProfile(null);
+          if (profileUnsubscribe) profileUnsubscribe(); // Clean up listener on error
           if (isMounted) {
             setLoading(false);
             navigate('/login', { replace: true });
           }
         }
-      } else {
+      } else { // User is logged out
         setCurrentUser(null);
         setUser(null);
         setUserProfile(null);
+        // No need to cancel profileUnsubscribe here, it's done when auth changes
         if (isMounted) {
           setLoading(false);
-          navigate('/login', { replace: true });
+          // Optional: navigate to login only if not already there or on public pages
+          // navigate('/login', { replace: true });
         }
       }
     });
 
+    // Cleanup function
     return () => {
       isMounted = false;
-      unsubscribe();
+      unsubscribeAuth(); // Correct: Unsubscribe from auth state changes
+      if (profileUnsubscribe) {
+        profileUnsubscribe(); // Unsubscribe from profile listener on component unmount
+      }
     };
-  }, [navigate]);
+  }, [navigate]); // navigate dependency is likely fine, but review if causing issues
 
   const login = async (email: string, password: string) => {
     setLoading(true);
@@ -162,18 +211,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentUser(null);
         setUser(null);
         setUserProfile(null);
-        await firebaseSignOut(auth);
-        setLoading(false);
+            await firebaseSignOut(auth);
+            setLoading(false);
         navigate('/verify-email');
-        return;
-      }
-
+            return;
+        }
+        
       // Set both user states together
       setCurrentUser(user);
-      setUser(user);
-      setLoading(false);
+            setUser(user);
+            setLoading(false);
       
-    } catch (error: any) {
+      } catch (error: any) {
       console.error("Login function error:", error);
       let errorMessage = 'An error occurred during login.';
       
@@ -195,7 +244,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUserProfile(null);
       setLoading(false);
       logError(error, 'Login Function');
-    }
+      }
   };
 
   const verifySourceCodeAndCompleteLogin = async (code: string) => {
@@ -204,11 +253,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('verifySourceCodeAndCompleteLogin: No temporary user found');
       return;
     }
-
+    
     try {
-      setLoading(true);
-      setError(null);
-
+    setLoading(true);
+    setError(null);
+    
       // Get the user's profile from Firestore
       const userRef = doc(db, 'users', tempUserForSourceCode.uid);
       const userDoc = await getDoc(userRef);
@@ -236,10 +285,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Set the current user and navigate to feed
-      setCurrentUser(tempUserForSourceCode);
+        setCurrentUser(tempUserForSourceCode);
       setUserProfile(profileData);
-      setTempUserForSourceCode(null);
-      setLoading(false);
+        setTempUserForSourceCode(null);
+        setLoading(false);
       
       // Using setTimeout to allow React state updates to complete before navigation
       setTimeout(() => {
@@ -315,7 +364,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Set the user state to trigger onAuthStateChanged
       setUser(user);
-      
+
     } catch (error: any) {
       console.error('Registration error:', error);
       setError(getAuthErrorMessage(error.code));

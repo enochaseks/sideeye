@@ -159,7 +159,8 @@ const CreateStory: React.FC<CreateStoryProps> = ({ open, onClose }) => {
         mediaType,
         timestamp: serverTimestamp(),
         expiresAt: Timestamp.fromDate(expiresAt),
-        views: []
+        views: [],
+        viewDetails: []
       });
 
       onClose();

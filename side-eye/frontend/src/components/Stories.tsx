@@ -5,277 +5,256 @@ import {
   Avatar,
   Typography,
   Skeleton,
-  CircularProgress,
   Alert,
-  Fade,
 } from '@mui/material';
 import { Add as AddIcon } from '@mui/icons-material';
-import { collection, query, orderBy, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, where, doc, getDoc, getDocs, Timestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import CreateStory from './CreateStory';
 import StoryViewer from './StoryViewer';
-
-interface Story {
-  id: string;
-  author: {
-    id: string;
-    name: string;
-    avatar: string;
-    username: string;
-  };
-  mediaUrl: string;
-  mediaType: 'image' | 'video';
-  timestamp: any;
-  views: string[];
-  authorId: string;
-  expiresAt: any;
-}
+import { Story } from '../types/story';
+import { Link } from 'react-router-dom';
 
 interface StoriesProps {
   following: string[];
 }
 
 const Stories: React.FC<StoriesProps> = ({ following }) => {
+  // State for previews of followed users shown in the list
   const [stories, setStories] = useState<Story[]>([]);
+  // State to hold ALL fetched stories (own + followed)
+  const [allFetchedStories, setAllFetchedStories] = useState<Story[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreateStory, setShowCreateStory] = useState(false);
   const [showStoryViewer, setShowStoryViewer] = useState(false);
-  const [selectedStoryIndex, setSelectedStoryIndex] = useState(0);
+  // State to hold the author ID whose stories we want to view
+  const [viewingAuthorId, setViewingAuthorId] = useState<string | null>(null);
   const { currentUser, userProfile } = useAuth();
 
-  const handleStoryClick = (story: Story) => {
-    const index = stories.findIndex(s => s.id === story.id);
-    setSelectedStoryIndex(index);
+  // Function to handle opening the Story Viewer for a specific author
+  const handleStoryClick = (authorId: string) => {
+    setViewingAuthorId(authorId);
     setShowStoryViewer(true);
   };
 
   useEffect(() => {
-    if (currentUser) {
-      fetchStories();
-    }
-  }, [currentUser, following]);
-
-  const fetchStories = async () => {
     if (!currentUser) return;
 
-    try {
-      setLoading(true);
-      const storiesRef = collection(db, 'stories');
-      const q = query(
-        storiesRef,
-        where('authorId', 'in', [...following, currentUser.uid]),
-        orderBy('timestamp', 'desc')
-      );
+    const storiesRef = collection(db, 'stories');
+    const authorIdsToQuery = Array.from(new Set([...following, currentUser.uid]));
 
-      const unsubscribe = onSnapshot(q, async (snapshot) => {
-        const storiesData: Story[] = [];
-        
-        for (const storyDoc of snapshot.docs) {
-          const data = storyDoc.data();
-          const authorDocRef = doc(db, 'users', data.authorId);
-          const authorDoc = await getDoc(authorDocRef);
-          const authorData = authorDoc.data() || {};
+    if (authorIdsToQuery.length === 0) {
+      setAllFetchedStories([]);
+      setStories([]);
+      setLoading(false);
+      return;
+    }
 
-          storiesData.push({
-            id: storyDoc.id,
-            mediaUrl: data.mediaUrl,
-            mediaType: data.mediaType,
-            author: {
-              id: data.authorId,
-              name: authorData.name || 'Unknown User',
-              avatar: authorData.avatar || '',
-              username: authorData.username || '',
-            },
-            timestamp: data.timestamp,
-            views: data.views || [],
-            authorId: data.authorId,
-            expiresAt: data.expiresAt,
-          });
-        }
+    const q = query(
+      storiesRef,
+      where('authorId', 'in', authorIdsToQuery),
+      where('expiresAt', '>', Timestamp.now()),
+      orderBy('authorId'),
+      orderBy('timestamp', 'desc')
+    );
 
-        setStories(storiesData);
-        setLoading(false);
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const allStoriesTemp: Story[] = [];
+      const followedAuthorsAdded = new Set<string>();
+      const followedStoriesPreviews: Story[] = [];
+
+      querySnapshot.forEach((storyDoc) => {
+        const storyData = storyDoc.data();
+        if (!storyData.authorId || !storyData.timestamp || !storyData.expiresAt) return;
+
+        const authorRef = doc(db, 'users', storyData.authorId);
+        getDoc(authorRef).then((authorDoc) => {
+          const authorData = authorDoc.data();
+          if (authorData) {
+            const fullStory: Story = {
+              id: storyDoc.id,
+              mediaUrl: storyData.mediaUrl,
+              mediaType: storyData.mediaType,
+              author: {
+                name: authorData.name || '',
+                avatar: authorData.avatar || '',
+                username: authorData.username || ''
+              },
+              authorId: storyData.authorId,
+              timestamp: storyData.timestamp.toDate(),
+              expiresAt: storyData.expiresAt.toDate(),
+              views: storyData.views || [],
+              viewDetails: storyData.viewDetails?.map((view: any) => ({
+                userId: view.userId,
+                timestamp: view.timestamp.toDate()
+              })) || []
+            };
+
+            allStoriesTemp.push(fullStory);
+
+            if (storyData.authorId !== currentUser.uid && !followedAuthorsAdded.has(storyData.authorId)) {
+              followedStoriesPreviews.push(fullStory);
+              followedAuthorsAdded.add(storyData.authorId);
+            }
+          }
+        });
       });
 
-      return () => unsubscribe();
-    } catch (error) {
-      console.error('Error fetching stories:', error);
-      setError('Failed to load stories');
+      setAllFetchedStories(allStoriesTemp);
+      setStories(followedStoriesPreviews);
       setLoading(false);
-    }
+    }, (err) => {
+      console.error('Error fetching stories:', err);
+      setError('Failed to fetch stories.');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, following]);
+
+  // --- Click Handler for the User's Own Button ---
+  const handleOwnButtonClick = () => {
+      // Add null check for currentUser before accessing uid
+      if (!currentUser) return;
+      const currentUserHasStories = allFetchedStories.some(s => s.authorId === currentUser.uid);
+      if (currentUserHasStories) {
+          // Open viewer for current user's stories
+          handleStoryClick(currentUser.uid);
+      } else {
+          // Open create dialog
+          setShowCreateStory(true);
+      }
   };
 
-  const renderStoryPreview = (story: Story) => {
-    return (
-      <Box
-        sx={{
-          position: 'relative',
-          width: 64,
-          height: 64,
-          borderRadius: '50%',
-          overflow: 'hidden',
-          border: '2px solid',
-          borderColor: story.views.includes(currentUser?.uid || '') ? 'grey.400' : 'primary.main',
-        }}
-      >
-        {story.mediaType === 'image' ? (
-          <Box
-            component="img"
-            src={story.mediaUrl}
-            alt="Story preview"
-            sx={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              filter: 'brightness(0.7)',
-              transition: 'filter 0.3s ease',
-              '&:hover': {
-                filter: 'brightness(0.9)',
-              },
-            }}
-          />
-        ) : (
-          <Box
-            component="video"
-            src={story.mediaUrl}
-            sx={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              filter: 'brightness(0.7)',
-              transition: 'filter 0.3s ease',
-              '&:hover': {
-                filter: 'brightness(0.9)',
-              },
-            }}
-          />
-        )}
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(0, 0, 0, 0.2)',
-          }}
-        />
-      </Box>
-    );
-  };
+  // Check if the current user has stories to determine border style
+  const currentUserHasStories = allFetchedStories.some(s => s.authorId === currentUser?.uid);
+  // Check if the current user has viewed their own stories (if they exist)
+  const currentUserStories = allFetchedStories.filter(s => s.authorId === currentUser?.uid);
+  const hasViewedOwnStory = currentUserStories.some(s => s.views.includes(currentUser?.uid || ''));
 
+
+  // --- RENDER LOGIC ---
   return (
     <Box sx={{ p: 2 }}>
-      <Box sx={{ 
-        display: 'flex', 
-        gap: 2, 
-        overflowX: 'auto',
-        pb: 2,
-        '&::-webkit-scrollbar': {
-          display: 'none'
-        }
+      <Box sx={{ /* container styles */
+        display: 'flex', gap: 2, overflowX: 'auto', pb: 2,
+        '&::-webkit-scrollbar': { display: 'none' }
       }}>
+
+        {/* Current User's Button (Add or View) */}
         {currentUser && (
-          <Box 
-            onClick={() => setShowCreateStory(true)}
-            sx={{ 
-              display: 'flex', 
-              flexDirection: 'column', 
+          <Box
+            onClick={handleOwnButtonClick}
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               cursor: 'pointer',
-              minWidth: 80
+              minWidth: 80,
+              textAlign: 'center'
             }}
           >
-            <Box
-              sx={{
-                position: 'relative',
-                width: 64,
-                height: 64,
-                mb: 1
-              }}
-            >
+            <Box sx={{ position: 'relative', width: 64, height: 64, mb: 1 }}>
               <Avatar
                 src={userProfile?.profilePic || currentUser.photoURL || ''}
                 sx={{
                   width: '100%',
                   height: '100%',
-                  border: '2px solid #e0e0e0'
+                  border: '2px solid',
+                  borderColor: currentUserHasStories ? (hasViewedOwnStory ? 'grey.400' : 'primary.main') : '#e0e0e0',
+                  '&:hover': { opacity: 0.8 }
                 }}
               />
               <IconButton
+                onClick={() => setShowCreateStory(true)}
+                size="small"
                 sx={{
                   position: 'absolute',
-                  bottom: -8,
-                  right: -8,
+                  bottom: 0,
+                  right: 0,
                   bgcolor: 'primary.main',
                   color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  },
-                  width: 24,
-                  height: 24,
-                  fontSize: '1rem'
+                  border: '2px solid white',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                  width: 22,
+                  height: 22
                 }}
               >
-                <AddIcon fontSize="small" />
+                <AddIcon sx={{ fontSize: '1rem' }} />
               </IconButton>
             </Box>
-            <Typography variant="caption" sx={{ textAlign: 'center' }}>
-              Add Story
+            <Typography variant="caption" sx={{ mt: 0.5 }}>
+              {currentUserHasStories ? "Your Story" : "Add Story"}
             </Typography>
           </Box>
         )}
 
+        {/* Loading/Error/Followed Story Previews */}
         {loading ? (
-          Array(5).fill(0).map((_, index) => (
-            <Box key={index} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 80 }}>
-              <Skeleton variant="circular" width={64} height={64} />
-              <Skeleton variant="text" width={60} />
-            </Box>
-          ))
+           Array(5).fill(0).map((_, index) => ( /* Skeleton remains the same */
+             <Box key={index} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 80 }}>
+               <Skeleton variant="circular" width={64} height={64} />
+               <Skeleton variant="text" width={60} sx={{mt: 1}}/>
+             </Box>
+           ))
         ) : error ? (
-          <Alert severity="error">{error}</Alert>
+           <Alert severity="error" sx={{ flexGrow: 1 }}>{error}</Alert>
+        ) : stories.length === 0 && !loading && !currentUserHasStories ? ( // Show message only if no followed stories AND user has no stories
+           <Typography variant="body2" sx={{ color: 'text.secondary', alignSelf: 'center', mx: 2 }}>No stories to show.</Typography>
         ) : (
-          stories.map((story, index) => (
-            <Box
-              key={story.id}
-              onClick={() => handleStoryClick(story)}
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                cursor: 'pointer',
-                minWidth: 80
-              }}
-            >
-              {renderStoryPreview(story)}
-              <Typography variant="caption" sx={{ mt: 1, textAlign: 'center' }}>
-                {story.author.name}
-              </Typography>
-            </Box>
-          ))
+          // Map through FOLLOWED user previews ONLY
+          <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', p: 2, bgcolor: 'background.paper' }}>
+            {stories.map((storyPreview) => (
+              <Box
+                key={storyPreview.authorId}
+                sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 80, textAlign: 'center' }}
+              >
+                <Avatar
+                  src={storyPreview.author.avatar}
+                  onClick={() => handleStoryClick(storyPreview.authorId)}
+                  sx={{
+                    width: 64, height: 64, cursor: 'pointer', mb: 1, border: '2px solid',
+                    borderColor: storyPreview.views.includes(currentUser?.uid || '') ? 'grey.400' : 'primary.main',
+                    '&:hover': { opacity: 0.8 }
+                  }}
+                />
+                <Typography
+                  variant="caption" component={Link} to={`/profile/${storyPreview.authorId}`}
+                  sx={{ width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    cursor: 'pointer', color: 'inherit', textDecoration: 'none', '&:hover': { textDecoration: 'underline' }
+                  }}
+                >
+                  {storyPreview.author.name}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
         )}
       </Box>
 
+      {/* Create Story Dialog */}
       <CreateStory
         open={showCreateStory}
         onClose={() => {
           setShowCreateStory(false);
-          fetchStories();
         }}
       />
 
-      <StoryViewer
-        stories={stories}
-        initialIndex={selectedStoryIndex}
-        open={showStoryViewer}
-        onClose={() => setShowStoryViewer(false)}
-      />
+      {/* Story Viewer Dialog - Simplified filtering */}
+      {showStoryViewer && viewingAuthorId && (
+         <StoryViewer
+           // Filter ALL stories based on the viewingAuthorId state
+           stories={allFetchedStories.filter(s => s.authorId === viewingAuthorId)}
+           initialIndex={0} // Start viewer at the first story for the selected author
+           open={showStoryViewer}
+           onClose={() => {
+               setShowStoryViewer(false);
+               setViewingAuthorId(null); // Reset viewing author ID
+           }}
+         />
+      )}
     </Box>
   );
 };
