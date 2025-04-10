@@ -3,10 +3,11 @@ import {
   Routes, 
   Route, 
   Navigate,
-  BrowserRouter
+  BrowserRouter,
+  useLocation
 } from 'react-router-dom';
 import { CssBaseline, Box } from '@mui/material';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { ThemeContextProvider } from './contexts/ThemeContext';
 import Navbar from './components/Navbar';
@@ -49,6 +50,17 @@ import Debug from './pages/Debug';
 import CookieConsent from './components/CookieConsent';
 import BottomNav from './components/BottomNav';
 import './App.css';
+
+const BottomNavWrapper: React.FC = () => {
+  const { currentUser } = useAuth();
+  const location = useLocation();
+  
+  if (!currentUser || ['/login', '/register'].includes(location.pathname)) {
+    return null;
+  }
+  
+  return <BottomNav />;
+};
 
 const App: React.FC = () => {
   return (
@@ -100,7 +112,7 @@ const App: React.FC = () => {
                       </Box>
                       <CookieConsent />
                       <Toaster position="bottom-right" />
-                      <BottomNav />
+                      <BottomNavWrapper />
                     </Box>
                   </RateLimiter>
                 </NotificationProvider>

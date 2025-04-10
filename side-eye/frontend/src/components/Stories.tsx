@@ -138,12 +138,7 @@ const Stories: React.FC<StoriesProps> = ({ following }) => {
   // --- RENDER LOGIC ---
   return (
     <Box sx={{ p: 2 }}>
-      <Box sx={{ /* container styles */
-        display: 'flex', gap: 2, overflowX: 'auto', pb: 2,
-        '&::-webkit-scrollbar': { display: 'none' }
-      }}>
-
-        {/* Current User's Button (Add or View) */}
+      <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', pb: 2, '&::-webkit-scrollbar': { display: 'none' } }}>
         {currentUser && (
           <Box
             onClick={handleOwnButtonClick}
