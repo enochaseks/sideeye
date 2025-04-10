@@ -13,17 +13,21 @@ import {
   ListItemText,
   ListItemAvatar,
   Avatar,
-  Link as MuiLink
+  Link as MuiLink,
+  useTheme
 } from '@mui/material';
 import { Notifications as NotificationsIcon } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
 import { useNotifications, Notification } from '../contexts/NotificationContext';
+import { useThemeContext } from '../contexts/ThemeContext';
 import { formatDistanceToNow } from 'date-fns';
 
 export const NotificationIcon: React.FC = () => {
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
+  const theme = useTheme();
+  const { isDarkMode } = useThemeContext();
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -60,7 +64,7 @@ export const NotificationIcon: React.FC = () => {
         onClick={handleClick}
         sx={{
           position: 'relative',
-          color: 'black',
+          color: isDarkMode ? 'white' : 'black',
           '&:hover': {
             backgroundColor: 'rgba(0, 0, 0, 0.04)',
           },

@@ -5,11 +5,13 @@ import {
   Navigate,
   BrowserRouter
 } from 'react-router-dom';
-import { ThemeProvider, CssBaseline, Box } from '@mui/material';
+import { CssBaseline, Box } from '@mui/material';
 import { AuthProvider } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
-import theme from './theme';
+import { ThemeContextProvider } from './contexts/ThemeContext';
 import Navbar from './components/Navbar';
+import { ThemeProvider } from '@mui/material';
+import theme from './theme';
 import Feed from './pages/Feed';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -51,7 +53,7 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <ThemeProvider theme={theme}>
+        <ThemeContextProvider>
           <CssBaseline />
           <LocalizationProvider dateAdapter={AdapterDateFns}>
             <AuthProvider>
@@ -99,7 +101,7 @@ const App: React.FC = () => {
               </FirestoreProvider>
             </AuthProvider>
           </LocalizationProvider>
-        </ThemeProvider>
+        </ThemeContextProvider>
       </BrowserRouter>
     </ErrorBoundary>
   );
