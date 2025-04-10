@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../services/firebase';
 import { User, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification, setPersistence, browserLocalPersistence, onAuthStateChanged } from 'firebase/auth';
@@ -46,9 +46,6 @@ const AuthContext = createContext<AuthContextType>({
   completeInitialSetupAndLogin: () => {}
 });
 
-const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-const ACTIVITY_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -57,261 +54,85 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [tempUserForSourceCode, setTempUserForSourceCode] = useState<User | null>(null);
   const navigate = useNavigate();
-  const [lastActivity, setLastActivity] = useState<number>(Date.now());
-  const activityCheckInterval = useRef<NodeJS.Timeout>();
-
-  // Add rate limiting for source code verification
-  const [lastVerificationAttempt, setLastVerificationAttempt] = useState<number>(0);
-  const VERIFICATION_COOLDOWN = 2000; // 2 seconds cooldown
 
   const logError = (error: any, context: string) => {
-    // Sanitize error message to prevent sensitive data leakage
-    const sanitizedError = typeof error === 'object' 
-      ? JSON.stringify({
-          message: error.message,
-          code: error.code,
-          name: error.name
-        }, null, 2)
-      : String(error).replace(/password|token|key|secret/gi, '[REDACTED]');
-    
-    console.error(`[${context}] Error:`, sanitizedError);
-    
-    // In production, use a proper error tracking service
-    if (process.env.NODE_ENV === 'production') {
-      // Example: Send to error tracking service
-      // You should replace this with your actual error tracking service
-      try {
-        // Only log non-sensitive information
-        const errorLog = {
-          timestamp: new Date().toISOString(),
-          context,
-          error: sanitizedError,
-          path: window.location.pathname
-        };
-        
-        // Send to error tracking service instead of localStorage
-        // errorTrackingService.log(errorLog);
-      } catch (e) {
-        console.error('Failed to log error:', e);
-      }
-    }
-  };
-
-  const updateLastActivity = () => {
-    setLastActivity(Date.now());
-    if (currentUser && checkStoragePermission('functionality')) {
-      const sessionId = localStorage.getItem('sessionId');
-      if (sessionId && db) {
-        const userRef = doc(db, 'users', currentUser.uid);
-        updateDoc(userRef, {
-          'sessions': arrayUnion({
-            id: sessionId,
-            lastActivity: new Date().toISOString()
-          })
-        }).catch(error => {
-          console.error('Error updating session activity:', error);
-        });
-      }
-    }
+    console.error(`[${context}] Error:`, error);
   };
 
   useEffect(() => {
-    // Set up activity tracking
-    const handleActivity = () => {
-      updateLastActivity();
-    };
-
-    window.addEventListener('mousemove', handleActivity);
-    window.addEventListener('keypress', handleActivity);
-    window.addEventListener('click', handleActivity);
-    window.addEventListener('scroll', handleActivity);
-
-    // Set up periodic activity check
-    activityCheckInterval.current = setInterval(() => {
-      if (currentUser && Date.now() - lastActivity > SESSION_TIMEOUT) {
-        console.log('Session timeout detected, logging out...');
-        logout();
-      }
-    }, ACTIVITY_CHECK_INTERVAL);
-
-    return () => {
-      window.removeEventListener('mousemove', handleActivity);
-      window.removeEventListener('keypress', handleActivity);
-      window.removeEventListener('click', handleActivity);
-      window.removeEventListener('scroll', handleActivity);
-      if (activityCheckInterval.current) {
-        clearInterval(activityCheckInterval.current);
-      }
-    };
-  }, [currentUser, lastActivity]);
-
-  const registerDevice = async (userId: string) => {
-    if (!db) {
-      console.error('Firestore not initialized');
-      return null;
-    }
-
-    try {
-      // Generate a device ID if not exists
-      let deviceId = localStorage.getItem('deviceId');
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-        localStorage.setItem('deviceId', deviceId);
-        console.log('Generated new device ID:', deviceId);
-      }
-
-      const userRef = doc(db, 'users', userId);
-      const userDoc = await getDoc(userRef);
-
-      if (!userDoc.exists()) {
-        console.error('User document not found');
-        return null;
-      }
-
-      const userData = userDoc.data();
-      const registeredDevices = userData.registeredDevices || [];
-
-      // Check if device is already registered
-      if (!registeredDevices.includes(deviceId)) {
-        console.log('Registering new device:', deviceId);
-        await updateDoc(userRef, {
-          registeredDevices: arrayUnion(deviceId)
-        });
-        console.log('Device registered successfully');
-      } else {
-        console.log('Device already registered:', deviceId);
-      }
-
-      return deviceId;
-    } catch (error) {
-      console.error('Error registering device:', error);
-      return null;
-    }
-  };
-
-  useEffect(() => {
+    let isMounted = true;
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      console.log('Auth state changed:', user ? 'User logged in' : 'No user');
+      if (!isMounted) return;
+      
       setLoading(true);
       
       if (user) {
         try {
-          // Register device first
-          const deviceId = await registerDevice(user.uid);
-          if (!deviceId) {
-            console.error('Failed to register device');
-            setError('Failed to register device. Please try again.');
-            setLoading(false);
-            return;
-          }
-
           // Get user profile
           const userRef = doc(db, 'users', user.uid);
           const userDoc = await getDoc(userRef);
           
           if (!userDoc.exists()) {
-            console.error('User profile not found');
             setError('User profile not found');
+            setCurrentUser(null);
+            setUser(null);
+            setUserProfile(null);
             setLoading(false);
+            if (isMounted) navigate('/login', { replace: true });
             return;
           }
 
-          const profileData = userDoc.data();
-          console.log('Profile data:', profileData);
+          const profileData = userDoc.data() as UserProfile;
 
-          // Check if source code setup is complete for this device
-          const isSetupComplete = profileData.sourceCodeSetupComplete || false;
-          console.log('Source code setup complete:', isSetupComplete);
+          // Set all states together
+          setCurrentUser(user);
+          setUser(user);
+          setUserProfile(profileData);
 
-          if (isSetupComplete) {
-            console.log('Source code setup complete, navigating to feed');
-            setCurrentUser(user);
-            setLoading(false);
-            navigate('/');
+          // Only navigate on initial auth state change
+          const currentPath = window.location.pathname;
+          if (currentPath === '/login' || currentPath === '/register' || currentPath === '/') {
+            const isSetupComplete = profileData.sourceCodeSetupComplete || false;
+            if (isSetupComplete) {
+              if (isMounted) {
+                setLoading(false);
+                navigate('/', { replace: true });
+              }
+            } else {
+              if (isMounted) {
+                setLoading(false);
+                navigate('/setup-source-code', { replace: true });
+              }
+            }
           } else {
-            console.log('Source code setup not complete, navigating to setup');
-            setCurrentUser(user);
             setLoading(false);
-            navigate('/setup-source-code');
           }
         } catch (error) {
-          console.error('Error in auth state change:', error);
           setError('An error occurred while processing your login');
-          setLoading(false);
+          setCurrentUser(null);
+          setUser(null);
+          setUserProfile(null);
+          if (isMounted) {
+            setLoading(false);
+            navigate('/login', { replace: true });
+          }
         }
       } else {
         setCurrentUser(null);
         setUser(null);
         setUserProfile(null);
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+          navigate('/login', { replace: true });
+        }
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, [navigate]);
-
-  const checkStoragePermission = (type: 'necessary' | 'functionality' | 'analytics'): boolean => {
-    try {
-      const preferences = localStorage.getItem('cookiePreferences');
-      if (!preferences) return false;
-      
-      const parsedPreferences = JSON.parse(preferences);
-      return parsedPreferences[type] === true;
-    } catch (error) {
-      console.error('Error checking storage permissions:', error);
-      return false;
-    }
-  };
-
-  const cleanupOldSessions = async (userId: string) => {
-    if (!db) return;
-    
-    try {
-      const userRef = doc(db, 'users', userId);
-      const userDoc = await getDoc(userRef);
-      
-      if (userDoc.exists()) {
-        const data = userDoc.data();
-        if (data.sessions && Array.isArray(data.sessions)) {
-          const now = new Date();
-          const validSessions = data.sessions.filter((session: any) => {
-            const sessionTime = new Date(session.loginTime);
-            // Keep sessions from the last 30 days
-            return (now.getTime() - sessionTime.getTime()) < (30 * 24 * 60 * 60 * 1000);
-          });
-          
-          if (validSessions.length !== data.sessions.length) {
-            await updateDoc(userRef, {
-              sessions: validSessions
-            });
-            console.log('Cleaned up old sessions');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error cleaning up sessions:', error);
-    }
-  };
-
-  const validateSession = async (userId: string, sessionId: string): Promise<boolean> => {
-    if (!db) return false;
-    
-    try {
-      const userRef = doc(db, 'users', userId);
-      const userDoc = await getDoc(userRef);
-      
-      if (userDoc.exists()) {
-        const data = userDoc.data();
-        if (data.sessions && Array.isArray(data.sessions)) {
-          return data.sessions.some((session: any) => session.id === sessionId);
-        }
-      }
-      return false;
-    } catch (error) {
-      console.error('Error validating session:', error);
-      return false;
-    }
-  };
 
   const login = async (email: string, password: string) => {
     setLoading(true);
@@ -334,44 +155,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!isVerified) {
         console.log('Email not verified, signing out...');
         setError('Please verify your email before logging in.');
+        setCurrentUser(null);
+        setUser(null);
+        setUserProfile(null);
         await firebaseSignOut(auth);
         setLoading(false);
+        navigate('/verify-email');
         return;
       }
 
-      // Clean up old sessions before creating a new one
-      await cleanupOldSessions(user.uid);
-
-      if (checkStoragePermission('functionality')) {
-        const sessionId = crypto.randomUUID();
-        localStorage.setItem('sessionId', sessionId);
-        console.log('Generated new session ID:', sessionId);
-
-        if (db) {
-          try {
-            const userRef = doc(db, 'users', user.uid);
-            const sessionInfo = {
-              id: sessionId,
-              loginTime: new Date().toISOString(),
-              deviceInfo: {
-                userAgent: navigator.userAgent,
-                platform: navigator.platform,
-                ip: await fetch('https://api.ipify.org?format=json').then(res => res.json()).then(data => data.ip).catch(() => 'unknown')
-              },
-              lastActivity: new Date().toISOString()
-            };
-            
-            await updateDoc(userRef, {
-              sessions: arrayUnion(sessionInfo)
-            });
-            
-            console.log('Session information updated in Firestore');
-          } catch (firestoreError) {
-            console.error('Error updating session information:', firestoreError);
-          }
-        }
-      }
-      
+      // Set both user states together
+      setCurrentUser(user);
+      setUser(user);
       setLoading(false);
       
     } catch (error: any) {
@@ -391,6 +186,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       setError(errorMessage);
+      setCurrentUser(null);
+      setUser(null);
+      setUserProfile(null);
       setLoading(false);
       logError(error, 'Login Function');
     }
@@ -402,14 +200,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('verifySourceCodeAndCompleteLogin: No temporary user found');
       return;
     }
-
-    // Check rate limiting
-    const now = Date.now();
-    if (now - lastVerificationAttempt < VERIFICATION_COOLDOWN) {
-      setError('Please wait a moment before trying again');
-      return;
-    }
-    setLastVerificationAttempt(now);
 
     try {
       setLoading(true);
@@ -433,36 +223,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Add artificial delay to prevent timing attacks
-      await new Promise(resolve => setTimeout(resolve, 500));
-
       // Verify the source code
       const isMatch = await bcrypt.compare(code, profileData.sourceCodeHash);
       
       if (!isMatch) {
         setError('Invalid source code');
         return;
-      }
-
-      // Get the current session ID
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) {
-        setError('Session ID not found');
-        return;
-      }
-
-      try {
-        // Update the session's verification status
-        await updateDoc(userRef, {
-          'sessions.verifications': arrayUnion({
-            sessionId,
-            timestamp: new Date().toISOString()
-          })
-        });
-        console.log('Session verification status updated successfully');
-      } catch (updateError) {
-        // Log but don't fail the verification if session update fails
-        console.error('Error updating session verification status:', updateError);
       }
 
       // Set the current user and navigate to feed
@@ -541,8 +307,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (firestoreError) {
         console.error("Error creating user profile in Firestore:", firestoreError);
-        // We'll continue even if Firestore profile creation fails
-        // It can be created later in the onAuthStateChanged listener
       }
 
       // Set the user state to trigger onAuthStateChanged
@@ -560,18 +324,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       setLoading(true);
-      if (currentUser && checkStoragePermission('functionality')) {
-        const sessionId = localStorage.getItem('sessionId');
-        if (sessionId && db) {
-          const userRef = doc(db, 'users', currentUser.uid);
-          await updateDoc(userRef, {
-            'sessions': arrayRemove({
-              id: sessionId
-            })
-          });
-        }
-        localStorage.removeItem('sessionId');
-      }
       await firebaseSignOut(auth);
       setCurrentUser(null);
       setUser(null);
@@ -598,11 +350,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const sendEmailVerification = async () => {
-    // Use either currentUser (if logged in and verified) or user (if unverified)
     const userToSend = currentUser || user;
 
     if (!userToSend) {
-      // If neither exists, then truly no user is available
       throw new Error('No user available to send verification email');
     }
 
@@ -610,44 +360,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(true);
       console.log('Sending email verification to:', userToSend.email);
 
-      // First, reload the user to ensure we have the latest state
       await userToSend.reload();
-      const refreshedUser = auth.currentUser; // Get the potentially updated user object after reload
+      const refreshedUser = auth.currentUser;
 
-      // Use the potentially refreshed user object for the check and send
       const userForCheck = refreshedUser || userToSend;
 
-      // Check if already verified AFTER reload
       if (userForCheck.emailVerified) {
         console.log('User is already verified');
-        // Optional: Maybe navigate away or update state if verified now?
         setLoading(false);
-        // Potentially trigger forceCheckEmailVerification here to update context state fully
         await forceCheckEmailVerification(userForCheck);
-        // Check if currentUser is now set and navigate if appropriate
         if (auth.currentUser) {
-          navigate('/setup-source-code'); // Or wherever a verified user should go
+          navigate('/setup-source-code');
         }
         return;
       }
 
-      // Set up action code settings for the verification link
       const actionCodeSettings = {
-        url: `${window.location.origin}/verify-email`, // Redirect back to verify page to handle the code
+        url: `${window.location.origin}/verify-email`,
         handleCodeInApp: true
       };
 
-      // Send the verification email with action code settings using the correct user object
       await firebaseSendEmailVerification(userForCheck, actionCodeSettings);
       console.log('Verification email sent successfully');
 
-      // Update Firestore to reflect verification attempt (optional, based on your needs)
       if (db) {
         try {
           const userRef = doc(db, 'users', userForCheck.uid);
           await updateDoc(userRef, {
             lastVerificationAttempt: serverTimestamp(),
-            verificationStatus: 'pending' // Indicate email was just sent
+            verificationStatus: 'pending'
           });
           console.log('Updated Firestore with verification attempt timestamp');
         } catch (firestoreError) {
@@ -657,7 +398,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       console.error('Error sending verification email:', error);
       setError(error.message);
-      throw error; // Rethrow the error so the calling component knows it failed
+      throw error;
     } finally {
       setLoading(false);
     }
@@ -679,7 +420,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Starting forceCheckEmailVerification for user:', user.uid);
       console.log('Initial emailVerified status:', user.emailVerified);
       
-      // Force a reload of the user object
       await user.reload();
       const refreshedUser = auth.currentUser;
       
@@ -688,11 +428,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      // Double check the verification status
       const isVerified = refreshedUser.emailVerified;
       console.log('Email verification status after reload:', isVerified);
       
-      // If verified, ensure the user profile is also marked as verified
       if (isVerified && db) {
         try {
           const userRef = doc(db, 'users', refreshedUser.uid);
@@ -701,9 +439,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (userDoc.exists()) {
             const profileData = userDoc.data() as UserProfile;
             
-            // Only update if the profile isn't already marked as verified
             if (!profileData.isVerified) {
-              // Check if user is admin before attempting update
               const userIsAdmin = await isAdmin(refreshedUser.uid);
               if (userIsAdmin) {
                 await updateDoc(userRef, {
@@ -721,12 +457,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       
-      // Additional check: Verify the token and force a token refresh
       try {
         const idTokenResult = await refreshedUser.getIdTokenResult(true);
         console.log('Token verification status:', idTokenResult.claims.email_verified);
         
-        // If the token says verified but the user object doesn't, force another reload
         if (idTokenResult.claims.email_verified && !isVerified) {
           await refreshedUser.reload();
           return refreshedUser.emailVerified;

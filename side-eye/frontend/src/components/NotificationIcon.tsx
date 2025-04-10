@@ -16,14 +16,14 @@ import {
   Link as MuiLink
 } from '@mui/material';
 import { Notifications as NotificationsIcon } from '@mui/icons-material';
-import { Link, useNavigate as useReactRouterNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useNotifications, Notification } from '../contexts/NotificationContext';
 import { formatDistanceToNow } from 'date-fns';
 
 export const NotificationIcon: React.FC = () => {
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const reactRouterNavigate = useReactRouterNavigate();
+  const navigate = useNavigate();
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -45,7 +45,8 @@ export const NotificationIcon: React.FC = () => {
     } else if (notification.type === 'room_invite') {
       navigateTo = `/side-room/${notification.roomId}`;
     }
-    reactRouterNavigate(navigateTo);
+    handleClose();
+    navigate(navigateTo);
   };
 
   const handleMarkAllRead = async () => {

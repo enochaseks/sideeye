@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthState, useSignOut } from 'react-firebase-hooks/auth';
-import { auth, db } from '../services/firebase';
 import {
   AppBar,
   Toolbar,
@@ -18,7 +16,6 @@ import {
 } from '@mui/material';
 import {
   Menu as MenuIcon,
-  LocalCafe,
   Person,
   TrendingUp as TrendingUpIcon,
   Home as HomeIcon,
@@ -32,10 +29,8 @@ import { NotificationIcon } from './NotificationIcon';
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
-  const [user] = useAuthState(auth);
-  const [signOut] = useSignOut(auth);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const { currentUser } = useAuth();
+  const { currentUser, logout } = useAuth();
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -46,13 +41,15 @@ const Navbar: React.FC = () => {
   };
 
   const handleSignOut = async () => {
-    await signOut();
+    await logout();
     handleMenuClose();
   };
 
   const handleNavigation = (path: string) => {
-    navigate(path);
     handleMenuClose();
+    setTimeout(() => {
+      navigate(path, { replace: true });
+    }, 50);
   };
 
   return (
@@ -110,7 +107,7 @@ const Navbar: React.FC = () => {
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {user ? (
+            {currentUser ? (
               <>
                 <IconButton
                   color="inherit"
@@ -206,10 +203,10 @@ const Navbar: React.FC = () => {
               </ListItemIcon>
               <ListItemText primary="Settings" />
             </MenuItem>
-            {user && (
+            {currentUser && (
               <>
                 <Divider />
-                <MenuItem onClick={() => handleNavigation('/profile')}>
+                <MenuItem onClick={() => handleNavigation(`/profile/${currentUser.uid}`)}>
                   <ListItemIcon>
                     <Person />
                   </ListItemIcon>

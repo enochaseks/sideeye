@@ -92,25 +92,28 @@ export interface Author {
 
 export interface PostData {
   id: string;
-  content: string;
   authorId: string;
   authorName: string;
-  authorAvatar: string;
+  authorAvatar?: string;
+  content: string;
   timestamp: Timestamp;
   likes: number;
   likedBy: string[];
   comments: Comment[];
   imageUrl?: string;
   tags?: string[];
-  isPrivate: boolean;
-  userId: string;
+  isPrivate?: boolean;
+  userId?: string;
   reposts: number;
-  views: number;
-  isPinned: boolean;
-  isEdited: boolean;
+  repostedBy: string[];
+  views?: number;
+  isPinned?: boolean;
+  isEdited?: boolean;
   lastEdited?: Timestamp;
-  isArchived: boolean;
-  deleted: boolean;
+  isArchived?: boolean;
+  deleted?: boolean;
+  isRepost?: boolean;
+  repostedById?: string;
 }
 
 export interface PostProps extends Omit<PostData, 'comments'> {

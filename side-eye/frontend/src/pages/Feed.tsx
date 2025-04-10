@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Container, Box, Typography, CircularProgress, Alert, Paper } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Container, Box, Typography, CircularProgress, Alert, Paper, List, ListItem, ListItemAvatar, ListItemText, ListItemSecondaryAction, IconButton, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Slide, AppBar, Toolbar, Divider } from '@mui/material';
+import { useNavigate, Link } from 'react-router-dom';
 import CreatePost from '../components/CreatePost';
 import Stories from '../components/Stories';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, Timestamp, getDocs, DocumentData } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, Timestamp, getDocs, DocumentData, documentId, writeBatch } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from '../services/firebase';
 import { UserProfile, PostData, Comment } from '../types';
@@ -12,6 +12,37 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import { PostComponent } from '../components/PostComponent';
 import Post from '../components/Post';
+import { formatDistanceToNow } from 'date-fns';
+import FavoriteIcon from '@mui/icons-material/Favorite';
+import RepeatIcon from '@mui/icons-material/Repeat';
+import CommentIcon from '@mui/icons-material/Comment';
+import { TransitionProps } from '@mui/material/transitions';
+import CloseIcon from '@mui/icons-material/Close';
+import SendIcon from '@mui/icons-material/Send';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import DeleteIcon from '@mui/icons-material/Delete';
+
+// Slide up transition for dialog
+const Transition = React.forwardRef(function Transition(
+  props: TransitionProps & {
+    children: React.ReactElement;
+  },
+  ref: React.Ref<unknown>,
+) {
+  return <Slide direction="up" ref={ref} {...props} />;
+});
+
+// Add interface for repost data
+interface RepostData {
+  id: string;
+  postId: string;
+  userId: string;
+  originalAuthorId: string;
+  timestamp: any;
+}
 
 const Feed: React.FC = () => {
   const { currentUser, loading: authLoading } = useAuth();
@@ -23,16 +54,107 @@ const Feed: React.FC = () => {
   const [following, setFollowing] = useState<string[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<PostData | null>(null);
+  const [showPostDialog, setShowPostDialog] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const commentInputRef = useRef<HTMLInputElement>(null);
+  const [localReposts, setLocalReposts] = useState<{postId: string, added: boolean}[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const open = Boolean(anchorEl);
+
+  // Function to load reposts separately
+  const loadReposts = async (regularPosts: PostData[]) => {
+    if (!db || !currentUser) return;
+    
+    try {
+      // Get user's reposts
+      const repostsRef = collection(db, 'reposts');
+      const myRepostsQuery = query(
+        repostsRef,
+        where('userId', '==', currentUser.uid)
+      );
+      
+      const myRepostsSnapshot = await getDocs(myRepostsQuery);
+      console.log("Feed: User reposts received, count:", myRepostsSnapshot.size);
+      
+      // Get post IDs from reposts
+      const repostedPostIds: string[] = [];
+      const repostUserMap = new Map<string, string>();
+      
+      myRepostsSnapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.postId) {
+          repostedPostIds.push(data.postId);
+          repostUserMap.set(data.postId, data.userId);
+        }
+      });
+      
+      if (repostedPostIds.length === 0) {
+        return; // No reposts to load
+      }
+      
+      // Fetch each reposted post individually to avoid permission issues
+      const repostedPosts: PostData[] = [];
+      
+      for (const postId of repostedPostIds) {
+        try {
+          const postDoc = await getDoc(doc(db, 'posts', postId));
+          if (postDoc.exists()) {
+            const postData = postDoc.data();
+            const repostedById = repostUserMap.get(postId);
+            
+            repostedPosts.push({
+              id: postId,
+              authorId: postData.authorId || '',
+              authorName: postData.authorName || '',
+              content: postData.content || '',
+              timestamp: postData.timestamp || Timestamp.now(),
+              likes: postData.likes || 0,
+              likedBy: postData.likedBy || [],
+              comments: postData.comments || [],
+              reposts: postData.reposts || 0,
+              repostedBy: postData.repostedBy || [],
+              isRepost: true,
+              repostedById,
+              ...postData
+            } as PostData);
+          }
+        } catch (err) {
+          console.error(`Error fetching reposted post ${postId}:`, err);
+        }
+      }
+      
+      // Filter out posts that are already in the main posts list
+      const existingPostIds = regularPosts.map(p => p.id);
+      const newReposts = repostedPosts.filter(p => !existingPostIds.includes(p.id));
+      
+      console.log("Feed: Filtered reposts count:", newReposts.length);
+      
+      // Combine with existing posts and update state
+      if (newReposts.length > 0) {
+        setPosts(prevPosts => {
+          const combined = [...prevPosts, ...newReposts];
+          // Sort by timestamp
+          combined.sort((a, b) => {
+            const timeA = a.timestamp?.toDate?.() || new Date();
+            const timeB = b.timestamp?.toDate?.() || new Date();
+            return timeB.getTime() - timeA.getTime();
+          });
+          return combined;
+        });
+      }
+    } catch (error) {
+      console.error('Error loading reposts:', error);
+      // We don't set an error state here since main posts are already loaded
+    }
+  };
 
   useEffect(() => {
-    if (authLoading || !currentUser) {
-      if (!authLoading && !currentUser) {
-        navigate('/login');
-      }
+    if (authLoading || !currentUser || !db) {
       return;
     }
-
-    if (!db) return;
 
     console.log("Feed: Auth finished, currentUser exists. Loading user profile...");
     setFeedLoading(true);
@@ -57,52 +179,60 @@ const Feed: React.FC = () => {
     };
 
     loadUserProfile();
-  }, [currentUser, db, navigate, authLoading]);
+  }, [currentUser, db, authLoading]);
 
   useEffect(() => {
-    if (authLoading || !currentUser || !db || !profileLoaded) {
+    if (!currentUser || !db || !profileLoaded) {
       return;
     }
 
     console.log("Feed: Auth finished, profile loaded. Setting up posts listener...");
     setFeedLoading(true);
-    const postsRef = collection(db, 'posts');
     
+    // First get posts - this is the main subscription
+    const postsRef = collection(db, 'posts');
     const postsQuery = query(
       postsRef,
+      where('authorId', 'in', [currentUser.uid, ...following].slice(0, 10)),
       orderBy('timestamp', 'desc'),
       limit(50)
     );
-
-    const unsubscribe = onSnapshot(postsQuery, (snapshot) => {
+    
+    // Listen for changes in posts
+    const unsubscribePosts = onSnapshot(postsQuery, (postsSnapshot) => {
       console.log("Feed: Posts snapshot received.");
-      const newPosts: PostData[] = [];
+      const regularPosts: PostData[] = [];
       
-      snapshot.forEach((doc) => {
+      postsSnapshot.forEach((doc) => {
         const post = { id: doc.id, ...doc.data() } as PostData;
-        if ((!post.deleted) && (post.authorId === currentUser.uid || following.includes(post.authorId))) {
-          newPosts.push(post);
+        if (!post.deleted) {
+          regularPosts.push(post);
         }
       });
 
-      const filteredPosts = newPosts.filter(post => 
-        !userProfile?.blockedUsers?.includes(post.authorId)
-      );
-
-      setPosts(filteredPosts);
+      // Set posts for now (we'll add reposts separately)
+      setPosts(regularPosts);
       setError(null);
       setFeedLoading(false);
+      
+      // Now fetch reposts separately - not in the main listener
+      loadReposts(regularPosts);
     }, (error) => {
       console.error('Error fetching posts:', error);
-      setError('Error loading posts. Please try again later.');
+      if (error.code === 'permission-denied') {
+        setError('You do not have permission to view these posts. Please contact support.');
+      } else {
+        setError('Error loading posts. Please try again later.');
+      }
       setFeedLoading(false);
     });
-
+    
+    // Return the cleanup function
     return () => {
-      console.log("Feed: Unsubscribing posts listener.");
-      unsubscribe();
+      console.log("Feed: Cleaning up posts listener.");
+      unsubscribePosts();
     };
-  }, [currentUser, db, following, userProfile?.blockedUsers, authLoading, profileLoaded]);
+  }, [currentUser, db, following, userProfile?.blockedUsers, profileLoaded]);
 
   const uploadImage = async (file: File): Promise<string> => {
     const storageRef = ref(storage, `posts/${Date.now()}_${file.name}`);
@@ -142,6 +272,7 @@ const Feed: React.FC = () => {
         tags: content.match(/#[a-zA-Z0-9_]+/g) || [],
         isPrivate: false,
         reposts: 0,
+        repostedBy: [],
         views: 0,
         isPinned: false,
         isEdited: false,
@@ -186,36 +317,83 @@ const Feed: React.FC = () => {
   };
 
   const handleLike = async (postId: string) => {
-    if (!db || !currentUser) return;
-
+    if (!currentUser || !db) return;
+    
     try {
       const postRef = doc(db, 'posts', postId);
       const postDoc = await getDoc(postRef);
-
-      if (postDoc.exists()) {
-        const postData = postDoc.data();
-        const isLiked = postData.likedBy?.includes(currentUser.uid);
-
-        await updateDoc(postRef, {
-          likes: isLiked ? increment(-1) : increment(1),
-          likedBy: isLiked 
-            ? arrayRemove(currentUser.uid)
-            : arrayUnion(currentUser.uid)
-        });
-
-        if (!isLiked && postData.authorId !== currentUser.uid) {
-          await createNotification(
-            postData.authorId,
-            'like',
-            `${currentUser.displayName || 'Someone'} liked your post`,
-            `/post/${postId}`,
-            postId
-          );
-        }
-      }
+      
+      if (!postDoc.exists()) return;
+      
+      const postData = postDoc.data();
+      const isLiked = postData.likedBy?.includes(currentUser.uid);
+      
+      await updateDoc(postRef, {
+        likes: isLiked ? increment(-1) : increment(1),
+        likedBy: isLiked 
+          ? arrayRemove(currentUser.uid)
+          : arrayUnion(currentUser.uid)
+      });
     } catch (error) {
-      console.error('Error updating like:', error);
-      setError('Failed to update like');
+      console.error('Error liking post:', error);
+    }
+  };
+
+  const handleRepost = async (postId: string) => {
+    if (!currentUser) {
+      toast.error('You must be logged in to repost');
+      return;
+    }
+
+    // Find the post that's being reposted
+    const originalPost = posts.find(post => post.id === postId);
+    if (!originalPost) {
+      toast.error('Post not found');
+      return;
+    }
+
+    // Check if user has already reposted this post
+    const hasReposted = posts.some(post => 
+      post.isRepost && post.id === postId && post.repostedById === currentUser.uid
+    );
+
+    try {
+      if (hasReposted) {
+        // User is un-reposting
+        // Add to local queue for syncing later
+        setLocalReposts(prev => [...prev, { postId, added: false }]);
+        
+        // Update UI immediately by removing from posts
+        setPosts(prev => prev.filter(post => 
+          !(post.isRepost && post.id === postId && post.repostedById === currentUser.uid)
+        ));
+        
+        toast.success('Repost removed');
+      } else {
+        // User is reposting
+        // Add to local queue for syncing later
+        setLocalReposts(prev => [...prev, { postId, added: true }]);
+        
+        // Update UI immediately by adding repost to posts
+        setPosts(prev => [
+          {
+            ...originalPost,
+            timestamp: Timestamp.now(),
+            isRepost: true,
+            repostedById: currentUser.uid,
+            reposts: (originalPost.reposts || 0) + 1
+          },
+          ...prev
+        ]);
+        
+        toast.success('Post reposted!');
+      }
+      
+      // Try to sync with server immediately
+      await syncRepostsWithServer();
+    } catch (error) {
+      console.error('Error handling repost:', error);
+      toast.error('Failed to process repost. Changes will sync later.');
     }
   };
 
@@ -353,6 +531,410 @@ const Feed: React.FC = () => {
     }
   };
 
+  const handleMenuClick = (event: React.MouseEvent<HTMLElement>, postId: string) => {
+    event.stopPropagation();
+    setAnchorEl(event.currentTarget);
+    setSelectedPostId(postId);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+    setSelectedPostId(null);
+  };
+
+  const handleDeleteClick = () => {
+    if (selectedPostId) {
+      handleDeletePost(selectedPostId);
+    }
+    handleMenuClose();
+  };
+
+  const renderPost = (post: PostData) => (
+    <ListItem 
+      key={`${post.id}-${post.isRepost ? 'repost' : 'post'}`} 
+      divider
+      sx={{ 
+        cursor: 'pointer',
+        '&:hover': {
+          backgroundColor: 'action.hover'
+        },
+        mb: 2,
+        borderRadius: 2,
+        backgroundColor: 'background.paper',
+        boxShadow: 1
+      }}
+      onClick={() => {
+        setSelectedPost(post);
+        setShowPostDialog(true);
+      }}
+    >
+      {post.isRepost && (
+        <Box 
+          sx={{ 
+            position: 'absolute', 
+            top: -12, 
+            left: 20, 
+            backgroundColor: 'primary.main',
+            color: 'white',
+            borderRadius: 1,
+            px: 1,
+            py: 0.5,
+            fontSize: '0.75rem',
+            zIndex: 1
+          }}
+        >
+          Reposted
+        </Box>
+      )}
+      <ListItemAvatar>
+        <Link to={`/profile/${post.authorId}`} style={{ textDecoration: 'none' }}>
+          <Avatar src={post.authorAvatar || undefined} />
+        </Link>
+      </ListItemAvatar>
+      <ListItemText
+        primary={
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Box>
+              <Link to={`/profile/${post.authorId}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                <Typography variant="subtitle1" component="span" sx={{ '&:hover': { textDecoration: 'underline' } }}>
+                  {post.authorName}
+                </Typography>
+              </Link>
+              <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
+                {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
+              </Typography>
+            </Box>
+            {post.authorId === currentUser?.uid && (
+              <IconButton
+                size="small"
+                onClick={(e) => handleMenuClick(e, post.id)}
+              >
+                <MoreVertIcon />
+              </IconButton>
+            )}
+          </Box>
+        }
+        secondary={
+          <Box>
+            <Typography variant="body1" sx={{ mt: 1 }}>
+              {post.content}
+            </Typography>
+            {post.isEdited && (
+              <Typography variant="caption" color="text.secondary">
+                (edited)
+              </Typography>
+            )}
+            <Box sx={{ mt: 2 }}>
+              {post.comments && post.comments.length > 0 && (
+                <Box sx={{ 
+                  backgroundColor: 'background.default',
+                  borderRadius: 1,
+                  p: 1,
+                  mt: 1
+                }}>
+                  {post.comments.slice(0, 2).map((comment, index) => (
+                    <Box key={index} sx={{ mb: 1 }}>
+                      <Typography variant="subtitle2" component="span">
+                        {comment.authorName}
+                      </Typography>
+                      <Typography variant="body2" sx={{ ml: 1 }}>
+                        {comment.content}
+                      </Typography>
+                    </Box>
+                  ))}
+                  {post.comments.length > 2 && (
+                    <Typography 
+                      variant="body2" 
+                      color="primary" 
+                      sx={{ cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedPost(post);
+                        setShowPostDialog(true);
+                      }}
+                    >
+                      View all {post.comments.length} comments
+                    </Typography>
+                  )}
+                </Box>
+              )}
+              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                <IconButton 
+                  edge="end" 
+                  aria-label="likes"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleLike(post.id);
+                  }}
+                >
+                  <FavoriteIcon color={post.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />
+                  <Typography variant="body2" sx={{ ml: 1 }}>
+                    {post.likes || 0}
+                  </Typography>
+                </IconButton>
+                <IconButton
+                  edge="end"
+                  aria-label="repost"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRepost(post.id);
+                  }}
+                >
+                  <RepeatIcon color={post.isRepost && post.repostedById === currentUser?.uid ? "primary" : "inherit"} />
+                  <Typography variant="body2" sx={{ ml: 1 }}>
+                    {post.reposts || 0}
+                  </Typography>
+                </IconButton>
+                <IconButton
+                  edge="end"
+                  aria-label="comment"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedPost(post);
+                    setShowPostDialog(true);
+                  }}
+                >
+                  <CommentIcon />
+                  <Typography variant="body2" sx={{ ml: 1 }}>
+                    {post.comments?.length || 0}
+                  </Typography>
+                </IconButton>
+              </Box>
+            </Box>
+          </Box>
+        }
+      />
+    </ListItem>
+  );
+
+  // Add the post dialog component
+  const renderPostDialog = () => {
+    if (!selectedPost) return null;
+    
+    return (
+      <Dialog
+        fullScreen
+        open={showPostDialog}
+        onClose={() => setShowPostDialog(false)}
+        TransitionComponent={Transition}
+      >
+        <AppBar sx={{ position: 'relative' }}>
+          <Toolbar>
+            <IconButton
+              edge="start"
+              color="inherit"
+              onClick={() => setShowPostDialog(false)}
+              aria-label="close"
+            >
+              <CloseIcon />
+            </IconButton>
+            <Typography sx={{ ml: 2, flex: 1 }} variant="h6" component="div">
+              {selectedPost.isRepost ? 'Reposted Post' : 'Post'}
+            </Typography>
+          </Toolbar>
+        </AppBar>
+        
+        <Box sx={{ p: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+            <Link to={`/profile/${selectedPost.authorId}`} style={{ textDecoration: 'none' }}>
+              <Avatar 
+                src={selectedPost.authorAvatar || undefined} 
+                sx={{ width: 48, height: 48, mr: 2 }}
+              />
+            </Link>
+            <Box>
+              <Link to={`/profile/${selectedPost.authorId}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                <Typography variant="h6" sx={{ '&:hover': { textDecoration: 'underline' } }}>
+                  {selectedPost.authorName}
+                </Typography>
+              </Link>
+              <Typography variant="body2" color="text.secondary">
+                {formatDistanceToNow(selectedPost.timestamp?.toDate?.() || new Date())} ago
+              </Typography>
+            </Box>
+          </Box>
+          
+          <Typography variant="body1" sx={{ mb: 3 }}>
+            {selectedPost.content}
+          </Typography>
+          
+          {selectedPost.imageUrl && (
+            <Box sx={{ mb: 3, display: 'flex', justifyContent: 'center' }}>
+              <img 
+                src={selectedPost.imageUrl} 
+                alt="Post attachment" 
+                style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '8px' }}
+              />
+            </Box>
+          )}
+          
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
+            <Button 
+              startIcon={<FavoriteIcon color={selectedPost.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />}
+              onClick={() => handleLike(selectedPost.id)}
+            >
+              {selectedPost.likes || 0} Likes
+            </Button>
+            <Button 
+              startIcon={<RepeatIcon color={selectedPost.isRepost && selectedPost.repostedById === currentUser?.uid ? "primary" : "inherit"} />}
+              onClick={() => handleRepost(selectedPost.id)}
+            >
+              {selectedPost.reposts || 0} Reposts
+            </Button>
+            <Button 
+              startIcon={<CommentIcon />}
+              onClick={() => commentInputRef.current?.focus()}
+            >
+              {selectedPost.comments?.length || 0} Comments
+            </Button>
+          </Box>
+          
+          <Divider sx={{ mb: 3 }} />
+          
+          <Typography variant="h6" sx={{ mb: 2 }}>Comments</Typography>
+          
+          {selectedPost.comments && selectedPost.comments.length > 0 ? (
+            <List>
+              {selectedPost.comments.map((comment, index) => (
+                <ListItem key={index} alignItems="flex-start" divider>
+                  <ListItemAvatar>
+                    <Avatar src={comment.authorAvatar || undefined} />
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="subtitle2">
+                          {comment.authorName}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {comment.timestamp ? formatDistanceToNow(comment.timestamp.toDate()) + ' ago' : ''}
+                        </Typography>
+                      </Box>
+                    }
+                    secondary={
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        color="text.primary"
+                        sx={{ display: 'inline', mt: 1 }}
+                      >
+                        {comment.content}
+                      </Typography>
+                    }
+                  />
+                </ListItem>
+              ))}
+            </List>
+          ) : (
+            <Typography color="text.secondary" sx={{ mb: 2 }}>No comments yet. Be the first to comment!</Typography>
+          )}
+          
+          <Box sx={{ 
+            position: 'fixed', 
+            bottom: 0, 
+            left: 0, 
+            right: 0, 
+            p: 2, 
+            bgcolor: 'background.paper',
+            boxShadow: 3,
+            zIndex: 10,
+            display: 'flex',
+            gap: 1,
+          }}>
+            <TextField
+              fullWidth
+              variant="outlined"
+              placeholder="Add a comment..."
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              inputRef={commentInputRef}
+              InputProps={{
+                sx: { borderRadius: 4 }
+              }}
+            />
+            <IconButton 
+              color="primary" 
+              disabled={!commentText.trim()}
+              onClick={() => {
+                if (commentText.trim()) {
+                  handleComment(selectedPost.id, commentText.trim());
+                  setCommentText('');
+                }
+              }}
+            >
+              <SendIcon />
+            </IconButton>
+          </Box>
+          
+          {/* Add padding at the bottom for the comment input */}
+          <Box sx={{ height: '64px' }}></Box>
+        </Box>
+      </Dialog>
+    );
+  };
+
+  // Function to sync local reposts with server
+  const syncRepostsWithServer = async () => {
+    if (!db || !currentUser || localReposts.length === 0) return;
+    
+    setIsSyncing(true);
+    
+    try {
+      const batch = writeBatch(db);
+      const repostsCollection = collection(db, 'reposts');
+      
+      for (const repost of localReposts) {
+        const { postId, added } = repost;
+        const repostDocId = `${currentUser.uid}_${postId}`;
+        const repostRef = doc(repostsCollection, repostDocId);
+        
+        if (added) {
+          // Add repost to Firestore
+          batch.set(repostRef, {
+            originalPostId: postId,
+            userId: currentUser.uid,
+            timestamp: Timestamp.now()
+          });
+        } else {
+          // Remove repost from Firestore
+          batch.delete(repostRef);
+        }
+      }
+      
+      await batch.commit();
+      setLocalReposts([]);
+      toast.success('Reposts synced successfully!');
+    } catch (error) {
+      console.error('Error syncing reposts:', error);
+      toast.error('Failed to sync reposts. Try again later.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Add a UI element for the user to manually sync reposts
+  const renderSyncButton = () => {
+    if (localReposts.length === 0) return null;
+    
+    return (
+      <Box sx={{ 
+        position: 'fixed',
+        bottom: 20,
+        right: 20,
+        zIndex: 1000
+      }}>
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={syncRepostsWithServer}
+          startIcon={<RepeatIcon />}
+        >
+          Sync {localReposts.length} Repost{localReposts.length !== 1 ? 's' : ''}
+        </Button>
+      </Box>
+    );
+  };
+
   if (authLoading || feedLoading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -450,7 +1032,16 @@ const Feed: React.FC = () => {
             <Stories following={userProfile?.following || []} />
           </Box>
 
-          <Box sx={{ mb: 4 }}>
+          <Paper 
+            elevation={3}
+            sx={{ 
+              mb: 4,
+              borderRadius: 2,
+              p: 2,
+              position: 'relative',
+              zIndex: 10
+            }}
+          >
             <CreatePost 
               user={{
                 name: currentUser?.displayName || 'Anonymous',
@@ -460,7 +1051,7 @@ const Feed: React.FC = () => {
               }}
               onSubmit={handleCreatePost}
             />
-          </Box>
+          </Paper>
 
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             {posts.length === 0 ? (
@@ -468,41 +1059,30 @@ const Feed: React.FC = () => {
                 No posts yet. Follow some users to see their posts!
               </Typography>
             ) : (
-              posts.map((post) => (
-                <Post
-                  key={post.id}
-                  id={post.id}
-                  authorId={post.authorId || currentUser?.uid || ''}
-                  authorName={post.authorName || 'Anonymous'}
-                  authorAvatar={post.authorAvatar || ''}
-                  content={post.content || ''}
-                  timestamp={post.timestamp || Timestamp.now()}
-                  likes={post.likes || 0}
-                  likedBy={post.likedBy || []}
-                  comments={post.comments || []}
-                  imageUrl={post.imageUrl}
-                  tags={post.tags || []}
-                  isPrivate={post.isPrivate || false}
-                  userId={post.userId || currentUser?.uid || ''}
-                  reposts={post.reposts || 0}
-                  views={post.views || 0}
-                  isPinned={post.isPinned || false}
-                  isEdited={post.isEdited || false}
-                  lastEdited={post.lastEdited}
-                  isArchived={post.isArchived || false}
-                  deleted={post.deleted || false}
-                  onLike={handleLike}
-                  onComment={handleComment}
-                  onDelete={handleDeletePost}
-                  onEdit={handleEditPost}
-                  onShare={async () => {}}
-                  isOwnPost={post.authorId === currentUser?.uid}
-                />
-              ))
+              <List>
+                {posts.map(renderPost)}
+              </List>
             )}
           </Box>
         </>
       )}
+
+      {renderPostDialog()}
+      {renderSyncButton()}
+
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleMenuClose}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <MenuItem onClick={handleDeleteClick}>
+          <ListItemIcon>
+            <DeleteIcon fontSize="small" />
+          </ListItemIcon>
+          Delete Post
+        </MenuItem>
+      </Menu>
     </Container>
   );
 };

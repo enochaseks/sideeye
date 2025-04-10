@@ -33,7 +33,7 @@ import {
   Edit,
   Reply,
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { PostData, Comment, Author, PostProps } from '../types/index';
 import { 
@@ -118,8 +118,9 @@ const Post: React.FC<PostComponentProps> = ({
   const navigate = useNavigate();
   const { currentUser } = useAuth();
 
-  const handleProfileClick = (username: string) => {
-    navigate(`/profile/${username}`);
+  const handleProfileClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate(`/profile/${authorId}`);
   };
 
   const handleDelete = async () => {
@@ -342,270 +343,195 @@ const Post: React.FC<PostComponentProps> = ({
   }
 
   return (
-    <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2 }}>
+    <Paper elevation={0} sx={{ p: 1.5, mb: 1.5, borderRadius: 1, maxWidth: '100%' }}>
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mb: 1.5 }}>
           {error}
         </Alert>
       )}
       
-      <Card sx={{ mb: 3, borderRadius: 2 }}>
-        <CardContent>
+      <Card sx={{ mb: 2, borderRadius: 1 }}>
+        <CardContent sx={{ p: 1.5 }}>
           {isRepost && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-              <Repeat sx={{ fontSize: 16, mr: 0.5 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+              <Repeat sx={{ fontSize: 14, mr: 0.5 }} />
               Reposted
             </Typography>
           )}
           
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', mb: 2 }}>
+            <Link to={`/profile/${authorId}`} style={{ textDecoration: 'none' }}>
               <Avatar 
                 src={authorAvatar} 
-                alt={authorName} 
-                sx={{ mr: 2, cursor: 'pointer' }}
-                onClick={() => handleProfileClick(authorId)}
-              >
-                {authorName ? authorName.charAt(0) : 'A'}
-              </Avatar>
-              <Box>
-                <Typography 
-                  variant="subtitle1" 
-                  fontWeight="bold"
-                  onClick={() => handleProfileClick(authorId)}
-                  sx={{ cursor: 'pointer' }}
-                >
-                  {authorName || 'Anonymous'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {formatDate(timestamp)}
+                alt={authorName}
+                sx={{ width: 40, height: 40 }}
+              />
+            </Link>
+            <Box sx={{ flex: 1, ml: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                <Link to={`/profile/${authorId}`} style={{ textDecoration: 'none' }}>
+                  <Typography 
+                    variant="subtitle1" 
+                    sx={{ 
+                      fontWeight: 'bold',
+                      color: 'text.primary',
+                      '&:hover': { textDecoration: 'underline' }
+                    }}
+                  >
+                    {authorName}
+                  </Typography>
+                </Link>
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                  {formatDistanceToNow(timestamp?.toDate?.() || new Date(), { addSuffix: true })}
                 </Typography>
               </Box>
+              {isEditing ? (
+                <TextField
+                  fullWidth
+                  multiline
+                  value={editedContent}
+                  onChange={(e) => setEditedContent(e.target.value)}
+                  sx={{ mb: 1 }}
+                />
+              ) : (
+                <Typography variant="body1">{content}</Typography>
+              )}
             </Box>
             {isOwnPost && (
               <IconButton 
                 onClick={handleDelete} 
                 disabled={isDeleting}
                 aria-label="Delete post"
+                size="small"
               >
                 {isDeleting ? (
-                  <CircularProgress size={24} />
+                  <CircularProgress size={20} />
                 ) : (
-                  <Delete />
+                  <Delete fontSize="small" />
                 )}
               </IconButton>
             )}
           </Box>
 
-          <Typography variant="body1" sx={{ mb: 2 }}>
-            {content}
-          </Typography>
-
           {tags && tags.length > 0 && (
-            <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-              {tags.map((tag) => (
+            <Box sx={{ mb: 2 }}>
+              {tags.map((tag, index) => (
                 <Chip
-                  key={tag}
-                  label={`#${tag}`}
+                  key={index}
+                  label={tag}
                   size="small"
-                  sx={{ borderRadius: 1 }}
+                  sx={{ mr: 1, mb: 1 }}
                 />
               ))}
             </Box>
           )}
 
           {imageUrl && (
-            <CardMedia
-              component="img"
-              image={imageUrl}
-              alt="Post image"
-              sx={{ borderRadius: 1, mb: 2 }}
-            />
+            <Box sx={{ mb: 2 }}>
+              <img
+                src={imageUrl}
+                alt="Post content"
+                style={{ maxWidth: '100%', borderRadius: 8 }}
+              />
+            </Box>
           )}
 
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <IconButton 
-                onClick={handleLike} 
-                color={likedBy?.includes(currentUser?.uid || '') ? 'primary' : 'default'}
-                disabled={isDeleting || isCommenting}
-                aria-label={likedBy?.includes(currentUser?.uid || '') ? 'Unlike post' : 'Like post'}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <IconButton
+                onClick={handleLike}
+                disabled={isLiking}
+                size="small"
               >
                 {isLiking ? (
-                  <CircularProgress size={24} />
+                  <CircularProgress size={20} />
                 ) : likedBy?.includes(currentUser?.uid || '') ? (
-                  <Favorite />
+                  <Favorite color="error" />
                 ) : (
                   <FavoriteBorder />
                 )}
               </IconButton>
               <Typography variant="body2" color="text.secondary">
-                {likes}
+                {likes || 0}
               </Typography>
-            </Box>
 
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <IconButton 
+              <IconButton
                 onClick={() => setShowComments(!showComments)}
-                disabled={isDeleting || isCommenting}
-                aria-label="Toggle comments"
+                size="small"
               >
                 <ChatBubbleOutline />
               </IconButton>
               <Typography variant="body2" color="text.secondary">
-                {postComments?.length || 0}
+                {postComments.length}
+              </Typography>
+
+              <IconButton
+                onClick={handleShare}
+                size="small"
+              >
+                <Share />
+              </IconButton>
+              <Typography variant="body2" color="text.secondary">
+                {reposts || 0}
               </Typography>
             </Box>
-
-            <IconButton 
-              onClick={handleShare}
-              disabled={isDeleting || isCommenting}
-              aria-label="Share post"
-            >
-              <Share />
-            </IconButton>
           </Box>
 
-          {postComments && postComments.length > 0 && (
-            <>
-              <Divider sx={{ my: 2 }} />
-              <Box>
-                <Box 
-                  sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    cursor: 'pointer',
-                    color: 'text.secondary',
-                    mb: 1
-                  }}
-                  onClick={() => setShowComments(!showComments)}
-                >
-                  <Typography variant="caption">
-                    {showComments ? 'Hide comments' : `Show ${postComments.length} comments`}
-                  </Typography>
-                  {showComments ? <ExpandLess /> : <ExpandMore />}
-                </Box>
-                
-                <Collapse in={showComments} timeout="auto" unmountOnExit>
-                  <List>
-                    {postComments.map((comment, index) => (
-                      <Box key={index} sx={{ display: 'flex', alignItems: 'flex-start', mb: 1 }}>
-                        <Avatar 
-                          src={comment.authorAvatar} 
-                          alt={comment.authorName}
-                          sx={{ width: 24, height: 24, mr: 1 }}
-                        />
-                        <Box>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="subtitle2">{comment.authorName}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {formatDate(comment.timestamp)}
-                            </Typography>
-                          </Box>
-                          {editingCommentId === `${comment.authorId}_${convertTimestampToDate(comment.timestamp).getTime()}` ? (
-                            <Box sx={{ mt: 1 }}>
-                              <TextField
-                                fullWidth
-                                multiline
-                                size="small"
-                                value={editedCommentText}
-                                onChange={(e) => setEditedCommentText(e.target.value)}
-                                disabled={isEditingComment}
-                              />
-                              <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                                <Button
-                                  size="small"
-                                  variant="contained"
-                                  onClick={() => handleCommentEdit(comment)}
-                                  disabled={isEditingComment || !editedCommentText.trim()}
-                                >
-                                  Save
-                                </Button>
-                                <Button
-                                  size="small"
-                                  onClick={() => {
-                                    setEditingCommentId(null);
-                                    setEditedCommentText('');
-                                  }}
-                                  disabled={isEditingComment}
-                                >
-                                  Cancel
-                                </Button>
-                              </Box>
-                            </Box>
-                          ) : (
-                            <Typography variant="body2">{comment.content}</Typography>
-                          )}
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleCommentLike(comment)}
-                              disabled={isLikingComment}
-                            >
-                              {isLikingComment ? (
-                                <CircularProgress size={20} />
-                              ) : comment.likedBy?.includes(currentUser?.uid || '') ? (
-                                <Favorite fontSize="small" color="error" />
-                              ) : (
-                                <FavoriteBorder fontSize="small" />
-                              )}
-                            </IconButton>
-                            <Typography variant="caption">
-                              {comment.likes || 0}
-                            </Typography>
-                            {(currentUser?.uid === comment.authorId || isOwnPost) && (
-                              <>
-                                <IconButton
-                                  size="small"
-                                  onClick={() => {
-                                    setEditingCommentId(`${comment.authorId}_${convertTimestampToDate(comment.timestamp).getTime()}`);
-                                    setEditedCommentText(comment.content);
-                                  }}
-                                  disabled={isEditingComment || isDeletingComment}
-                                >
-                                  <Edit fontSize="small" />
-                                </IconButton>
-                                <IconButton
-                                  size="small"
-                                  onClick={() => handleCommentDelete(comment)}
-                                  disabled={isDeletingComment || isEditingComment}
-                                >
-                                  {isDeletingComment ? (
-                                    <CircularProgress size={20} />
-                                  ) : (
-                                    <Delete fontSize="small" />
-                                  )}
-                                </IconButton>
-                              </>
-                            )}
-                          </Box>
-                        </Box>
-                      </Box>
-                    ))}
-                  </List>
-                </Collapse>
-              </Box>
-            </>
-          )}
-
-          {currentUser && (
+          {showComments && (
             <Box sx={{ mt: 2 }}>
-              <TextField
-                fullWidth
-                multiline
-                placeholder="Write a comment..."
-                size="small"
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                disabled={isCommenting}
-              />
-              <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+              <List>
+                {postComments.map((comment) => (
+                  <ListItem key={comment.id} alignItems="flex-start">
+                    <ListItemAvatar>
+                      <Link to={`/profile/${comment.authorId}`} style={{ textDecoration: 'none' }}>
+                        <Avatar src={comment.authorAvatar} />
+                      </Link>
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <Link to={`/profile/${comment.authorId}`} style={{ textDecoration: 'none' }}>
+                            <Typography 
+                              variant="subtitle2" 
+                              sx={{ 
+                                fontWeight: 'bold',
+                                color: 'text.primary',
+                                '&:hover': { textDecoration: 'underline' }
+                              }}
+                            >
+                              {comment.authorName}
+                            </Typography>
+                          </Link>
+                          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                            {formatDistanceToNow(comment.timestamp?.toDate?.() || new Date(), { addSuffix: true })}
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={
+                        <Typography variant="body2">
+                          {comment.content}
+                        </Typography>
+                      }
+                    />
+                  </ListItem>
+                ))}
+              </List>
+
+              <Box sx={{ mt: 2 }}>
+                <TextField
+                  fullWidth
+                  variant="outlined"
+                  placeholder="Write a comment..."
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  sx={{ mb: 1 }}
+                />
                 <Button
                   variant="contained"
                   onClick={handleComment}
-                  disabled={isCommenting || !commentText.trim()}
+                  disabled={isCommenting}
                 >
-                  {isCommenting ? 'Posting...' : 'Post'}
+                  {isCommenting ? <CircularProgress size={24} /> : 'Comment'}
                 </Button>
               </Box>
             </Box>

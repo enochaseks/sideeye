@@ -38,7 +38,8 @@ import {
   PersonRemove as PersonRemoveIcon,
   PhotoCamera,
   Message as MessageIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  Repeat as RepeatIcon
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment } from 'firebase/firestore';
@@ -66,6 +67,8 @@ interface Post {
   authorName?: string;
   isEdited?: boolean;
   likedBy?: string[];
+  reposts?: number;
+  repostedBy?: string[];
 }
 
 interface Forum {
@@ -123,7 +126,7 @@ interface ProfileProps {
 const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const { userId: urlUserId } = useParams<{ userId: string }>();
+  const { userId: urlParam } = useParams<{ userId: string }>();
   const { currentUser, userProfile, loading: authLoading, setUserProfile } = useAuth();
   const { db } = useFirestore();
   const [username, setUsername] = useState('');
@@ -156,13 +159,17 @@ const Profile: React.FC = () => {
   const [editedBio, setEditedBio] = useState('');
   const [editedUsername, setEditedUsername] = useState('');
   const [isFollowing, setIsFollowing] = useState(false);
+  const [showTrashDialog, setShowTrashDialog] = useState(false);
+  const [showPostDialog, setShowPostDialog] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [targetUserId, setTargetUserId] = useState<string | null>(null);
   
   // Get the user ID from URL params or current user
-  const userId = urlUserId || currentUser?.uid || '';
+  const userId = targetUserId || currentUser?.uid || '';
 
   const fetchUserData = useCallback(async () => {
-    if (!userId) {
-      setError('No user ID provided');
+    if (!urlParam) {
+      setError('No user identifier provided');
       setIsLoading(false);
       return;
     }
@@ -177,36 +184,64 @@ const Profile: React.FC = () => {
       setIsLoading(true);
       setError(null);
 
-      // If viewing own profile, use data from auth context
-      if (userId === currentUser?.uid && userProfile) {
-        setUsername(userProfile.username || '');
-        setName(userProfile.name || '');
-        setEmail(userProfile.email || '');
-        setBio(userProfile.bio || '');
-        setProfilePic(userProfile.profilePic || null);
-        setConnections(userProfile.connections || []);
-        setFollowers(userProfile.followers || []);
-      } else {
-        // Fetch user profile for other users
-        const userDoc = await getDoc(doc(db, 'users', userId));
+      let userDoc;
+      let userData: UserProfile | undefined;
+      let foundUserId: string | null = null;
+
+      // First try to get user by ID
+      try {
+        userDoc = await getDoc(doc(db, 'users', urlParam));
         if (userDoc.exists()) {
-          const userData = userDoc.data() as UserProfile;
-          setUsername(userData.username || '');
-          setName(userData.name || '');
-          setEmail(userData.email || '');
-          setBio(userData.bio || '');
-          setProfilePic(userData.profilePic || null);
-          setConnections(userData.connections || []);
-          setFollowers(userData.followers || []);
-        } else {
-          setError('User not found');
+          userData = userDoc.data() as UserProfile;
+          foundUserId = urlParam;
         }
+      } catch (error) {
+        console.log('Not a valid user ID, trying username');
+      }
+
+      // If not found by ID, try username
+      if (!userDoc?.exists()) {
+        const usersQuery = query(
+          collection(db, 'users'),
+          where('username', '==', urlParam)
+        );
+        const userSnapshot = await getDocs(usersQuery);
+        
+        if (userSnapshot.empty) {
+          setError('User not found');
+          setIsLoading(false);
+          return;
+        }
+
+        userDoc = userSnapshot.docs[0];
+        userData = userDoc.data() as UserProfile;
+        foundUserId = userDoc.id;
+      }
+
+      if (!userData || !foundUserId) {
+        setError('User not found');
+        setIsLoading(false);
+        return;
+      }
+
+      setTargetUserId(foundUserId);
+      setUsername(userData.username || '');
+      setName(userData.name || '');
+      setEmail(userData.email || '');
+      setBio(userData.bio || '');
+      setProfilePic(userData.profilePic || null);
+      setConnections(userData.connections || []);
+      setFollowers(userData.followers || []);
+
+      // Check if current user is following this user
+      if (currentUser?.uid) {
+        setIsFollowing(userData.followers?.includes(currentUser.uid) || false);
       }
 
       // Fetch posts
       const postsQuery = query(
         collection(db, 'posts'),
-        where('authorId', '==', userId),
+        where('authorId', '==', foundUserId),
         orderBy('timestamp', 'desc')
       );
 
@@ -221,7 +256,7 @@ const Profile: React.FC = () => {
       // Fetch forums
       const forumsQuery = query(
         collection(db, 'forums'),
-        where('ownerId', '==', userId),
+        where('ownerId', '==', foundUserId),
         orderBy('createdAt', 'desc')
       );
 
@@ -236,7 +271,7 @@ const Profile: React.FC = () => {
       // Fetch side rooms
       const roomsQuery = query(
         collection(db, 'sideRooms'),
-        where('ownerId', '==', userId),
+        where('ownerId', '==', foundUserId),
         orderBy('createdAt', 'desc')
       );
 
@@ -251,7 +286,7 @@ const Profile: React.FC = () => {
       // Fetch liked posts
       const likedPostsQuery = query(
         collection(db, 'posts'),
-        where('likedBy', 'array-contains', userId),
+        where('likedBy', 'array-contains', foundUserId),
         orderBy('timestamp', 'desc')
       );
 
@@ -266,7 +301,7 @@ const Profile: React.FC = () => {
       // Fetch deleted items
       const deletedItemsQuery = query(
         collection(db, 'deleted_items'),
-        where('content.authorId', '==', userId),
+        where('content.authorId', '==', foundUserId),
         orderBy('deletedAt', 'desc')
       );
 
@@ -279,7 +314,6 @@ const Profile: React.FC = () => {
       });
 
       setIsLoading(false);
-
       return () => {
         unsubscribePosts();
         unsubscribeForums();
@@ -289,10 +323,10 @@ const Profile: React.FC = () => {
       };
     } catch (error) {
       console.error('Error fetching user data:', error);
-      setError('Failed to fetch user data');
+      setError('Failed to load user data');
       setIsLoading(false);
     }
-  }, [userId, currentUser, userProfile, db]);
+  }, [urlParam, db, currentUser?.uid]);
 
   useEffect(() => {
     fetchUserData();
@@ -771,6 +805,78 @@ const Profile: React.FC = () => {
     }
   };
 
+  const handleLike = async (postId: string) => {
+    if (!currentUser || !db) return;
+    
+    try {
+      const postRef = doc(db, 'posts', postId);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) return;
+      
+      const postData = postDoc.data();
+      const isLiked = postData.likedBy?.includes(currentUser.uid);
+      
+      await updateDoc(postRef, {
+        likes: isLiked ? increment(-1) : increment(1),
+        likedBy: isLiked 
+          ? arrayRemove(currentUser.uid)
+          : arrayUnion(currentUser.uid)
+      });
+    } catch (error) {
+      console.error('Error liking post:', error);
+    }
+  };
+
+  const handleRepost = async (postId: string) => {
+    if (!currentUser || !db) return;
+    
+    try {
+      const postRef = doc(db, 'posts', postId);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) return;
+      
+      const postData = postDoc.data();
+      const isReposted = postData.repostedBy?.includes(currentUser.uid);
+      
+      if (isReposted) {
+        // Remove repost
+        await updateDoc(postRef, {
+          reposts: increment(-1),
+          repostedBy: arrayRemove(currentUser.uid)
+        });
+        
+        // Delete repost document
+        const repostQuery = query(
+          collection(db, 'reposts'),
+          where('postId', '==', postId),
+          where('userId', '==', currentUser.uid)
+        );
+        const repostSnapshot = await getDocs(repostQuery);
+        repostSnapshot.forEach(async (doc) => {
+          await deleteDoc(doc.ref);
+        });
+      } else {
+        // Add repost
+        await updateDoc(postRef, {
+          reposts: increment(1),
+          repostedBy: arrayUnion(currentUser.uid)
+        });
+        
+        // Create repost document
+        await addDoc(collection(db, 'reposts'), {
+          postId,
+          userId: currentUser.uid,
+          originalAuthorId: postData.authorId,
+          timestamp: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      console.error('Error reposting:', error);
+    }
+  };
+
   // Update the messages dialog content
   const renderMessagesDialog = () => (
     <Dialog
@@ -838,6 +944,156 @@ const Profile: React.FC = () => {
     </Dialog>
   );
 
+  // Update the post list item to include repost button and functional like button
+  const renderPost = (post: Post) => (
+    <ListItem 
+      key={post.id} 
+      divider
+      sx={{ 
+        cursor: 'pointer',
+        '&:hover': {
+          backgroundColor: 'action.hover'
+        }
+      }}
+      onClick={() => {
+        setSelectedPost(post);
+        setShowPostDialog(true);
+      }}
+    >
+      <ListItemAvatar>
+        <Link to={`/profile/${post.authorName}`} style={{ textDecoration: 'none' }}>
+          <Avatar src={post.authorAvatar || undefined} />
+        </Link>
+      </ListItemAvatar>
+      <ListItemText
+        primary={
+          <Box>
+            <Link to={`/profile/${post.authorName}`} style={{ textDecoration: 'none' }}>
+              <Typography 
+                variant="subtitle1" 
+                component="span"
+                sx={{ 
+                  color: 'text.primary',
+                  '&:hover': { textDecoration: 'underline' }
+                }}
+              >
+                {post.authorName}
+              </Typography>
+            </Link>
+            <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
+              {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
+            </Typography>
+          </Box>
+        }
+        secondary={
+          <Box>
+            <Typography variant="body1" sx={{ mt: 1 }}>
+              {post.content}
+            </Typography>
+            {post.isEdited && (
+              <Typography variant="caption" color="text.secondary">
+                (edited)
+              </Typography>
+            )}
+          </Box>
+        }
+      />
+      <ListItemSecondaryAction>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <IconButton 
+            edge="end" 
+            aria-label="likes"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleLike(post.id);
+            }}
+          >
+            <FavoriteIcon color={post.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />
+            <Typography variant="body2" sx={{ ml: 1 }}>
+              {post.likes || 0}
+            </Typography>
+          </IconButton>
+          <IconButton
+            edge="end"
+            aria-label="repost"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRepost(post.id);
+            }}
+          >
+            <RepeatIcon color={post.repostedBy?.includes(currentUser?.uid || '') ? "primary" : "inherit"} />
+            <Typography variant="body2" sx={{ ml: 1 }}>
+              {post.reposts || 0}
+            </Typography>
+          </IconButton>
+        </Box>
+      </ListItemSecondaryAction>
+    </ListItem>
+  );
+
+  // Update the connections dialog to make profiles clickable
+  const renderConnectionsDialog = () => (
+    <Dialog
+      open={showConnectionsDialog}
+      onClose={() => setShowConnectionsDialog(false)}
+      maxWidth="sm"
+      fullWidth
+    >
+      <DialogTitle>
+        {activeTab === 0 ? 'Followers' : 'Following'}
+      </DialogTitle>
+      <DialogContent>
+        <List>
+          {(activeTab === 0 ? followersList : followingList).map((user) => (
+            <ListItem key={user.id} divider>
+              <ListItemAvatar>
+                <Link to={`/profile/${user.username}`} style={{ textDecoration: 'none' }}>
+                  <Avatar src={user.profilePic || undefined} />
+                </Link>
+              </ListItemAvatar>
+              <ListItemText
+                primary={
+                  <Link to={`/profile/${user.username}`} style={{ textDecoration: 'none' }}>
+                    <Typography 
+                      variant="subtitle1"
+                      sx={{ 
+                        color: 'text.primary',
+                        '&:hover': { textDecoration: 'underline' }
+                      }}
+                    >
+                      {user.name}
+                    </Typography>
+                  </Link>
+                }
+                secondary={`@${user.username}`}
+              />
+              <ListItemSecondaryAction>
+                {currentUser?.uid !== user.id && (
+                  <Button
+                    variant={user.followers?.includes(currentUser?.uid || '') ? "outlined" : "contained"}
+                    color={user.followers?.includes(currentUser?.uid || '') ? "error" : "primary"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      user.followers?.includes(currentUser?.uid || '') 
+                        ? handleUnfollow(user.id) 
+                        : handleFollow();
+                    }}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? 'Loading...' : user.followers?.includes(currentUser?.uid || '') ? 'Unfollow' : 'Follow'}
+                  </Button>
+                )}
+              </ListItemSecondaryAction>
+            </ListItem>
+          ))}
+        </List>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setShowConnectionsDialog(false)}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -859,224 +1115,140 @@ const Profile: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ mt: 4 }}>
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 2fr' }, gap: 4 }}>
-          {/* Profile Header */}
-          <Box>
-            <Paper elevation={0} sx={{ p: 3, textAlign: 'center' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                <Box sx={{ position: 'relative' }}>
-                  <Badge
-                    overlap="circular"
-                    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-                    badgeContent={
-                      currentUser?.uid === userId && (
-                        <IconButton
-                          size="small"
-                          onClick={() => fileInputRef.current?.click()}
-                          sx={{
-                            bgcolor: 'background.paper',
-                            '&:hover': { bgcolor: 'background.paper' }
-                          }}
-                        >
-                          <PhotoCamera fontSize="small" />
-                        </IconButton>
-                      )
-                    }
+    <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Profile Header */}
+        <Paper elevation={0} sx={{ p: 3, borderRadius: 2, backgroundColor: 'background.paper' }}>
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3, alignItems: 'center' }}>
+            <Box sx={{ position: 'relative' }}>
+              <Badge
+                overlap="circular"
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                badgeContent={
+                  currentUser?.uid === userId && (
+                    <IconButton
+                      component="label"
+                      size="small"
+                      sx={{
+                        bgcolor: 'background.paper',
+                        '&:hover': { bgcolor: 'background.default' }
+                      }}
+                    >
+                      <PhotoCamera fontSize="small" />
+                      <input
+                        type="file"
+                        hidden
+                        accept="image/*"
+                        onChange={handleProfilePicChange}
+                      />
+                    </IconButton>
+                  )
+                }
+              >
+                <Avatar
+                  src={profilePic || undefined}
+                  alt={username}
+                  sx={{ width: 120, height: 120 }}
+                />
+              </Badge>
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+                  {name}
+                </Typography>
+                {currentUser?.uid === userId && (
+                  <IconButton onClick={() => setIsEditing(true)} size="small">
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                )}
+              </Box>
+              <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+                @{username}
+              </Typography>
+              <Typography variant="body1" sx={{ mb: 2 }}>
+                {bio}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                {renderFollowButton()}
+                {renderMessageButton()}
+                {currentUser?.uid === userId && (
+                  <IconButton
+                    color="error"
+                    onClick={() => setShowTrashDialog(true)}
+                    sx={{ 
+                      border: '1px solid',
+                      borderColor: 'error.main',
+                      '&:hover': {
+                        backgroundColor: 'error.light',
+                        opacity: 0.8
+                      }
+                    }}
                   >
-        <Avatar
-                      src={profilePic || undefined}
-                      sx={{ width: 100, height: 100 }}
-                    />
-                  </Badge>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    ref={fileInputRef}
-                    style={{ display: 'none' }}
-                    onChange={handleProfilePicChange}
-                  />
-                </Box>
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="h4" component="h1">
-                    {name}
-                  </Typography>
-                  <Typography variant="subtitle1" color="text.secondary">
-                    @{username}
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 2, mb: 2, mt: 2 }}>
-                    <Button
-                      variant="outlined"
-                      component={Link}
-                      to={`/profile/${userId}/followers`}
-                    >
-                      {followers.length} Followers
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      component={Link}
-                      to={`/profile/${userId}/following`}
-                    >
-                      {connections.length} Following
-                    </Button>
-                  </Box>
-                  <Typography variant="body1" sx={{ mt: 1, mb: 2 }}>
-                    {bio}
-        </Typography>
-                  <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                    {currentUser?.uid === userId ? (
-                      <>
-                        <Button
-                          variant="outlined"
-                          startIcon={<EditIcon />}
-                          onClick={() => setIsEditing(true)}
-                          sx={{ 
-                            minWidth: '120px',
-                            borderColor: 'primary.main',
-                            color: 'primary.main',
-                            '&:hover': {
-                              borderColor: 'primary.dark',
-                              color: 'primary.dark'
-                            }
-                          }}
-                        >
-                          Edit Profile
-                        </Button>
-                        {renderMessageButton()}
-                        <IconButton 
-                          component={Link} 
-                          to="/trash"
-                          color="error"
-                          sx={{ 
-                            border: '1px solid',
-                            borderColor: 'error.main',
-                            '&:hover': {
-                              backgroundColor: 'error.light',
-                              opacity: 0.8
-                            }
-                          }}
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </>
-                    ) : (
-                      <>
-                        {renderFollowButton()}
-                        {renderMessageButton()}
-                      </>
-                    )}
-                  </Box>
-                </Box>
+                    <DeleteIcon />
+                  </IconButton>
+                )}
               </Box>
-            </Paper>
+            </Box>
           </Box>
+        </Paper>
 
-          {/* Edit Profile Dialog */}
-          <Dialog 
-            open={isEditing} 
-            onClose={() => setIsEditing(false)}
-            maxWidth="sm"
-            fullWidth
-          >
-            <DialogTitle>
-              Edit Profile
-            </DialogTitle>
-            <DialogContent>
-              <Box sx={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                gap: 3,
-                mt: 2
-              }}>
-              <TextField
-                  label="Name"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                fullWidth
-                  variant="outlined"
-                />
-                <TextField
-                label="Username"
-                  value={editedUsername}
-                  onChange={(e) => setEditedUsername(e.target.value)}
-                  fullWidth
-                  variant="outlined"
-                  helperText="This will be your unique identifier on the platform"
-              />
-              <TextField
-                  label="Bio"
-                  value={editedBio}
-                  onChange={(e) => setEditedBio(e.target.value)}
-                  multiline
-                  rows={4}
-                fullWidth
-                  variant="outlined"
-                  helperText="Tell others about yourself (You can use emojis!)"
-                  InputProps={{
-                    endAdornment: (
-                      <IconButton
-                        onClick={() => {
-                          const emoji = window.prompt('Enter an emoji:');
-                          if (emoji) {
-                            setEditedBio(prev => prev + emoji);
-                          }
-                        }}
-                        sx={{ 
-                          color: 'primary.main',
-                          '&:hover': {
-                            color: 'primary.dark'
-                          }
-                        }}
-                      >
-                        <span role="img" aria-label="emoji">😊</span>
-                      </IconButton>
-                    )
-                  }}
-                />
+        {/* Stats and Tabs */}
+        <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
+          {/* Stats Card */}
+          <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: 'background.paper', flex: { md: 1 } }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2 }}>
+              <Box sx={{ textAlign: 'center' }}>
+                <Typography variant="h6">{posts.length || 0}</Typography>
+                <Typography variant="body2" color="text.secondary">Posts</Typography>
               </Box>
-            </DialogContent>
-            <DialogActions sx={{ p: 3 }}>
-              <Button
-                variant="outlined"
-                onClick={() => setIsEditing(false)}
+              <Box 
                 sx={{ 
-                  minWidth: '120px',
-                  borderColor: 'text.secondary',
-                  color: 'text.secondary',
+                  textAlign: 'center',
+                  cursor: 'pointer',
                   '&:hover': {
-                    borderColor: 'text.primary',
-                    color: 'text.primary'
+                    color: 'primary.main'
                   }
                 }}
+                onClick={() => setShowConnectionsDialog(true)}
               >
-                Cancel
-              </Button>
-              <Button
-                variant="contained"
-                onClick={handleSaveProfile}
-                disabled={isLoading}
+                <Typography variant="h6">{followers.length || 0}</Typography>
+                <Typography variant="body2" color="text.secondary">Followers</Typography>
+              </Box>
+              <Box 
                 sx={{ 
-                  minWidth: '120px',
-                  bgcolor: 'primary.main',
+                  textAlign: 'center',
+                  cursor: 'pointer',
                   '&:hover': {
-                    bgcolor: 'primary.dark'
+                    color: 'primary.main'
                   }
                 }}
+                onClick={() => setShowConnectionsDialog(true)}
               >
-                {isLoading ? 'Saving...' : 'Save Changes'}
-              </Button>
-            </DialogActions>
-          </Dialog>
+                <Typography variant="h6">{connections.length || 0}</Typography>
+                <Typography variant="body2" color="text.secondary">Following</Typography>
+              </Box>
+            </Box>
+          </Paper>
 
-          {/* Main Content */}
-          <Box>
-            <Paper elevation={0}>
+          {/* Connections Dialog */}
+          {renderConnectionsDialog()}
+
+          {/* Tabs */}
+          <Box sx={{ flex: { md: 2 } }}>
+            <Paper elevation={0} sx={{ borderRadius: 2, backgroundColor: 'background.paper' }}>
               <Tabs
                 value={activeTab}
                 onChange={handleTabChange}
-                variant={isMobile ? "fullWidth" : "standard"}
-                sx={{ borderBottom: 1, borderColor: 'divider' }}
+                variant="fullWidth"
+                sx={{
+                  borderBottom: 1,
+                  borderColor: 'divider',
+                  '& .MuiTab-root': {
+                    textTransform: 'none',
+                    fontWeight: 'medium'
+                  }
+                }}
               >
                 <Tab label="Posts" />
                 <Tab label="Forums" />
@@ -1084,189 +1256,283 @@ const Profile: React.FC = () => {
                 <Tab label="Liked Posts" />
                 {currentUser?.uid === userId && <Tab label="Deleted Items" />}
               </Tabs>
-
-              {/* Posts Tab */}
-              <TabPanel value={activeTab} index={0}>
-                {posts.length === 0 ? (
-                  <Typography>No posts yet</Typography>
-                ) : (
-                  <List>
-                    {posts.map((post) => (
-                      <ListItem key={post.id} divider>
-                        <ListItemAvatar>
-                          <Avatar src={post.authorAvatar || undefined} />
-                        </ListItemAvatar>
-                        <ListItemText
-                          primary={
-                            <Box>
-                              <Typography variant="subtitle1" component="span">
-                                {post.authorName}
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
-                                {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
-                              </Typography>
-                            </Box>
-                          }
-                          secondary={
-                            <Box>
-                              <Typography variant="body1" sx={{ mt: 1 }}>
-                                {post.content}
-                              </Typography>
-                              {post.isEdited && (
-                                <Typography variant="caption" color="text.secondary">
-                                  (edited)
-                                </Typography>
-                              )}
-                            </Box>
-                          }
-                        />
-                        <ListItemSecondaryAction>
-                          <IconButton edge="end" aria-label="likes">
-                            <FavoriteIcon color={post.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />
-                            <Typography variant="body2" sx={{ ml: 1 }}>
-                              {post.likes || 0}
-                            </Typography>
-                          </IconButton>
-                        </ListItemSecondaryAction>
-                      </ListItem>
-                    ))}
-                  </List>
-                )}
-              </TabPanel>
-
-              {/* Forums Tab */}
-              <TabPanel value={activeTab} index={1}>
-                {forums.length === 0 ? (
-                  <Typography>Not a member of any forums yet</Typography>
-                ) : (
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-                    {forums.map((forum) => (
-                      <Box key={forum.id}>
-                        <Card>
-                          <CardContent>
-                            <Typography variant="h6">{forum.title}</Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {forum.description}
-                            </Typography>
-                            <Chip
-                              size="small"
-                              label={`${forum.memberCount} members`}
-                              sx={{ mt: 1 }}
-                            />
-                          </CardContent>
-                        </Card>
-                      </Box>
-                    ))}
-                  </Box>
-                )}
-              </TabPanel>
-
-              {/* Side Rooms Tab */}
-              <TabPanel value={activeTab} index={2}>
-                {sideRooms.length === 0 ? (
-                  <Typography>Not a member of any side rooms yet</Typography>
-                ) : (
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-                    {sideRooms.map((room) => (
-                      <Box key={room.id}>
-                        <Card>
-                          <CardContent>
-                            <Typography variant="h6">{room.name}</Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {room.description}
-                            </Typography>
-                            <Chip
-                              size="small"
-                              label={`${room.memberCount} members`}
-                              sx={{ mt: 1 }}
-                            />
-                          </CardContent>
-                        </Card>
-                      </Box>
-                    ))}
-                  </Box>
-                )}
-              </TabPanel>
-
-              {/* Liked Posts Tab */}
-              <TabPanel value={activeTab} index={3}>
-                {likedPosts.length === 0 ? (
-                  <Typography>No liked posts yet</Typography>
-                ) : (
-                  <List>
-                    {likedPosts.map((post) => (
-                      <ListItem key={post.id} divider>
-                        <ListItemText
-                          primary={post.content}
-                          secondary={`Posted ${formatDistanceToNow(
-                            post.timestamp instanceof Date 
-                              ? post.timestamp 
-                              : post.timestamp?.toDate?.() || new Date()
-                          )} ago`}
-                        />
-                        <ListItemSecondaryAction>
-                          <IconButton edge="end" aria-label="likes">
-                            <FavoriteIcon />
-                            <Typography variant="body2" sx={{ ml: 1 }}>
-                              {post.likes.length}
-                            </Typography>
-                          </IconButton>
-                        </ListItemSecondaryAction>
-                      </ListItem>
-                    ))}
-                  </List>
-                )}
-              </TabPanel>
-
-              {/* Deleted Items Tab */}
-              {currentUser?.uid === userId && (
-                <TabPanel value={activeTab} index={4}>
-                  {deletedItems.length === 0 ? (
-                    <Typography>No deleted items</Typography>
-                  ) : (
-                    <List>
-                      {deletedItems.map((item) => (
-                        <ListItem key={item.id} divider>
-                          <ListItemText
-                            primary={
-                              <Box>
-                                <Typography variant="subtitle1">
-                                  {item.type === 'post' ? 'Post' : item.type === 'room' ? 'Side Room' : 'Forum'}
-                                </Typography>
-                                <Typography variant="body1">
-                                  {item.type === 'post' ? item.content.content : item.content.name}
-                                </Typography>
-                              </Box>
-                            }
-                            secondary={`Deleted ${formatDistanceToNow(item.deletedAt.toDate())} ago`}
-                          />
-                          <ListItemSecondaryAction>
-                            <Button 
-                              variant="outlined"
-                              onClick={() => handleRestoreItem(item.id, item.type)}
-                            >
-                              Restore
-                            </Button>
-                            <Button 
-                              variant="outlined" 
-                              color="error"
-                              onClick={() => handlePermanentDelete(item.id)}
-                              sx={{ ml: 1 }}
-                            >
-                              Delete Permanently
-                            </Button>
-                          </ListItemSecondaryAction>
-                        </ListItem>
-                      ))}
-                    </List>
-                  )}
-                </TabPanel>
-              )}
             </Paper>
           </Box>
         </Box>
+
+        {/* Tab Content */}
+        <Box sx={{ flex: 1 }}>
+          <TabPanel value={activeTab} index={0}>
+            {posts.length === 0 ? (
+              <Typography>No posts yet</Typography>
+            ) : (
+              <List>
+                {posts.map(renderPost)}
+              </List>
+            )}
+          </TabPanel>
+          <TabPanel value={activeTab} index={1}>
+            {forums.length === 0 ? (
+              <Typography>Not a member of any forums yet</Typography>
+            ) : (
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                {forums.map((forum) => (
+                  <Box key={forum.id}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="h6">{forum.title}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {forum.description}
+                        </Typography>
+                        <Chip
+                          size="small"
+                          label={`${forum.memberCount} members`}
+                          sx={{ mt: 1 }}
+                        />
+                      </CardContent>
+                    </Card>
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </TabPanel>
+          <TabPanel value={activeTab} index={2}>
+            {sideRooms.length === 0 ? (
+              <Typography>Not a member of any side rooms yet</Typography>
+            ) : (
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                {sideRooms.map((room) => (
+                  <Box key={room.id}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="h6">{room.name}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {room.description}
+                        </Typography>
+                        <Chip
+                          size="small"
+                          label={`${room.memberCount} members`}
+                          sx={{ mt: 1 }}
+                        />
+                      </CardContent>
+                    </Card>
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </TabPanel>
+          <TabPanel value={activeTab} index={3}>
+            {likedPosts.length === 0 ? (
+              <Typography>No liked posts yet</Typography>
+            ) : (
+              <List>
+                {likedPosts.map((post) => (
+                  <ListItem key={post.id} divider>
+                    <ListItemText
+                      primary={post.content}
+                      secondary={`Posted ${formatDistanceToNow(
+                        post.timestamp instanceof Date 
+                          ? post.timestamp 
+                          : post.timestamp?.toDate?.() || new Date()
+                      )} ago`}
+                    />
+                    <ListItemSecondaryAction>
+                      <IconButton edge="end" aria-label="likes">
+                        <FavoriteIcon />
+                        <Typography variant="body2" sx={{ ml: 1 }}>
+                          {post.likes.length}
+                        </Typography>
+                      </IconButton>
+                    </ListItemSecondaryAction>
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </TabPanel>
+          {currentUser?.uid === userId && (
+            <TabPanel value={activeTab} index={4}>
+              {deletedItems.length === 0 ? (
+                <Typography>No deleted items</Typography>
+              ) : (
+                <List>
+                  {deletedItems.map((item) => (
+                    <ListItem key={item.id} divider>
+                      <ListItemText
+                        primary={
+                          <Box>
+                            <Typography variant="subtitle1">
+                              {item.type === 'post' ? 'Post' : item.type === 'room' ? 'Side Room' : 'Forum'}
+                            </Typography>
+                            <Typography variant="body1">
+                              {item.type === 'post' ? item.content.content : item.content.name}
+                            </Typography>
+                          </Box>
+                        }
+                        secondary={`Deleted ${formatDistanceToNow(item.deletedAt.toDate())} ago`}
+                      />
+                      <ListItemSecondaryAction>
+                        <Button 
+                          variant="outlined"
+                          onClick={() => handleRestoreItem(item.id, item.type)}
+                        >
+                          Restore
+                        </Button>
+                        <Button 
+                          variant="outlined" 
+                          color="error"
+                          onClick={() => handlePermanentDelete(item.id)}
+                          sx={{ ml: 1 }}
+                        >
+                          Delete Permanently
+                        </Button>
+                      </ListItemSecondaryAction>
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </TabPanel>
+          )}
+        </Box>
       </Box>
+
+      {/* Edit Profile Dialog */}
+      <Dialog 
+        open={isEditing} 
+        onClose={() => setIsEditing(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Edit Profile
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: 3,
+            mt: 2
+          }}>
+          <TextField
+              label="Name"
+              value={editedName}
+              onChange={(e) => setEditedName(e.target.value)}
+            fullWidth
+              variant="outlined"
+            />
+            <TextField
+            label="Username"
+              value={editedUsername}
+              onChange={(e) => setEditedUsername(e.target.value)}
+              fullWidth
+              variant="outlined"
+              helperText="This will be your unique identifier on the platform"
+          />
+          <TextField
+              label="Bio"
+              value={editedBio}
+              onChange={(e) => setEditedBio(e.target.value)}
+              multiline
+              rows={4}
+            fullWidth
+              variant="outlined"
+              helperText="Tell others about yourself (You can use emojis!)"
+              InputProps={{
+                endAdornment: (
+                  <IconButton
+                    onClick={() => {
+                      const emoji = window.prompt('Enter an emoji:');
+                      if (emoji) {
+                        setEditedBio(prev => prev + emoji);
+                      }
+                    }}
+                    sx={{ 
+                      color: 'primary.main',
+                      '&:hover': {
+                        color: 'primary.dark'
+                      }
+                    }}
+                  >
+                    <span role="img" aria-label="emoji">😊</span>
+                  </IconButton>
+                )
+              }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ p: 3 }}>
+          <Button
+            variant="outlined"
+            onClick={() => setIsEditing(false)}
+            sx={{ 
+              minWidth: '120px',
+              borderColor: 'text.secondary',
+              color: 'text.secondary',
+              '&:hover': {
+                borderColor: 'text.primary',
+                color: 'text.primary'
+              }
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveProfile}
+            disabled={isLoading}
+            sx={{ 
+              minWidth: '120px',
+              bgcolor: 'primary.main',
+              '&:hover': {
+                bgcolor: 'primary.dark'
+              }
+            }}
+          >
+            {isLoading ? 'Saving...' : 'Save Changes'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Messages Dialog */}
       {renderMessagesDialog()}
+
+      {/* Post Dialog */}
+      <Dialog
+        open={showPostDialog}
+        onClose={() => setShowPostDialog(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Avatar src={selectedPost?.authorAvatar || undefined} />
+            <Box>
+              <Typography variant="subtitle1">{selectedPost?.authorName}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {selectedPost?.timestamp?.toDate?.()?.toLocaleString()}
+              </Typography>
+            </Box>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mt: 2 }}>
+            {selectedPost?.content}
+          </Typography>
+          {selectedPost?.isEdited && (
+            <Typography variant="caption" color="text.secondary">
+              (edited)
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <IconButton>
+            <FavoriteIcon color={selectedPost?.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />
+            <Typography variant="body2" sx={{ ml: 1 }}>
+              {selectedPost?.likes || 0}
+            </Typography>
+          </IconButton>
+          <Button onClick={() => setShowPostDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };

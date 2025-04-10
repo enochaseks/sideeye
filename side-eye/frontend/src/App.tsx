@@ -50,17 +50,17 @@ import './App.css';
 const App: React.FC = () => {
   return (
     <ErrorBoundary>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <LocalizationProvider dateAdapter={AdapterDateFns}>
-          <BrowserRouter>
+      <BrowserRouter>
+        <ThemeProvider theme={theme}>
+          <CssBaseline />
+          <LocalizationProvider dateAdapter={AdapterDateFns}>
             <AuthProvider>
-              <NotificationProvider>
-                <FirestoreProvider>
+              <FirestoreProvider>
+                <NotificationProvider>
                   <RateLimiter>
                     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
                       <Navbar />
-                      <Box component="main" sx={{ flexGrow: 1, pt: 8 }}>
+                      <Box component="main" sx={{ flexGrow: 1, pt: 4 }}>
                         <Routes>
                           <Route path="/" element={<ProtectedRoute requireEmailVerification><Feed /></ProtectedRoute>} />
                           <Route path="/login" element={<Login />} />
@@ -70,7 +70,7 @@ const App: React.FC = () => {
                           <Route path="/setup-source-code" element={<SetupSourceCode />} />
                           <Route path="/enter-source-code" element={<EnterSourceCode />} />
                           <Route path="/reset-source-code" element={<ResetSourceCode />} />
-                          <Route path="/profile/:userId?" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+                          <Route path="/profile/:userId" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
                           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                           <Route path="/search" element={<ProtectedRoute><SearchResults /></ProtectedRoute>} />
                           <Route path="/discover" element={<ProtectedRoute><Discover /></ProtectedRoute>} />
@@ -95,12 +95,12 @@ const App: React.FC = () => {
                       <Toaster position="bottom-right" />
                     </Box>
                   </RateLimiter>
-                </FirestoreProvider>
-              </NotificationProvider>
+                </NotificationProvider>
+              </FirestoreProvider>
             </AuthProvider>
-          </BrowserRouter>
-        </LocalizationProvider>
-      </ThemeProvider>
+          </LocalizationProvider>
+        </ThemeProvider>
+      </BrowserRouter>
     </ErrorBoundary>
   );
 };
