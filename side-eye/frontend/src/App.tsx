@@ -47,6 +47,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Debug from './pages/Debug';
 import CookieConsent from './components/CookieConsent';
+import BottomNav from './components/BottomNav';
 import './App.css';
 
 const App: React.FC = () => {
@@ -62,7 +63,11 @@ const App: React.FC = () => {
                   <RateLimiter>
                     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
                       <Navbar />
-                      <Box component="main" sx={{ flexGrow: 1, pt: 4 }}>
+                      <Box component="main" sx={{ 
+                        flexGrow: 1, 
+                        pt: 4,
+                        pb: 8,
+                      }}>
                         <Routes>
                           <Route path="/" element={<ProtectedRoute requireEmailVerification><Feed /></ProtectedRoute>} />
                           <Route path="/login" element={<Login />} />
@@ -95,6 +100,7 @@ const App: React.FC = () => {
                       </Box>
                       <CookieConsent />
                       <Toaster position="bottom-right" />
+                      <BottomNav />
                     </Box>
                   </RateLimiter>
                 </NotificationProvider>

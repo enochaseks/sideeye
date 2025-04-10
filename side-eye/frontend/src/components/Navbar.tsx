@@ -17,15 +17,11 @@ import {
 import {
   Menu as MenuIcon,
   Person,
-  TrendingUp as TrendingUpIcon,
-  Home as HomeIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
-  MeetingRoom,
   Palette,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { NotificationIcon } from './NotificationIcon';
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
@@ -111,19 +107,6 @@ const Navbar: React.FC = () => {
               <>
                 <IconButton
                   color="inherit"
-                  onClick={() => navigate('/')}
-                  sx={{ 
-                    color: 'text.primary',
-                    '&:hover': {
-                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                    },
-                  }}
-                >
-                  <HomeIcon />
-                </IconButton>
-                <NotificationIcon />
-                <IconButton
-                  color="inherit"
                   onClick={handleMenuOpen}
                   sx={{ 
                     color: 'text.primary',
@@ -178,18 +161,6 @@ const Navbar: React.FC = () => {
               },
             }}
           >
-            <MenuItem onClick={() => handleNavigation('/side-rooms')}>
-              <ListItemIcon>
-                <MeetingRoom />
-              </ListItemIcon>
-              <ListItemText primary="Side Rooms" />
-            </MenuItem>
-            <MenuItem onClick={() => handleNavigation('/discover')}>
-              <ListItemIcon>
-                <TrendingUpIcon />
-              </ListItemIcon>
-              <ListItemText primary="Discover" />
-            </MenuItem>
             <MenuItem onClick={() => handleNavigation('/creators-hub')}>
               <ListItemIcon>
                 <Palette />

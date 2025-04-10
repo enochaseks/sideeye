@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Container, Box, Typography, CircularProgress, Alert, Paper, List, ListItem, ListItemAvatar, ListItemText, ListItemSecondaryAction, IconButton, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Slide, AppBar, Toolbar, Divider } from '@mui/material';
 import { useNavigate, Link } from 'react-router-dom';
-import CreatePost from '../components/CreatePost';
+import CreatePostDialog from '../components/CreatePostDialog';
 import Stories from '../components/Stories';
 import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, Timestamp, getDocs, DocumentData, documentId, writeBatch } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -63,6 +63,8 @@ const Feed: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const open = Boolean(anchorEl);
+  const [createPostOpen, setCreatePostOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Function to load reposts separately
   const loadReposts = async (regularPosts: PostData[]) => {
@@ -241,33 +243,29 @@ const Feed: React.FC = () => {
   };
 
   const handleCreatePost = async (content: string, imageFile?: File) => {
-    if (!db || !currentUser || !userProfile) {
-      setError('Please sign in and ensure profile is loaded to create a post');
-      return;
-    }
-
-    setFeedLoading(true);
-    setError(null);
-    let imageUrl: string | undefined = undefined;
+    if (!currentUser || !db) return;
 
     try {
+      setIsLoading(true);
+      setError(null);
+
+      let imageUrl = null;
       if (imageFile) {
-        const uniqueImageName = `${Date.now()}-${imageFile.name}`;
-        const storageRef = ref(storage, `posts/${currentUser.uid}/${uniqueImageName}`);
-        const uploadResult = await uploadBytes(storageRef, imageFile);
-        imageUrl = await getDownloadURL(uploadResult.ref);
+        const storageRef = ref(storage, `posts/${currentUser.uid}/${Date.now()}_${imageFile.name}`);
+        await uploadBytes(storageRef, imageFile);
+        imageUrl = await getDownloadURL(storageRef);
       }
 
-      const postData: Omit<PostData, 'id'> = {
-        content: content.trim(),
+      const postData = {
+        content,
         authorId: currentUser.uid,
         userId: currentUser.uid,
-        timestamp: serverTimestamp() as Timestamp,
+        timestamp: serverTimestamp(),
         likes: 0,
         likedBy: [],
-        authorName: userProfile.name || currentUser.displayName || 'Anonymous',
-        ...(imageUrl && { imageUrl: imageUrl }),
-        authorAvatar: userProfile.profilePic || currentUser.photoURL || '',
+        authorName: currentUser.displayName || 'Anonymous',
+        ...(imageUrl && { imageUrl }),
+        authorAvatar: currentUser.photoURL || '',
         comments: [],
         tags: content.match(/#[a-zA-Z0-9_]+/g) || [],
         isPrivate: false,
@@ -280,16 +278,13 @@ const Feed: React.FC = () => {
         deleted: false
       };
 
-      const docRef = await addDoc(collection(db, 'posts'), postData);
-
-      toast.success('Post created successfully');
-
-    } catch (error: any) {
+      await addDoc(collection(db, 'posts'), postData);
+      setCreatePostOpen(false);
+    } catch (error) {
       console.error('Error creating post:', error);
-      setError(`Failed to create post: ${error.message}`);
-      toast.error(`Failed to create post: ${error.code || error.message}`);
+      setError('Failed to create post. Please try again.');
     } finally {
-      setFeedLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -1042,14 +1037,9 @@ const Feed: React.FC = () => {
               zIndex: 10
             }}
           >
-            <CreatePost 
-              user={{
-                name: currentUser?.displayName || 'Anonymous',
-                avatar: currentUser?.photoURL || '',
-                username: userProfile?.username || '',
-                isVerified: userProfile?.isVerified || false
-              }}
-              onSubmit={handleCreatePost}
+            <CreatePostDialog
+              open={createPostOpen}
+              onClose={() => setCreatePostOpen(false)}
             />
           </Paper>
 

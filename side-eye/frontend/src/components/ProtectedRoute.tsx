@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { User } from '../contexts/AuthContext';
 import LoadingSpinner from './LoadingSpinner';
 
 interface ProtectedRouteProps {
@@ -26,7 +27,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to="/login" replace />;
   }
 
-  if (requireEmailVerification && currentUser && !currentUser.emailVerified) {
+  if (requireEmailVerification && currentUser && !(currentUser as User).emailVerified) {
     return <Navigate to="/verify-email" replace />;
   }
 
