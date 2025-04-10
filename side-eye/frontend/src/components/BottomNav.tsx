@@ -11,7 +11,7 @@ import {
   MeetingRoom as MeetingRoomIcon,
   TrendingUp as TrendingUpIcon,
   Add as AddIcon,
-  Notifications as NotificationsIcon,
+  Person as PersonIcon,
 } from '@mui/icons-material';
 import CreatePostDialog from './CreatePostDialog';
 import { useAuth } from '../contexts/AuthContext';
@@ -79,14 +79,14 @@ const BottomNav: React.FC = () => {
           icon={<AddIcon />}
         />
         <BottomNavigationAction
-          label="Notifications"
-          value="/notifications"
-          icon={<NotificationsIcon />}
-        />
-        <BottomNavigationAction
           label="Discover"
           value="/discover"
           icon={<TrendingUpIcon />}
+        />
+        <BottomNavigationAction
+          label="Profile"
+          value={`/profile/${currentUser?.uid}`}
+          icon={<PersonIcon />}
         />
       </BottomNavigation>
 

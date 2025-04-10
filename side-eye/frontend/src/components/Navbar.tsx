@@ -13,13 +13,14 @@ import {
   Avatar,
   ListItemIcon,
   ListItemText,
+  Badge,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
-  Person,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
   Palette,
+  Notifications as NotificationsIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -107,6 +108,20 @@ const Navbar: React.FC = () => {
               <>
                 <IconButton
                   color="inherit"
+                  onClick={() => navigate('/notifications')}
+                  sx={{ 
+                    color: 'text.primary',
+                    '&:hover': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  <Badge badgeContent={0} color="error">
+                    <NotificationsIcon />
+                  </Badge>
+                </IconButton>
+                <IconButton
+                  color="inherit"
                   onClick={handleMenuOpen}
                   sx={{ 
                     color: 'text.primary',
@@ -174,23 +189,13 @@ const Navbar: React.FC = () => {
               </ListItemIcon>
               <ListItemText primary="Settings" />
             </MenuItem>
-            {currentUser && (
-              <>
-                <Divider />
-                <MenuItem onClick={() => handleNavigation(`/profile/${currentUser.uid}`)}>
-                  <ListItemIcon>
-                    <Person />
-                  </ListItemIcon>
-                  <ListItemText>Profile</ListItemText>
-                </MenuItem>
-                <MenuItem onClick={handleSignOut}>
-                  <ListItemIcon>
-                    <LogoutIcon />
-                  </ListItemIcon>
-                  <ListItemText>Logout</ListItemText>
-                </MenuItem>
-              </>
-            )}
+            <Divider />
+            <MenuItem onClick={handleSignOut}>
+              <ListItemIcon>
+                <LogoutIcon />
+              </ListItemIcon>
+              <ListItemText>Logout</ListItemText>
+            </MenuItem>
           </Menu>
         </Toolbar>
       </AppBar>
