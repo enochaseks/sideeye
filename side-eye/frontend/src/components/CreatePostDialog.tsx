@@ -14,6 +14,7 @@ import {
   Fade,
   Paper,
   ClickAwayListener,
+  Avatar,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -45,9 +46,9 @@ const CreatePostDialog: React.FC<CreatePostDialogProps> = ({ open, onClose }) =>
   const [content, setContent] = useState('');
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [emojiAnchorEl, setEmojiAnchorEl] = useState<HTMLButtonElement | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [characterCount, setCharacterCount] = useState(0);
   const MAX_CHARACTERS = 280;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,7 +115,7 @@ const CreatePostDialog: React.FC<CreatePostDialogProps> = ({ open, onClose }) =>
       return;
     }
 
-    setIsLoading(true);
+    setLoading(true);
     setError(null);
 
     try {
@@ -159,16 +160,16 @@ const CreatePostDialog: React.FC<CreatePostDialogProps> = ({ open, onClose }) =>
       console.error('Error creating post:', error);
       setError('Failed to create post. Please try again.');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   const handleEmojiClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    setEmojiAnchorEl(event.currentTarget);
+    setShowEmojiPicker(true);
   };
 
   const handleEmojiClose = () => {
-    setEmojiAnchorEl(null);
+    setShowEmojiPicker(false);
   };
 
   const handleEmojiSelect = (emoji: string) => {
@@ -178,7 +179,7 @@ const CreatePostDialog: React.FC<CreatePostDialogProps> = ({ open, onClose }) =>
     }
     setContent(prev => prev + emoji);
     setCharacterCount(prev => prev + emoji.length);
-    setEmojiAnchorEl(null);
+    setShowEmojiPicker(false);
     setError(null);
   };
 
@@ -201,7 +202,21 @@ const CreatePostDialog: React.FC<CreatePostDialogProps> = ({ open, onClose }) =>
         alignItems: 'center',
         pb: 1,
       }}>
-        <Typography variant="h6">Create Post</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Avatar
+            src={userProfile?.profilePic || currentUser?.photoURL || ''}
+            alt={userProfile?.name || currentUser?.displayName || 'User'}
+            sx={{ width: 40, height: 40 }}
+          />
+          <Box>
+            <Typography variant="subtitle1" fontWeight="bold">
+              {userProfile?.name || currentUser?.displayName || 'Anonymous'}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              @{userProfile?.username || currentUser?.email?.split('@')[0] || 'user'}
+            </Typography>
+          </Box>
+        </Box>
         <IconButton onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -260,9 +275,9 @@ const CreatePostDialog: React.FC<CreatePostDialogProps> = ({ open, onClose }) =>
             <Button
               variant="contained"
               type="submit"
-              disabled={(!content.trim() && !image) || isLoading}
+              disabled={(!content.trim() && !image) || loading}
             >
-              {isLoading ? <CircularProgress size={24} /> : 'Post'}
+              {loading ? <CircularProgress size={24} /> : 'Post'}
             </Button>
           </Box>
         </form>
