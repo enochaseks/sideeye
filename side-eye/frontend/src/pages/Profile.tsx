@@ -373,6 +373,15 @@ const Profile: React.FC = () => {
       const userData = userDoc.data() as UserProfile;
       setUserProfile(userData);
       setTargetUserId(foundUserId || null);
+      
+      // Set basic profile data
+      setUsername(userData.username || '');
+      setName(userData.name || '');
+      setEmail(userData.email || '');
+      setBio(userData.bio || '');
+      setProfilePic(userData.profilePic || null);
+      setIsPrivate(userData.isPrivate || false);
+      setIsAdmin(userData.isAdmin || false);
 
       try {
         // Fetch followers and following
@@ -403,6 +412,19 @@ const Profile: React.FC = () => {
           setFollowersList(followersData.map(doc => doc.data() as UserProfile));
           setFollowingList(followingData.map(doc => doc.data() as UserProfile));
         }
+
+        // Fetch posts
+        const postsQuery = query(
+          collection(db, 'posts'),
+          where('authorId', '==', foundUserId),
+          orderBy('timestamp', 'desc')
+        );
+        const postsSnapshot = await getDocs(postsQuery);
+        const postsData = postsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Post[];
+        setPosts(postsData);
 
         setIsLoading(false);
       } catch (error) {
@@ -465,24 +487,29 @@ const Profile: React.FC = () => {
     if (!currentUser || !db) return;
 
     try {
-      const editedName = name.trim();
-      const editedBio = bio.trim();
+      const trimmedName = editedName.trim();
+      const trimmedBio = editedBio.trim();
+      const trimmedUsername = editedUsername.trim();
 
       // Update Firestore
       await updateDoc(doc(db, 'users', currentUser.uid), {
-        name: editedName,
-        bio: editedBio
+        name: trimmedName,
+        bio: trimmedBio,
+        username: trimmedUsername
       });
 
       // Update local state
-      setName(editedName);
-      setBio(editedBio);
+      setName(trimmedName);
+      setBio(trimmedBio);
+      setUsername(trimmedUsername);
       setIsEditing(false);
+      
       if (userProfile) {
         setUserProfile({
           ...userProfile,
-          name: editedName,
-          bio: editedBio
+          name: trimmedName,
+          bio: trimmedBio,
+          username: trimmedUsername
         });
       }
     } catch (error) {
@@ -1157,7 +1184,7 @@ const Profile: React.FC = () => {
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
                 <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
-                  {name}
+                  {name || 'No name set'}
                 </Typography>
                 {currentUser?.uid === userId && (
                   <IconButton onClick={() => setIsEditing(true)} size="small">
@@ -1166,10 +1193,10 @@ const Profile: React.FC = () => {
                 )}
               </Box>
               <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                @{username}
+                @{username || 'No username set'}
               </Typography>
               <Typography variant="body1" sx={{ mb: 2 }}>
-                {bio}
+                {bio || 'No bio set'}
               </Typography>
               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                 {renderFollowButton()}

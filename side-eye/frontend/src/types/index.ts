@@ -223,6 +223,7 @@ export interface UserProfile {
       platform: string;
     };
   }>;
+  isAdmin?: boolean;
 }
 
 export interface TrendingTopic {
