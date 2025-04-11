@@ -27,6 +27,7 @@ import SideRoomList from './components/SideRooms/SideRoomList';
 import SideRoomComponent from './components/SideRooms/SideRoomComponent';
 import Chat from './pages/Chat';
 import SafetyPage from './pages/SafetyPage';
+import SecurityPage from './pages/SecurityPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import About from './pages/About';
 import TermsOfService from './pages/TermsOfService';
@@ -98,6 +99,7 @@ const App: React.FC = () => {
                           <Route path="/side-room/:roomId" element={<ProtectedRoute><SideRoomComponent /></ProtectedRoute>} />
                           <Route path="/chat/:userId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
                           <Route path="/safety" element={<SafetyPage />} />
+                          <Route path="/security" element={<SecurityPage />} />
                           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
                           <Route path="/about" element={<About />} />
                           <Route path="/terms" element={<TermsOfService />} />

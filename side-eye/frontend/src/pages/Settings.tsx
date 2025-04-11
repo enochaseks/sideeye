@@ -56,10 +56,10 @@ const Settings: React.FC = () => {
       onClick: () => setShowDeviceDialog(true)
     },
     {
-      title: 'Safety',
+      title: 'Security & Authentication',
       icon: <SecurityIcon />,
-      path: '/safety',
-      description: 'Learn about our safety guidelines and reporting tools'
+      path: '/security',
+      description: 'Learn about our authentication flow and security features'
     },
     {
       title: 'About',
