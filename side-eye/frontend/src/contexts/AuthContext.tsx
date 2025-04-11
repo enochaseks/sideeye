@@ -7,6 +7,7 @@ import { getDoc, doc, setDoc, Firestore, collection, query, orderBy, onSnapshot,
 import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 import bcrypt from 'bcryptjs';
+import { checkAndResetRestrictions } from '../services/contentModeration';
 
 export interface User extends FirebaseUser {
   hasUnreadNotifications?: boolean;
@@ -151,6 +152,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } 
           // Set loading false after initial setup/navigation logic is decided
               setLoading(false);
+
+          // Check and reset any restrictions for the current user
+          if (user) {
+            try {
+              await checkAndResetRestrictions(user.uid);
+            } catch (error) {
+              console.error("Error checking restrictions:", error);
+            }
+          }
 
         } catch (error) {
           console.error("AuthContext: Error during auth state processing:", error);
