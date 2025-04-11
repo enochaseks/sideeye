@@ -103,6 +103,13 @@ service cloud.firestore {
         allow delete: if isAuthenticated() && 
                       request.auth.uid == followerId;
       }
+
+      // Favorites subcollection
+      match /favorites/{videoId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.auth.uid == userId;
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
+      }
     }
 
     // Notifications Collection
@@ -176,6 +183,40 @@ service cloud.firestore {
                     isDocumentMember(resource));
       allow delete: if isAuthenticated() && 
                     resource.data.ownerId == request.auth.uid;
+    }
+
+    // Videos Collection
+    match /videos/{videoId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                    request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    (resource.data.userId == request.auth.uid ||
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments']));
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // User Likes subcollection
+    match /users/{userId}/likes/{videoId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User Favorites subcollection
+    match /users/{userId}/favorites/{videoId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Video Comments subcollection
+    match /videos/{videoId}/comments/{commentId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                    request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     // ======================

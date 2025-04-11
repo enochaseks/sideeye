@@ -203,6 +203,33 @@ const About: React.FC = () => {
                   color: 'primary.main'
                 }}
               >
+                Vibits
+              </Typography>
+              <Typography 
+                variant="h4" 
+                sx={{ 
+                  lineHeight: 1.8,
+                  color: 'text.secondary',
+                  fontSize: { xs: '1.25rem', md: '1.5rem' }
+                }}
+              >
+                Share and discover short-form videos through our Vibits feature. Create, upload, and engage with 
+                captivating video content in a vertical scrolling format. Interact with videos through likes, comments, 
+                and sharing, or follow content creators you enjoy. Vibits offers a dynamic way to express yourself 
+                creatively and connect with others through visual storytelling, with built-in moderation to ensure 
+                a safe viewing experience.
+              </Typography>
+            </Box>
+            <Box>
+              <Typography 
+                variant="h3" 
+                sx={{ 
+                  fontWeight: 'medium',
+                  mb: 3,
+                  fontSize: { xs: '1.75rem', md: '2rem' },
+                  color: 'primary.main'
+                }}
+              >
                 Live Streaming
               </Typography>
               <Typography 

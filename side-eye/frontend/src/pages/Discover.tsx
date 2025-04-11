@@ -21,7 +21,8 @@ import {
   Grid,
   Card,
   CardContent,
-  CardMedia
+  CardMedia,
+  Button
 } from '@mui/material';
 import { 
   TrendingUp as TrendingIcon,
@@ -30,13 +31,29 @@ import {
   Search as SearchIcon,
   PersonAdd as PersonAddIcon,
   Message as MessageIcon,
-  People as PeopleIcon
+  People as PeopleIcon,
+  Favorite as FavoriteIcon,
+  Comment as CommentIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
-import { collection, query, where, getDocs, orderBy, limit, DocumentData, Timestamp } from 'firebase/firestore';
+import { 
+  collection, 
+  query as firestoreQuery, 
+  where, 
+  getDocs, 
+  orderBy, 
+  limit, 
+  DocumentData, 
+  Timestamp,
+  doc,
+  setDoc,
+  deleteDoc,
+  serverTimestamp
+} from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
+import VibitIcon from '../components/VibitIcon';
 
 interface UserProfile {
   id: string;
@@ -46,6 +63,7 @@ interface UserProfile {
   bio: string;
   coverPhoto?: string;
   isPublic: boolean;
+  isAuthenticated?: boolean;
   createdAt: Timestamp;
 }
 
@@ -80,81 +98,149 @@ interface FirestoreRoom extends DocumentData {
   nameSearch?: string;
 }
 
+interface Video {
+  id: string;
+  url: string;
+  userId: string;
+  username: string;
+  likes: number;
+  comments: number;
+  timestamp: any;
+}
+
 const Discover: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
+  const [following, setFollowing] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const usersRef = collection(db, 'users');
-        const q = query(
-          usersRef,
-          where('isPublic', '==', true),
-          orderBy('createdAt', 'desc'),
-          limit(20)
-        );
-        
-        const querySnapshot = await getDocs(q);
-        const usersData = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as UserProfile[];
-        
-        setUsers(usersData);
-      } catch (error) {
-        console.error('Error fetching users:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchUsers();
-  }, []);
-
-  const handleSearch = async (query: string) => {
-    setSearchQuery(query);
-    
-    if (!currentUser || !db) {
-      setUsers([]);
-      setRooms([]);
-      return;
-    }
-
-    if (query.length < 2) {
-      setUsers([]);
-      setRooms([]);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
+  const fetchDefaultUsers = async () => {
     try {
-      const filteredUsers = users.filter(user => 
-        user.username?.toLowerCase().includes(query.toLowerCase()) ||
-        user.name?.toLowerCase().includes(query.toLowerCase())
+      const usersRef = collection(db, 'users');
+      
+      // Simply fetch all users with limit
+      const q = firestoreQuery(
+        usersRef,
+        orderBy('createdAt', 'desc'),
+        limit(20)
       );
-
-      const filteredRooms = rooms.filter(room => 
-        room.name?.toLowerCase().includes(query.toLowerCase()) ||
-        room.description?.toLowerCase().includes(query.toLowerCase())
-      );
-
-      setUsers(filteredUsers);
-      setRooms(filteredRooms);
-
-    } catch (error: any) {
-      console.error('Search error:', error);
-      setError(`Failed to perform search: ${error.message}`);
-      toast.error(`Search failed: ${error.code || error.message}`);
+      
+      const querySnapshot = await getDocs(q);
+      const usersData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as UserProfile[];
+      
+      setUsers(usersData);
+    } catch (error) {
+      console.error('Error fetching users:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchRooms = async () => {
+    try {
+      const roomsRef = collection(db, 'rooms');
+      const q = firestoreQuery(
+        roomsRef,
+        orderBy('createdAt', 'desc'),
+        limit(20)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const roomsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Room[];
+      
+      setRooms(roomsData);
+    } catch (error) {
+      console.error('Error fetching rooms:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchDefaultUsers();
+    fetchRooms();
+    fetchVideos();
+    if (currentUser) {
+      fetchFollowing();
+    }
+  }, [currentUser]);
+
+  const fetchVideos = async () => {
+    try {
+      const videosRef = collection(db, 'videos');
+      const q = firestoreQuery(
+        videosRef,
+        orderBy('timestamp', 'desc'),
+        limit(20)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const videosData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Video[];
+      
+      setVideos(videosData);
+    } catch (error) {
+      console.error('Error fetching videos:', error);
+    }
+  };
+
+  const fetchFollowing = async () => {
+    if (!currentUser) return;
+    try {
+      const followingQuery = firestoreQuery(
+        collection(db, `users/${currentUser.uid}/following`)
+      );
+      const snapshot = await getDocs(followingQuery);
+      const followingIds = new Set(snapshot.docs.map(doc => doc.id));
+      setFollowing(followingIds);
+    } catch (error) {
+      console.error('Error fetching following:', error);
+    }
+  };
+
+  const handleFollow = async (userId: string) => {
+    if (!currentUser || userId === currentUser.uid) return;
+    
+    try {
+      const followingRef = doc(db, `users/${currentUser.uid}/following`, userId);
+      const followerRef = doc(db, `users/${userId}/followers`, currentUser.uid);
+      
+      if (following.has(userId)) {
+        // Unfollow
+        await deleteDoc(followingRef);
+        await deleteDoc(followerRef);
+        setFollowing(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(userId);
+          return newSet;
+        });
+        toast.success('Unfollowed user');
+      } else {
+        // Follow
+        await setDoc(followingRef, {
+          timestamp: serverTimestamp()
+        });
+        await setDoc(followerRef, {
+          timestamp: serverTimestamp()
+        });
+        setFollowing(prev => new Set(prev).add(userId));
+        toast.success('Followed user');
+      }
+    } catch (error) {
+      console.error('Error toggling follow:', error);
+      toast.error('Failed to update follow status');
     }
   };
 
@@ -168,6 +254,84 @@ const Discover: React.FC = () => {
 
   const handleRoomClick = (roomId: string) => {
     navigate(`/room/${roomId}`);
+  };
+
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    
+    if (!currentUser || !db) {
+      setUsers([]);
+      setRooms([]);
+      return;
+    }
+
+    if (query.length < 2) {
+      // If query is too short, fetch default users and rooms
+      fetchDefaultUsers();
+      fetchRooms();
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      // Search for users in Firestore
+      const usersRef = collection(db, 'users');
+      const usernameQuery = query.toLowerCase();
+      
+      // Basic username search
+      const q = firestoreQuery(
+        usersRef,
+        orderBy('username'),
+        limit(20)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const allUsers = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as UserProfile[];
+      
+      // Filter client-side
+      const filteredUsers = allUsers.filter(user => 
+        user.username?.toLowerCase().includes(usernameQuery) || 
+        user.name?.toLowerCase().includes(usernameQuery)
+      );
+      
+      setUsers(filteredUsers);
+      
+      // Search for rooms
+      const roomsRef = collection(db, 'rooms');
+      const roomsQuery = firestoreQuery(
+        roomsRef,
+        orderBy('name'),
+        limit(20)
+      );
+      
+      const roomsSnapshot = await getDocs(roomsQuery);
+      const allRooms = roomsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Room[];
+      
+      // Filter client-side
+      const filteredRooms = allRooms.filter(room => 
+        room.name?.toLowerCase().includes(usernameQuery) || 
+        room.description?.toLowerCase().includes(usernameQuery)
+      );
+      
+      setRooms(filteredRooms);
+
+    } catch (error: any) {
+      console.error('Search error:', error);
+      setError(`Failed to perform search: ${error.message}`);
+      toast.error(`Search failed: ${error.code || error.message}`);
+      // Fallback to default users and rooms on error
+      fetchDefaultUsers();
+      fetchRooms();
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
@@ -208,7 +372,21 @@ const Discover: React.FC = () => {
         />
       </Paper>
 
-      {searchQuery.length > 0 ? (
+      <Box sx={{ width: '100%', mb: 4 }}>
+        <Tabs
+          value={activeTab}
+          onChange={handleTabChange}
+          variant="fullWidth"
+          indicatorColor="primary"
+          textColor="primary"
+        >
+          <Tab icon={<PeopleIcon />} label="People" />
+          <Tab icon={<GroupIcon />} label="Rooms" />
+          <Tab icon={<VibitIcon />} label="Vibits" />
+        </Tabs>
+      </Box>
+      
+      {activeTab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Users Section */}
           <Paper>
@@ -241,8 +419,9 @@ const Discover: React.FC = () => {
                             </IconButton>
                             <IconButton
                               edge="end"
-                              onClick={() => toast.success('Follow feature coming soon!')}
-                              title="Follow user"
+                              onClick={() => handleFollow(user.id)}
+                              title={following.has(user.id) ? "Unfollow user" : "Follow user"}
+                              color={following.has(user.id) ? "primary" : "default"}
                             >
                               <PersonAddIcon />
                             </IconButton>
@@ -284,7 +463,11 @@ const Discover: React.FC = () => {
               )}
             </List>
           </Paper>
-
+        </Box>
+      )}
+      
+      {activeTab === 1 && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Rooms Section */}
           <Paper>
             <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
@@ -360,33 +543,88 @@ const Discover: React.FC = () => {
             </List>
           </Paper>
         </Box>
-      ) : (
-        <>
-          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 4 }}>
-            <Tabs value={activeTab} onChange={handleTabChange} aria-label="discover tabs">
-              <Tab 
-                icon={<WhatshotIcon />} 
-                label="Trending Posts" 
-                id="trending-posts-tab"
-                aria-controls="trending-posts-panel"
-              />
-              <Tab 
-                icon={<GroupIcon />} 
-                label="Popular Rooms" 
-                id="popular-rooms-tab"
-                aria-controls="popular-rooms-panel"
-              />
-            </Tabs>
-          </Box>
-
-          <Paper sx={{ p: 4, textAlign: 'center' }}>
-            <Alert severity="info" sx={{ maxWidth: 500, mx: 'auto' }}>
-              {activeTab === 0 
-                ? "Stay tuned! We'll show trending posts with high engagement here."
-                : "Stay tuned! Popular and active rooms will appear here."}
-            </Alert>
+      )}
+      
+      {activeTab === 2 && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {/* Vibits Section */}
+          <Paper>
+            <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+              <Typography variant="h6" component="h2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <VibitIcon color="primary" /> Vibits
+              </Typography>
+            </Box>
+            
+            {videos.length === 0 ? (
+              <Box sx={{ p: 4, textAlign: 'center' }}>
+                <Typography variant="h6" color="text.secondary">
+                  No videos found
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Check back later or upload your own!
+                </Typography>
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  sx={{ mt: 2 }}
+                  onClick={() => navigate('/vibits')}
+                  startIcon={<VibitIcon />}
+                >
+                  Go to Vibits
+                </Button>
+              </Box>
+            ) : (
+              <Grid container spacing={2} sx={{ p: 2 }}>
+                {videos.map((video) => (
+                  <Grid item xs={12} sm={6} md={4} key={video.id}>
+                    <Card sx={{ 
+                      height: 240, 
+                      cursor: 'pointer',
+                      '&:hover': {
+                        transform: 'scale(1.02)',
+                        transition: 'transform 0.2s ease-in-out'
+                      }
+                    }} onClick={() => navigate('/vibits')}>
+                      <Box sx={{ position: 'relative', height: '100%' }}>
+                        <video
+                          src={video.url}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                          }}
+                        />
+                        <Box sx={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          p: 1,
+                          background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                          color: 'white'
+                        }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Typography variant="subtitle2">@{video.username}</Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                <FavoriteIcon fontSize="small" />
+                                <Typography variant="caption" sx={{ ml: 0.5 }}>{video.likes}</Typography>
+                              </Box>
+                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                <CommentIcon fontSize="small" />
+                                <Typography variant="caption" sx={{ ml: 0.5 }}>{video.comments}</Typography>
+                              </Box>
+                            </Box>
+                          </Box>
+                        </Box>
+                      </Box>
+                    </Card>
+                  </Grid>
+                ))}
+              </Grid>
+            )}
           </Paper>
-        </>
+        </Box>
       )}
     </Container>
   );

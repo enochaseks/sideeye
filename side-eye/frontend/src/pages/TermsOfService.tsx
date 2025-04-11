@@ -47,6 +47,7 @@ const TermsOfService: React.FC = () => {
           </Typography>
           <ul>
             <li>Post or transmit any content that is unlawful, harmful, threatening, abusive, harassing, defamatory, vulgar, obscene, or otherwise objectionable</li>
+            <li>Upload videos to Vibits that contain inappropriate content, copyright infringement, or violate our Community Guidelines</li>
             <li>Harass, bully, intimidate, or stalk other users</li>
             <li>Impersonate any person or entity or falsely state or misrepresent your affiliation with a person or entity</li>
             <li>Interfere with or disrupt the proper functioning of the service or servers</li>
@@ -63,7 +64,7 @@ const TermsOfService: React.FC = () => {
             4. Content Ownership and License
           </Typography>
           <Typography variant="body1" paragraph>
-            You retain ownership of any content you post on SideEye. By posting content, you grant us a worldwide, 
+            You retain ownership of any content you post on SideEye, including videos uploaded to Vibits. By posting content, you grant us a worldwide, 
             non-exclusive, royalty-free license (with the right to sublicense) to use, reproduce, process, adapt, modify, 
             publish, transmit, display, and distribute your content in any and all media or distribution methods.
           </Typography>
@@ -75,7 +76,29 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            5. Follower Relationships
+            5. Vibits Video Sharing
+          </Typography>
+          <Typography variant="body1" paragraph>
+            Vibits is our video sharing feature that allows users to upload, view, like, comment on, and share short videos. 
+            When using Vibits, you agree to:
+          </Typography>
+          <ul>
+            <li>Only upload videos that you have created or for which you have the necessary rights and permissions</li>
+            <li>Not upload videos that infringe on others' intellectual property rights</li>
+            <li>Not upload videos containing explicit content, hate speech, violence, or any content that violates our Community Guidelines</li>
+            <li>Allow other users to view, like, comment on, and share your videos according to your privacy settings</li>
+            <li>Grant us the license as described in Section 4 for videos you upload to Vibits</li>
+            <li>Understand that we may remove videos that violate our policies without prior notice</li>
+          </ul>
+          <Typography variant="body1" paragraph>
+            We may provide tools to enhance or edit your videos, but we do not claim ownership of your original content. 
+            We reserve the right to display advertisements alongside or within Vibits content without providing compensation to you.
+          </Typography>
+        </Box>
+
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            6. Follower Relationships
           </Typography>
           <Typography variant="body1" paragraph>
             SideEye allows users to follow other users and be followed by others. When you follow someone, you'll see their posts 
@@ -86,7 +109,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            6. Direct Messages
+            7. Direct Messages
           </Typography>
           <Typography variant="body1" paragraph>
             SideEye provides a direct messaging feature for users to communicate privately. You are responsible for the 
@@ -97,10 +120,10 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            7. Content Moderation
+            8. Content Moderation
           </Typography>
           <Typography variant="body1" paragraph>
-            We reserve the right to moderate content posted on our platform. We may remove, restrict, or disable access to any 
+            We reserve the right to moderate content posted on our platform, including Vibits videos. We may remove, restrict, or disable access to any 
             content or account that we determine violates these Terms or our Community Guidelines. Content moderation decisions 
             are made in our sole discretion. Users can appeal moderation decisions through our support channels.
           </Typography>
@@ -108,7 +131,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            8. Intellectual Property
+            9. Intellectual Property
           </Typography>
           <Typography variant="body1" paragraph>
             The SideEye service and its original content, features, and functionality are and will remain the exclusive property of 
@@ -119,7 +142,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            9. Termination
+            10. Termination
           </Typography>
           <Typography variant="body1" paragraph>
             We reserve the right to terminate or suspend your account and access to the service at our sole discretion, 
@@ -130,10 +153,10 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            10. Post Removal and Recovery
+            11. Content Removal and Recovery
           </Typography>
           <Typography variant="body1" paragraph>
-            When you delete content, it will be moved to a trash area for 24 hours before permanent deletion, allowing for 
+            When you delete content, including Vibits videos, it will be moved to a trash area for 24 hours before permanent deletion, allowing for 
             recovery if accidentally deleted. We reserve the right to retain certain information as required by law or for 
             legitimate business purposes.
           </Typography>
@@ -141,7 +164,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            11. Disclaimer
+            12. Disclaimer
           </Typography>
           <Typography variant="body1" paragraph>
             The service is provided "as is" without any warranties, express or implied. We do not guarantee that the service 
@@ -152,7 +175,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            12. Limitation of Liability
+            13. Limitation of Liability
           </Typography>
           <Typography variant="body1" paragraph>
             In no event shall SideEye be liable for any indirect, incidental, special, consequential, or punitive damages 
@@ -163,7 +186,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            13. Indemnification
+            14. Indemnification
           </Typography>
           <Typography variant="body1" paragraph>
             You agree to indemnify and hold harmless SideEye and its officers, directors, employees, and agents from any claims, 
@@ -174,7 +197,28 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            14. Changes to Terms
+            15. DMCA Compliance
+          </Typography>
+          <Typography variant="body1" paragraph>
+            SideEye respects the intellectual property rights of others. If you believe that your work has been copied in a way 
+            that constitutes copyright infringement on Vibits or elsewhere on our platform, please provide our copyright agent with the following information:
+          </Typography>
+          <ul>
+            <li>An electronic or physical signature of the person authorized to act on behalf of the copyright owner</li>
+            <li>A description of the copyrighted work that you claim has been infringed</li>
+            <li>A description of where the material that you claim is infringing is located on the site</li>
+            <li>Your address, telephone number, and email address</li>
+            <li>A statement by you that you have a good faith belief that the disputed use is not authorized by the copyright owner, its agent, or the law</li>
+            <li>A statement by you, made under penalty of perjury, that the above information is accurate and that you are the copyright owner or authorized to act on the copyright owner's behalf</li>
+          </ul>
+          <Typography variant="body1" paragraph>
+            Our copyright agent can be reached at: dmca@sideeye.com
+          </Typography>
+        </Box>
+
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            16. Changes to Terms
           </Typography>
           <Typography variant="body1" paragraph>
             We reserve the right to modify these Terms at any time. We will notify users of any material changes by posting 
@@ -185,7 +229,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            15. Governing Law
+            17. Governing Law
           </Typography>
           <Typography variant="body1" paragraph>
             These Terms shall be governed by and construed in accordance with the laws of the jurisdiction in which we operate, 
@@ -195,7 +239,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            16. Contact Information
+            18. Contact Information
           </Typography>
           <Typography variant="body1" paragraph>
             If you have any questions about these Terms, please contact us at:

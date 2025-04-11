@@ -51,6 +51,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Debug from './pages/Debug';
 import CookieConsent from './components/CookieConsent';
 import BottomNav from './components/BottomNav';
+import Vibits from './pages/Vibits';
 import './App.css';
 
 const BottomNavWrapper: React.FC = () => {
@@ -84,6 +85,7 @@ const App: React.FC = () => {
                       }}>
                         <Routes>
                           <Route path="/" element={<ProtectedRoute requireEmailVerification><Feed /></ProtectedRoute>} />
+                          <Route path="/vibits" element={<ProtectedRoute><Vibits /></ProtectedRoute>} />
                           <Route path="/login" element={<Login />} />
                           <Route path="/register" element={<Register />} />
                           <Route path="/reset-password" element={<ResetPassword />} />

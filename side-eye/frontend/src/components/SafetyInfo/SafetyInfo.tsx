@@ -29,11 +29,7 @@ import {
 
 const SafetyInfo: React.FC = () => {
   return (
-    <Box sx={{ maxWidth: 800, mx: 'auto', p: 3 }}>
-      <Typography variant="h4" gutterBottom>
-        Community Guidelines & Safety
-      </Typography>
-      
+    <Box sx={{ mx: 'auto' }}>
       <Typography variant="body1" sx={{ mb: 3 }}>
         These guidelines help ensure SideEye remains a platform where users can express themselves 
         freely while maintaining a respectful and safe environment for all.
@@ -163,7 +159,78 @@ const SafetyInfo: React.FC = () => {
                 secondary="Gratuitous violence, content promoting self-harm, suicide, eating disorders, or graphic injury"
               />
             </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <BlockIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Copyright Infringement"
+                secondary="Content that violates copyright laws, including unauthorized use of intellectual property, especially in Vibits videos"
+              />
+            </ListItem>
           </List>
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion>
+        <AccordionSummary expandIcon={<GavelIcon />}>
+          <Typography>Vibits Community Guidelines</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography paragraph>
+            Our Vibits video sharing feature has specific guidelines to ensure a safe and enjoyable experience for all users:
+          </Typography>
+          <List>
+            <ListItem>
+              <ListItemIcon>
+                <VerifiedUserIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Content Ownership"
+                secondary="Only upload videos that you've created or have permission to use. Respect copyright and intellectual property rights"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <BlockIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Appropriate Content"
+                secondary="Videos must not contain nudity, pornography, violence, hate speech, dangerous activities, or illegal substances"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <PersonOutlineIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Privacy & Consent"
+                secondary="Get consent before featuring identifiable individuals in your videos, especially in private settings"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <InfoIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Disclosure"
+                secondary="Clearly disclose if your content is sponsored, contains affiliate links, or is otherwise commercial in nature"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <ShieldIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Music & Audio"
+                secondary="Only use music and audio that you have rights to use or that is available through our platform's licensed library"
+              />
+            </ListItem>
+          </List>
+          <Typography paragraph>
+            Vibits content is subject to both human and AI-powered moderation. Videos that violate these guidelines may be removed,
+            and repeated violations may result in account restrictions or termination.
+          </Typography>
         </AccordionDetails>
       </Accordion>
 
@@ -380,6 +447,73 @@ const SafetyInfo: React.FC = () => {
             SideEye is committed to continuously improving our safety measures and community guidelines.
             We regularly update our policies based on emerging threats, user feedback, and industry best practices.
           </Typography>
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion>
+        <AccordionSummary expandIcon={<SecurityIcon />}>
+          <Typography>Vibits Security & Privacy</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography paragraph>
+            We take the security and privacy of your Vibits videos seriously. Here's how we protect your content:
+          </Typography>
+          <List>
+            <ListItem>
+              <ListItemIcon>
+                <ShieldIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Secure Storage"
+                secondary="All videos are stored using industry-standard encryption and secure cloud storage protocols"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <PersonOutlineIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Privacy Controls"
+                secondary="You can delete your videos at any time, and you control who can view, comment on, and share your content"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <VerifiedUserIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Content Protection"
+                secondary="We implement measures to prevent unauthorized downloading and redistribution of your videos"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <BugReportIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Metadata Stripping"
+                secondary="We remove sensitive metadata from videos that could reveal your location or device information"
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <BlockIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Report & Remove"
+                secondary="We provide tools to report videos that violate our guidelines, and we respond quickly to removal requests"
+              />
+            </ListItem>
+          </List>
+          <Typography paragraph>
+            To enhance your privacy when using Vibits:
+          </Typography>
+          <ul>
+            <li>Be mindful of what's visible in your videos (addresses, personal documents, etc.)</li>
+            <li>Consider the environment you're filming in and who might be visible in the background</li>
+            <li>Review your videos before posting to ensure you're comfortable with all content</li>
+            <li>Use the reporting tools if you see content that violates our guidelines</li>
+          </ul>
         </AccordionDetails>
       </Accordion>
     </Box>

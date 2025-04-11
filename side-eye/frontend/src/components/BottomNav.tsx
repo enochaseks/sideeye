@@ -15,6 +15,7 @@ import {
 } from '@mui/icons-material';
 import CreatePostDialog from './CreatePostDialog';
 import { useAuth } from '../contexts/AuthContext';
+import VibitIcon from './VibitIcon';
 
 const BottomNav: React.FC = () => {
   const navigate = useNavigate();
@@ -72,6 +73,11 @@ const BottomNav: React.FC = () => {
           label="Side Rooms"
           value="/side-rooms"
           icon={<MeetingRoomIcon />}
+        />
+        <BottomNavigationAction
+          label="Vibits"
+          value="/vibits"
+          icon={<VibitIcon />}
         />
         <BottomNavigationAction
           label="Post"

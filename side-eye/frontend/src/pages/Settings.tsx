@@ -30,7 +30,8 @@ import {
   Devices as DevicesIcon,
   DarkMode as DarkModeIcon,
   Delete as DeleteIcon,
-  ManageAccounts as ManageAccountsIcon
+  ManageAccounts as ManageAccountsIcon,
+  Shield as ShieldIcon
 } from '@mui/icons-material';
 import { Link } from 'react-router-dom';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -67,6 +68,12 @@ const Settings: React.FC = () => {
       icon: <ManageAccountsIcon />,
       path: '/account-management',
       description: 'Deactivate or delete your account'
+    },
+    {
+      title: 'Safety & Community Guidelines',
+      icon: <ShieldIcon />,
+      path: '/safety',
+      description: 'Review our safety policies and community guidelines'
     },
     {
       title: 'About',
