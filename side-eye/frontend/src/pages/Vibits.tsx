@@ -99,6 +99,8 @@ const Vibits: React.FC = () => {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const [slideDirection, setSlideDirection] = useState<'up' | 'down'>('up');
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isHolding, setIsHolding] = useState(false);
+  const holdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -443,33 +445,60 @@ const Vibits: React.FC = () => {
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
+    // Start the hold timer
+    holdTimeoutRef.current = setTimeout(() => {
+      setIsHolding(true);
+    }, 300); // 300ms hold delay
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     touchEndY.current = e.touches[0].clientY;
+    // If not holding, clear the timeout
+    if (!isHolding && holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+    }
   };
 
   const handleTouchEnd = () => {
+    // Clear any pending hold timeout
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+    }
+
     const diff = touchStartY.current - touchEndY.current;
-    if (Math.abs(diff) > 50 && !isTransitioning) {
+    if (Math.abs(diff) > 50 && !isTransitioning && isHolding) {
       setIsTransitioning(true);
       if (diff > 0 && currentVideoIndex < videos.length - 1) {
         setSlideDirection('up');
         setTimeout(() => {
           setCurrentVideoIndex(prev => prev + 1);
           setIsTransitioning(false);
+          setIsHolding(false);
         }, 300);
       } else if (diff < 0 && currentVideoIndex > 0) {
         setSlideDirection('down');
         setTimeout(() => {
           setCurrentVideoIndex(prev => prev - 1);
           setIsTransitioning(false);
+          setIsHolding(false);
         }, 300);
       } else {
         setIsTransitioning(false);
+        setIsHolding(false);
       }
+    } else {
+      setIsHolding(false);
     }
   };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (holdTimeoutRef.current) {
+        clearTimeout(holdTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleFollow = async (userId: string) => {
     if (!currentUser || userId === currentUser.uid) return;
