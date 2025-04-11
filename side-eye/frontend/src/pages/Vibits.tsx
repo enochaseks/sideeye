@@ -445,10 +445,10 @@ const Vibits: React.FC = () => {
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
-    // Start the hold timer
+    // Start the hold timer with a shorter duration
     holdTimeoutRef.current = setTimeout(() => {
       setIsHolding(true);
-    }, 300); // 300ms hold delay
+    }, 150); // Reduced from 300ms to 150ms
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -466,7 +466,8 @@ const Vibits: React.FC = () => {
     }
 
     const diff = touchStartY.current - touchEndY.current;
-    if (Math.abs(diff) > 50 && !isTransitioning && isHolding) {
+    // Reduced the swipe threshold from 50 to 30 pixels
+    if (Math.abs(diff) > 30 && !isTransitioning && isHolding) {
       setIsTransitioning(true);
       if (diff > 0 && currentVideoIndex < videos.length - 1) {
         setSlideDirection('up');
@@ -474,14 +475,14 @@ const Vibits: React.FC = () => {
           setCurrentVideoIndex(prev => prev + 1);
           setIsTransitioning(false);
           setIsHolding(false);
-        }, 300);
+        }, 200); // Reduced from 300ms to 200ms
       } else if (diff < 0 && currentVideoIndex > 0) {
         setSlideDirection('down');
         setTimeout(() => {
           setCurrentVideoIndex(prev => prev - 1);
           setIsTransitioning(false);
           setIsHolding(false);
-        }, 300);
+        }, 200); // Reduced from 300ms to 200ms
       } else {
         setIsTransitioning(false);
         setIsHolding(false);
