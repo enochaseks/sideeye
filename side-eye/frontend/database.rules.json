@@ -2,8 +2,18 @@
   "rules": {
     "signaling": {
       "$roomId": {
-        ".read": "auth != null && root.child('sideRooms').child($roomId).child('members').child(auth.uid).exists()",
-        ".write": "auth != null && root.child('sideRooms').child($roomId).child('members').child(auth.uid).exists()"
+        "offer": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        },
+        "answer": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        },
+        "ice-candidate": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
       }
     },
     ".read": false,

@@ -170,6 +170,14 @@ const SideRoomComponent: React.FC = () => {
     const setupRoomListener = () => {
       try {
         if (!roomId || !db) return () => {};
+        
+        // Add authentication check
+        if (!currentUser) {
+          setError('You must be logged in to access this room');
+          setLoading(false);
+          return () => {};
+        }
+
         const roomRef = doc(db, 'sideRooms', roomId);
         const unsubscribe = onSnapshot(roomRef, (doc) => {
           if (doc.exists()) {
@@ -197,6 +205,13 @@ const SideRoomComponent: React.FC = () => {
             setRoom(roomData);
             setLoading(false);
 
+            // Check if user is banned
+            if (currentUser && roomData.bannedUsers?.includes(currentUser.uid)) {
+              setError('You have been banned from this room');
+              setLoading(false);
+              return;
+            }
+
             // Check if user is already a member (Add null check for currentUser)
             const isMember = currentUser && roomData.members?.some(member => member.userId === currentUser.uid);
             if (!isMember && roomData.isPrivate) {
@@ -210,8 +225,12 @@ const SideRoomComponent: React.FC = () => {
             setLoading(false);
           }
         }, (error) => {
-          console.error('Error fetching room:', error);
-          setError('Failed to fetch room');
+          console.error('Error accessing room:', error);
+          if (error.code === 'permission-denied') {
+            setError('You do not have permission to access this room. Please ensure you are logged in and have the proper permissions.');
+          } else {
+            setError(`Error accessing room: ${error.message}`);
+          }
           setLoading(false);
         });
 
@@ -552,7 +571,7 @@ const SideRoomComponent: React.FC = () => {
     if (!localStream) {
       try {
         console.log('Requesting audio stream...');
-        const stream = await getMediaStream({ audio: true });
+        const stream = await getMediaStream({ audio: true, video: false });
         console.log('Got audio stream:', stream.getTracks().map(t => t.kind));
         setLocalStream(stream);
         setMediaState(prev => ({ ...prev, audioEnabled: true }));
@@ -567,10 +586,19 @@ const SideRoomComponent: React.FC = () => {
     } else {
       console.log('Toggling existing audio track');
       const audioTracks = localStream.getAudioTracks();
-      audioTracks.forEach(track => {
-        track.enabled = !mediaState.audioEnabled;
-        console.log(`Audio track ${track.label} enabled:`, track.enabled);
-      });
+      if (audioTracks.length === 0) {
+        // If no audio tracks exist, create new ones
+        const stream = await getMediaStream({ audio: true, video: false });
+        setLocalStream(stream);
+        if (peerConnection) {
+          peerConnection.addStream(stream);
+        }
+      } else {
+        audioTracks.forEach(track => {
+          track.enabled = !mediaState.audioEnabled;
+          console.log(`Audio track ${track.label} enabled:`, track.enabled);
+        });
+      }
       setMediaState(prev => ({ ...prev, audioEnabled: !prev.audioEnabled }));
     }
   };
@@ -580,7 +608,7 @@ const SideRoomComponent: React.FC = () => {
     if (!localStream) {
       try {
         console.log('Requesting video stream...');
-        const stream = await getMediaStream({ video: true });
+        const stream = await getMediaStream({ video: true, audio: false });
         console.log('Got video stream:', stream.getTracks().map(t => t.kind));
         setLocalStream(stream);
         setMediaState(prev => ({ ...prev, videoEnabled: true }));
@@ -599,10 +627,22 @@ const SideRoomComponent: React.FC = () => {
     } else {
       console.log('Toggling existing video track');
       const videoTracks = localStream.getVideoTracks();
-      videoTracks.forEach(track => {
-        track.enabled = !mediaState.videoEnabled;
-        console.log(`Video track ${track.label} enabled:`, track.enabled);
-      });
+      if (videoTracks.length === 0) {
+        // If no video tracks exist, create new ones
+        const stream = await getMediaStream({ video: true, audio: false });
+        setLocalStream(stream);
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+        if (peerConnection) {
+          peerConnection.addStream(stream);
+        }
+      } else {
+        videoTracks.forEach(track => {
+          track.enabled = !mediaState.videoEnabled;
+          console.log(`Video track ${track.label} enabled:`, track.enabled);
+        });
+      }
       setMediaState(prev => ({ ...prev, videoEnabled: !prev.videoEnabled }));
     }
   };
@@ -615,9 +655,16 @@ const SideRoomComponent: React.FC = () => {
         const stream = await getScreenShare();
         console.log('Got screen share stream:', stream.getTracks().map(t => t.kind));
         
+        // Stop any existing screen share
         if (screenShareRef.current?.srcObject) {
           console.log('Stopping previous screen share');
           stopMediaStream(screenShareRef.current.srcObject as MediaStream);
+        }
+
+        // Stop any existing video tracks if screen sharing
+        if (localStream) {
+          const videoTracks = localStream.getVideoTracks();
+          videoTracks.forEach(track => track.stop());
         }
 
         if (screenShareRef.current) {
@@ -638,6 +685,10 @@ const SideRoomComponent: React.FC = () => {
             stopMediaStream(screenShareRef.current.srcObject as MediaStream);
             screenShareRef.current.srcObject = null;
           }
+          // Restore video if it was enabled before screen sharing
+          if (mediaState.videoEnabled) {
+            toggleVideo();
+          }
         };
 
         setMediaState(prev => ({ ...prev, screenSharing: true }));
@@ -650,6 +701,10 @@ const SideRoomComponent: React.FC = () => {
         }
         setMediaState(prev => ({ ...prev, screenSharing: false }));
         setScreenShareError(null);
+        // Restore video if it was enabled before screen sharing
+        if (mediaState.videoEnabled) {
+          toggleVideo();
+        }
       }
     } catch (err) {
       console.error('Error with screen share:', err);

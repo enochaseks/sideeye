@@ -44,7 +44,8 @@ import {
   Message as MessageIcon,
   Delete as DeleteIcon,
   Repeat as RepeatIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  Lock as LockIcon
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment, limit } from 'firebase/firestore';
@@ -360,6 +361,9 @@ const Profile: React.FC = () => {
   const [newComment, setNewComment] = useState('');
   const [isCommenting, setIsCommenting] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [followRequested, setFollowRequested] = useState(false);
+  const [showFollowRequests, setShowFollowRequests] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState<string[]>([]);
   
   const userId = targetUserId || currentUser?.uid || '';
 
@@ -510,6 +514,49 @@ const Profile: React.FC = () => {
     setIsFollowing(currentUser?.uid ? followers.includes(currentUser.uid) : false);
   }, [currentUser, followers]);
 
+  useEffect(() => {
+    if (currentUser?.uid && targetUserId && isPrivate) {
+      const checkFollowRequest = async () => {
+        if (!db) return;
+        try {
+          const requestRef = doc(db, 'users', targetUserId, 'followRequests', currentUser.uid);
+          const requestDoc = await getDoc(requestRef);
+          setFollowRequested(requestDoc.exists());
+        } catch (error) {
+          console.error('Error checking follow request:', error);
+        }
+      };
+      checkFollowRequest();
+
+      // Set up real-time listener for follow request changes
+      if (db) {
+        const requestRef = doc(db, 'users', targetUserId, 'followRequests', currentUser.uid);
+        const unsubscribe = onSnapshot(requestRef, (doc) => {
+          setFollowRequested(doc.exists());
+        });
+
+        return () => unsubscribe();
+      }
+    }
+  }, [currentUser?.uid, targetUserId, isPrivate, db]);
+
+  useEffect(() => {
+    if (currentUser?.uid && targetUserId && currentUser.uid === targetUserId) {
+      const fetchPendingRequests = async () => {
+        if (!db) return;
+        try {
+          const requestsRef = collection(db, 'users', targetUserId, 'followRequests');
+          const requestsSnapshot = await getDocs(requestsRef);
+          const requests = requestsSnapshot.docs.map(doc => doc.id);
+          setPendingRequests(requests);
+        } catch (error) {
+          console.error('Error fetching pending requests:', error);
+        }
+      };
+      fetchPendingRequests();
+    }
+  }, [currentUser?.uid, targetUserId, db]);
+
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentUser || !e.target.files?.[0] || !db) return;
 
@@ -574,44 +621,41 @@ const Profile: React.FC = () => {
   };
 
   const handleFollow = async () => {
-    if (!db || !currentUser || !userId) return;
+    if (!db || !currentUser || !targetUserId) return;
 
     try {
-      setIsLoading(true);
-      
-      const followingDocRef = doc(db, 'users', currentUser.uid, 'following', userId);
-      await setDoc(followingDocRef, {
-        timestamp: serverTimestamp()
-      });
+      if (isPrivate) {
+        // Create follow request
+        const requestRef = doc(db, 'users', targetUserId, 'followRequests', currentUser.uid);
+        await setDoc(requestRef, {
+          timestamp: serverTimestamp()
+        });
 
-      const followersRef = doc(db, 'users', userId, 'followers', currentUser.uid);
-      await setDoc(followersRef, {
-        timestamp: serverTimestamp()
-      });
+        // Create notification for the account owner
+        const notificationRef = doc(collection(db, 'users', targetUserId, 'notifications'));
+        await setDoc(notificationRef, {
+          type: 'follow_request',
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || 'Anonymous',
+          senderAvatar: currentUser.photoURL || '',
+          timestamp: serverTimestamp(),
+          read: false
+        });
 
-      // Create notification for the user being followed
-      const notificationData = {
-        type: 'follow',
-        senderId: currentUser.uid,
-        senderName: currentUser.displayName || 'Anonymous',
-        senderAvatar: currentUser.photoURL || '',
-        recipientId: userId,
-        content: `${currentUser.displayName || 'Someone'} started following you`,
-        createdAt: serverTimestamp(),
-        isRead: false
-      };
-      await addDoc(collection(db, 'users', userId, 'notifications'), notificationData);
-
-      setIsFollowing(true);
-      setFollowers(prev => [...prev, currentUser.uid]);
-      setConnections(prev => [...prev, userId]);
-      
-      fetchUserData();
+        setFollowRequested(true);
+      } else {
+        // Original follow logic for public accounts
+        const followingRef = doc(db, 'users', currentUser.uid, 'following', targetUserId);
+        const followersRef = doc(db, 'users', targetUserId, 'followers', currentUser.uid);
+        
+        await setDoc(followingRef, { timestamp: serverTimestamp() });
+        await setDoc(followersRef, { timestamp: serverTimestamp() });
+        
+        setIsFollowing(true);
+      }
     } catch (error) {
-      console.error('Error following user:', error);
-      setError('Failed to follow user');
-    } finally {
-      setIsLoading(false);
+      console.error('Error handling follow:', error);
+      setError('Failed to process follow request');
     }
   };
 
@@ -715,17 +759,17 @@ const Profile: React.FC = () => {
   };
 
   const renderFollowButton = () => {
-    if (currentUser?.uid === userId || !userId) return null;
+    if (currentUser?.uid === targetUserId || !targetUserId) return null;
 
     return (
       <Button
         variant={isFollowing ? "outlined" : "contained"}
         color={isFollowing ? "error" : "primary"}
         startIcon={isFollowing ? <PersonRemoveIcon /> : <PersonAddIcon />}
-        onClick={isFollowing ? () => handleUnfollow(userId) : handleFollow}
-        disabled={isLoading}
+        onClick={isFollowing ? () => handleUnfollow(targetUserId) : handleFollow}
+        disabled={isLoading || followRequested}
       >
-        {isLoading ? 'Loading...' : isFollowing ? 'Unfollow' : 'Follow'}
+        {isLoading ? 'Loading...' : isFollowing ? 'Unfollow' : followRequested ? 'Requested' : 'Follow'}
       </Button>
     );
   };
@@ -1411,6 +1455,122 @@ const Profile: React.FC = () => {
     setAnchorEl(null);
   };
 
+  // Add functions to handle follow request responses
+  const handleAcceptFollow = async (requesterId: string) => {
+    if (!db || !targetUserId) return;
+
+    try {
+      // Remove from follow requests
+      const requestRef = doc(db, 'users', targetUserId, 'followRequests', requesterId);
+      await deleteDoc(requestRef);
+
+      // Add to followers/following
+      const followingRef = doc(db, 'users', requesterId, 'following', targetUserId);
+      const followersRef = doc(db, 'users', targetUserId, 'followers', requesterId);
+      
+      await setDoc(followingRef, { timestamp: serverTimestamp() });
+      await setDoc(followersRef, { timestamp: serverTimestamp() });
+
+      // Update local state
+      setPendingRequests(prev => prev.filter(id => id !== requesterId));
+    } catch (error) {
+      console.error('Error accepting follow request:', error);
+      setError('Failed to accept follow request');
+    }
+  };
+
+  const handleRejectFollow = async (requesterId: string) => {
+    if (!db || !targetUserId) return;
+
+    try {
+      const requestRef = doc(db, 'users', targetUserId, 'followRequests', requesterId);
+      await deleteDoc(requestRef);
+      setPendingRequests(prev => prev.filter(id => id !== requesterId));
+    } catch (error) {
+      console.error('Error rejecting follow request:', error);
+      setError('Failed to reject follow request');
+    }
+  };
+
+  // Add follow requests dialog
+  const renderFollowRequestsDialog = () => (
+    <Dialog
+      open={showFollowRequests}
+      onClose={() => setShowFollowRequests(false)}
+      maxWidth="sm"
+      fullWidth
+    >
+      <DialogTitle>Follow Requests</DialogTitle>
+      <DialogContent>
+        <List>
+          {pendingRequests.length > 0 ? (
+            pendingRequests.map((requesterId) => (
+              <ListItem key={requesterId} divider>
+                <ListItemText primary={requesterId} />
+                <ListItemSecondaryAction>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={() => handleAcceptFollow(requesterId)}
+                    sx={{ mr: 1 }}
+                  >
+                    Accept
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    onClick={() => handleRejectFollow(requesterId)}
+                  >
+                    Reject
+                  </Button>
+                </ListItemSecondaryAction>
+              </ListItem>
+            ))
+          ) : (
+            <Typography variant="body1" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+              No pending follow requests
+            </Typography>
+          )}
+        </List>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setShowFollowRequests(false)}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+
+  // Add button to view follow requests for account owner
+  const renderFollowRequestsButton = () => {
+    if (currentUser?.uid !== targetUserId || pendingRequests.length === 0) return null;
+
+    return (
+      <Button
+        variant="outlined"
+        color="primary"
+        onClick={() => setShowFollowRequests(true)}
+        sx={{ ml: 2 }}
+      >
+        View Requests ({pendingRequests.length})
+      </Button>
+    );
+  };
+
+  useEffect(() => {
+    if (currentUser?.uid && targetUserId) {
+      const checkCanViewProfile = async () => {
+        if (!db) return;
+        try {
+          const followersRef = doc(db, 'users', targetUserId, 'followers', currentUser.uid);
+          const followersDoc = await getDoc(followersRef);
+          setCanViewFullProfile(followersDoc.exists() || currentUser.uid === targetUserId);
+        } catch (error) {
+          console.error('Error checking profile visibility:', error);
+        }
+      };
+      checkCanViewProfile();
+    }
+  }, [currentUser?.uid, targetUserId, db]);
+
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -1469,6 +1629,9 @@ const Profile: React.FC = () => {
                 <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
                   {name || 'No name set'}
                 </Typography>
+                {isPrivate && (
+                  <LockIcon color="action" />
+                )}
                 {currentUser?.uid === userId && (
                   <IconButton onClick={() => setIsEditing(true)} size="small">
                     <EditIcon fontSize="small" />
@@ -1478,114 +1641,139 @@ const Profile: React.FC = () => {
               <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
                 @{username || 'No username set'}
               </Typography>
-              <Typography variant="body1" sx={{ mb: 2 }}>
-                {bio || 'No bio set'}
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                {renderFollowButton()}
-                {renderMessageButton()}
-                {currentUser?.uid === userId && (
-                  <IconButton
-                    color="error"
-                    onClick={() => setShowTrashDialog(true)}
-                    sx={{ 
-                      border: '1px solid',
-                      borderColor: 'error.main',
-                      '&:hover': {
-                        backgroundColor: 'error.light',
-                        opacity: 0.8
-                      }
-                    }}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                )}
-              </Box>
+              {canViewFullProfile ? (
+                <>
+                  <Typography variant="body1" sx={{ mb: 2 }}>
+                    {bio || 'No bio set'}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    {renderFollowButton()}
+                    {renderMessageButton()}
+                    {currentUser?.uid === userId && (
+                      <IconButton
+                        color="error"
+                        onClick={() => setShowTrashDialog(true)}
+                        sx={{ 
+                          border: '1px solid',
+                          borderColor: 'error.main',
+                          '&:hover': {
+                            backgroundColor: 'error.light',
+                            opacity: 0.8
+                          }
+                        }}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    )}
+                  </Box>
+                </>
+              ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Typography variant="body1" color="text.secondary">
+                    This account is private
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 2 }}>
+                    {renderFollowButton()}
+                  </Box>
+                </Box>
+              )}
             </Box>
           </Box>
         </Paper>
 
         {/* Stats and Tabs */}
-        <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
-          {/* Stats Card */}
-          <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: 'background.paper', flex: { md: 1 } }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2 }}>
-              <Box sx={{ textAlign: 'center' }}>
-                <Typography variant="h6">{posts.length || 0}</Typography>
-                <Typography variant="body2" color="text.secondary">Posts</Typography>
+        {canViewFullProfile && (
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
+            {/* Stats Card */}
+            <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: 'background.paper', flex: { md: 1 } }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2 }}>
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h6">{posts.length || 0}</Typography>
+                  <Typography variant="body2" color="text.secondary">Posts</Typography>
+                </Box>
+                <Box 
+                  sx={{ 
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    '&:hover': {
+                      color: 'primary.main'
+                    }
+                  }}
+                  onClick={() => {
+                    // Ensure data is refreshed before showing dialog
+                    fetchUserData();
+                    setConnectionDialogTab(0); // Show followers tab
+                    setShowConnectionsDialog(true);
+                  }}
+                >
+                  <Typography variant="h6">{followers.length || 0}</Typography>
+                  <Typography variant="body2" color="text.secondary">Followers</Typography>
+                </Box>
+                <Box 
+                  sx={{ 
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    '&:hover': {
+                      color: 'primary.main'
+                    }
+                  }}
+                  onClick={() => {
+                    // Ensure data is refreshed before showing dialog
+                    fetchUserData();
+                    setConnectionDialogTab(1); // Show following tab
+                    setShowConnectionsDialog(true);
+                  }}
+                >
+                  <Typography variant="h6">{connections.length || 0}</Typography>
+                  <Typography variant="body2" color="text.secondary">Following</Typography>
+                </Box>
               </Box>
-              <Box 
-                sx={{ 
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    color: 'primary.main'
-                  }
-                }}
-                onClick={() => {
-                  // Ensure data is refreshed before showing dialog
-                  fetchUserData();
-                  setConnectionDialogTab(0); // Show followers tab
-                  setShowConnectionsDialog(true);
-                }}
-              >
-                <Typography variant="h6">{followers.length || 0}</Typography>
-                <Typography variant="body2" color="text.secondary">Followers</Typography>
-              </Box>
-              <Box 
-                sx={{ 
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    color: 'primary.main'
-                  }
-                }}
-                onClick={() => {
-                  // Ensure data is refreshed before showing dialog
-                  fetchUserData();
-                  setConnectionDialogTab(1); // Show following tab
-                  setShowConnectionsDialog(true);
-                }}
-              >
-                <Typography variant="h6">{connections.length || 0}</Typography>
-                <Typography variant="body2" color="text.secondary">Following</Typography>
-              </Box>
-            </Box>
-          </Paper>
-
-          {/* Connections Dialog */}
-          {renderConnectionsDialog()}
-
-          {/* Tabs */}
-          <Box sx={{ flex: { md: 2 } }}>
-            <Paper elevation={0} sx={{ borderRadius: 2, backgroundColor: 'background.paper' }}>
-              <Tabs
-                value={activeTab}
-                onChange={handleTabChange}
-                variant="fullWidth"
-                sx={{
-                  borderBottom: 1,
-                  borderColor: 'divider',
-                  '& .MuiTab-root': {
-                    textTransform: 'none',
-                    fontWeight: 'medium'
-                  }
-                }}
-              >
-                <Tab label="Posts" />
-                <Tab label="Vibits" />
-                <Tab label="Side Rooms" />
-                <Tab label="Liked Posts" />
-                {currentUser?.uid === userId && <Tab label="Deleted Items" />}
-              </Tabs>
             </Paper>
+
+            {/* Connections Dialog */}
+            {renderConnectionsDialog()}
+
+            {/* Tabs */}
+            <Box sx={{ flex: { md: 2 } }}>
+              <Paper elevation={0} sx={{ borderRadius: 2, backgroundColor: 'background.paper' }}>
+                <Tabs
+                  value={activeTab}
+                  onChange={handleTabChange}
+                  variant="fullWidth"
+                  sx={{
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                    '& .MuiTab-root': {
+                      textTransform: 'none',
+                      fontWeight: 'medium'
+                    }
+                  }}
+                >
+                  <Tab label="Posts" />
+                  <Tab label="Vibits" />
+                  <Tab label="Side Rooms" />
+                  <Tab label="Liked Posts" />
+                  {currentUser?.uid === userId && <Tab label="Deleted Items" />}
+                </Tabs>
+              </Paper>
+            </Box>
           </Box>
-        </Box>
+        )}
 
         {/* Tab Content */}
         <Box sx={{ flex: 1 }}>
           <TabPanel value={activeTab} index={0}>
-            {posts.length === 0 ? (
+            {!canViewFullProfile ? (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <LockIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary">
+                  This account's posts are private
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Follow this account to see their posts
+                </Typography>
+              </Box>
+            ) : posts.length === 0 ? (
               <Typography>No posts yet</Typography>
             ) : (
               <List>
@@ -1594,7 +1782,17 @@ const Profile: React.FC = () => {
             )}
           </TabPanel>
           <TabPanel value={activeTab} index={1}>
-            {videos.length === 0 ? (
+            {!canViewFullProfile ? (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <LockIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary">
+                  This account's videos are private
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Follow this account to see their videos
+                </Typography>
+              </Box>
+            ) : videos.length === 0 ? (
               <Typography>No videos uploaded yet</Typography>
             ) : (
               <Box sx={{ 
@@ -1611,7 +1809,17 @@ const Profile: React.FC = () => {
             )}
           </TabPanel>
           <TabPanel value={activeTab} index={2}>
-            {sideRooms.length === 0 ? (
+            {!canViewFullProfile ? (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <LockIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary">
+                  This account's side rooms are private
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Follow this account to see their side rooms
+                </Typography>
+              </Box>
+            ) : sideRooms.length === 0 ? (
               <Typography>Not a member of any side rooms yet</Typography>
             ) : (
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
@@ -1636,7 +1844,17 @@ const Profile: React.FC = () => {
             )}
           </TabPanel>
           <TabPanel value={activeTab} index={3}>
-            {likedPosts.length === 0 ? (
+            {!canViewFullProfile ? (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <LockIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary">
+                  This account's liked posts are private
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Follow this account to see their liked posts
+                </Typography>
+              </Box>
+            ) : likedPosts.length === 0 ? (
               <Typography>No liked posts yet</Typography>
             ) : (
               <List>
@@ -1928,6 +2146,9 @@ const Profile: React.FC = () => {
       </Menu>
 
       <CommentsDrawer />
+
+      {renderFollowRequestsButton()}
+      {renderFollowRequestsDialog()}
     </Container>
   );
 };

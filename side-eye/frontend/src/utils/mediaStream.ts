@@ -11,7 +11,21 @@ export const getUserMedia = async (constraints: MediaStreamConstraints = { audio
     }
 
     // Request media stream with specified constraints
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: constraints.audio ? {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 44100
+      } : false,
+      video: constraints.video ? {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 },
+        facingMode: 'user'
+      } : false
+    });
+
     console.log('Got media stream:', stream.getTracks().map(track => `${track.kind}: ${track.label}`));
     return stream;
   } catch (err) {
@@ -44,22 +58,41 @@ export const getDisplayMedia = async () => {
       throw new Error('Your browser does not support screen sharing');
     }
 
-    // Request screen sharing stream
+    // Request screen sharing stream with specific constraints
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         width: { ideal: 1920 },
         height: { ideal: 1080 },
         frameRate: { ideal: 30 }
       },
-      audio: true
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 44100
+      }
     });
+
+    // Handle when user stops sharing through browser UI
+    stream.getVideoTracks()[0].onended = () => {
+      console.log('Screen sharing ended by user');
+      stopMediaStream(stream);
+    };
 
     console.log('Got screen share stream:', stream.getTracks().map(track => `${track.kind}: ${track.label}`));
     return stream;
   } catch (err) {
     console.error('Error accessing screen share:', err);
-    if (err instanceof Error && err.name === 'NotAllowedError') {
-      throw new Error('Please allow access to share your screen');
+    if (err instanceof Error) {
+      if (err.name === 'NotAllowedError') {
+        throw new Error('Please allow access to share your screen');
+      } else if (err.name === 'NotFoundError') {
+        throw new Error('No screen sharing source found');
+      } else if (err.name === 'NotReadableError') {
+        throw new Error('Screen sharing is already in use');
+      } else if (err.name === 'OverconstrainedError') {
+        throw new Error('Screen sharing constraints could not be satisfied');
+      }
     }
     throw err;
   }

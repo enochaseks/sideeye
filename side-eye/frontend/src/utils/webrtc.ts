@@ -31,7 +31,8 @@ export const createPeerConnection = (roomId: string, userId: string): PeerConnec
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' }
-    ]
+    ],
+    iceCandidatePoolSize: 10
   };
 
   const pc = new RTCPeerConnection(configuration);
@@ -48,11 +49,28 @@ export const createPeerConnection = (roomId: string, userId: string): PeerConnec
   // Handle connection state changes
   pc.onconnectionstatechange = () => {
     console.log('Connection state:', pc.connectionState);
+    if (pc.connectionState === 'failed') {
+      pc.restartIce();
+    }
   };
 
   // Handle ICE connection state changes
   pc.oniceconnectionstatechange = () => {
     console.log('ICE connection state:', pc.iceConnectionState);
+    if (pc.iceConnectionState === 'failed') {
+      pc.restartIce();
+    }
+  };
+
+  // Handle negotiation needed
+  pc.onnegotiationneeded = async () => {
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      signaling.sendOffer(offer, userId);
+    } catch (err) {
+      console.error('Error during negotiation:', err);
+    }
   };
 
   // Handle incoming tracks
@@ -75,7 +93,13 @@ export const createPeerConnection = (roomId: string, userId: string): PeerConnec
       videoTracks: stream.getVideoTracks().length
     });
 
+    // Remove existing tracks of the same kind
+    const existingTracks = pc.getSenders();
     stream.getTracks().forEach(track => {
+      const existingSender = existingTracks.find(sender => sender.track?.kind === track.kind);
+      if (existingSender) {
+        pc.removeTrack(existingSender);
+      }
       console.log('Adding track:', {
         kind: track.kind,
         label: track.label,
@@ -87,7 +111,10 @@ export const createPeerConnection = (roomId: string, userId: string): PeerConnec
 
   const createOffer = async () => {
     try {
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
       await pc.setLocalDescription(offer);
       signaling.sendOffer(offer, userId);
       return offer;
@@ -100,7 +127,10 @@ export const createPeerConnection = (roomId: string, userId: string): PeerConnec
   const handleOffer = async (offer: RTCSessionDescriptionInit) => {
     try {
       await pc.setRemoteDescription(offer);
-      const answer = await pc.createAnswer();
+      const answer = await pc.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
       await pc.setLocalDescription(answer);
       signaling.sendAnswer(answer, userId);
     } catch (err) {

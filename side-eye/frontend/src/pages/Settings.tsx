@@ -53,6 +53,74 @@ interface FollowRequest {
   timestamp: any;
 }
 
+const DeviceSelector = () => {
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioDevice, setSelectedAudioDevice] = useState('');
+  const [selectedVideoDevice, setSelectedVideoDevice] = useState('');
+
+  useEffect(() => {
+    const getDevices = async () => {
+      const deviceInfos: MediaDeviceInfo[] = await navigator.mediaDevices.enumerateDevices();
+      setDevices(deviceInfos);
+    };
+
+    getDevices();
+  }, []);
+
+  const handleAudioChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedAudioDevice(event.target.value);
+  };
+
+  const handleVideoChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedVideoDevice(event.target.value);
+  };
+
+  const startStream = async () => {
+    const constraints = {
+      audio: { deviceId: selectedAudioDevice ? { exact: selectedAudioDevice } : undefined },
+      video: { deviceId: selectedVideoDevice ? { exact: selectedVideoDevice } : undefined },
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // Attach the stream to a video element or handle it as needed
+    } catch (error) {
+      console.error('Error accessing media devices.', error);
+    }
+  };
+
+  return (
+    <div>
+      <h3>Select Audio and Video Devices</h3>
+      <div>
+        <label>Audio Input:</label>
+        <select onChange={handleAudioChange} value={selectedAudioDevice}>
+          {devices
+            .filter((device) => device.kind === 'audioinput')
+            .map((device) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label || `Microphone ${device.deviceId}`}
+              </option>
+            ))}
+        </select>
+      </div>
+      <div>
+        <label>Video Input:</label>
+        <select onChange={handleVideoChange} value={selectedVideoDevice}>
+          {devices
+            .filter((device) => device.kind === 'videoinput')
+            .map((device) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label || `Camera ${device.deviceId}`}
+              </option>
+            ))}
+        </select>
+      </div>
+      <button onClick={startStream}>Start Stream</button>
+    </div>
+  );
+};
+
 const Settings: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -168,19 +236,21 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handlePrivacyToggle = async () => {
-    if (!currentUser) return;
-    try {
+  // Add a console log to verify the update
+const handlePrivacyToggle = async () => {
+  if (!currentUser) return;
+  try {
+      console.log('Updating privacy setting to:', !isPrivate); // Add this line
       await updateDoc(doc(db, 'users', currentUser.uid), {
-        isPrivate: !isPrivate
+          isPrivate: !isPrivate
       });
       setIsPrivate(!isPrivate);
       toast.success(`Account is now ${!isPrivate ? 'private' : 'public'}`);
-    } catch (error) {
+  } catch (error) {
       console.error('Error updating privacy settings:', error);
       toast.error('Failed to update privacy settings');
-    }
-  };
+  }
+};
 
   const handleFollowRequest = async (requestId: string, userId: string, accept: boolean) => {
     if (!currentUser) return;
@@ -305,6 +375,8 @@ const Settings: React.FC = () => {
                   No devices connected
                 </Typography>
               )}
+              {/* Add DeviceSelector component */}
+              <DeviceSelector />
             </List>
           </DialogContent>
           <DialogActions>
