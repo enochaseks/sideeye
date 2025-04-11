@@ -336,16 +336,7 @@ const Profile: React.FC = () => {
 
   const fetchUserData = useCallback(async () => {
     if (!db) {
-      console.error('Firestore database not initialized');
-      setError('Database connection error');
-      setIsLoading(false);
-      return;
-    }
-
-    if (!urlParam) {
-      console.error('No user identifier provided in URL');
-      setError('Invalid profile URL');
-      setIsLoading(false);
+      console.error('Firestore database is not initialized');
       return;
     }
 
@@ -353,112 +344,65 @@ const Profile: React.FC = () => {
     setError(null);
 
     try {
-      console.log('Starting user data fetch for identifier:', urlParam);
-      console.log('Current auth state:', currentUser ? 'Logged in' : 'Not logged in');
-      
       let foundUserId = urlParam;
       let userDoc;
 
-      // Check if the URL parameter is a valid Firebase user ID (28 characters)
-      if (urlParam.length !== 28) {
-        // Try to find user by username
+      // First try to find user by username
+      if (urlParam && !urlParam.includes('@')) {
         const usersRef = collection(db, 'users');
         const q = query(usersRef, where('username', '==', urlParam));
         const querySnapshot = await getDocs(q);
         
-        if (querySnapshot.empty) {
-          console.error('No user found with username:', urlParam);
-          setError('User not found');
-          setIsLoading(false);
-          return;
+        if (!querySnapshot.empty) {
+          userDoc = querySnapshot.docs[0];
+          foundUserId = userDoc.id;
         }
-
-        foundUserId = querySnapshot.docs[0].id;
-        console.log('Found user ID from username:', foundUserId);
       }
 
-      // Get user profile data
-      userDoc = await getDoc(doc(db, 'users', foundUserId));
-      if (!userDoc.exists()) {
-        console.error('User document does not exist for ID:', foundUserId);
-        setError('User profile not found');
+      // If not found by username, try by ID
+      if (!userDoc && foundUserId) {
+        userDoc = await getDoc(doc(db, 'users', foundUserId));
+      }
+
+      if (!userDoc?.exists()) {
+        setError('User not found');
         setIsLoading(false);
         return;
       }
 
-      setTargetUserId(foundUserId);
-      const userData = userDoc.data();
-      console.log('User data loaded:', userData);
-
-      // Set basic profile data that we can always access
-      setUsername(userData.username || '');
-      setName(userData.name || '');
-      setEmail(userData.email || '');
-      setBio(userData.bio || '');
-      setProfilePic(userData.profilePic || null);
-      setIsPrivate(userData.isPrivate || false);
-      setIsAdmin(userData.isAdmin || false);
-
-      // Check if we have permission to view the full profile
-      const isOwnProfile = currentUser?.uid === foundUserId;
-      let canView = !userData.isPrivate || isOwnProfile || userData.isAdmin;
-
-      if (!canView && currentUser) {
-        try {
-          // Check if we're following the private account
-          const followingDoc = await getDoc(doc(db, 'users', currentUser.uid, 'following', foundUserId));
-          canView = followingDoc.exists();
-          console.log('Follow status checked:', followingDoc.exists());
-        } catch (error) {
-          console.error('Error checking follow status:', error);
-          canView = false;
-        }
-      }
-
-      setCanViewFullProfile(canView);
-
-      if (canView) {
-        try {
-          // Fetch posts if we have permission
-          const postsQuery = query(
-            collection(db, 'posts'),
-            where('authorId', '==', foundUserId),
-            orderBy('timestamp', 'desc')
-          );
-          const postsSnapshot = await getDocs(postsQuery);
-          const postsData = postsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as Post[];
-          setPosts(postsData);
-        } catch (error) {
-          console.error('Error fetching posts:', error);
-          setError('Error loading posts');
-        }
-      }
+      const userData = userDoc.data() as UserProfile;
+      setUserProfile(userData);
+      setTargetUserId(foundUserId || null);
 
       try {
         // Fetch followers and following
-        const [followersSnapshot, followingSnapshot] = await Promise.all([
-          getDocs(collection(db, 'users', foundUserId, 'followers')),
-          getDocs(collection(db, 'users', foundUserId, 'following'))
-        ]);
+        if (foundUserId) {
+          const [followersSnapshot, followingSnapshot] = await Promise.all([
+            getDocs(collection(db, 'users', foundUserId, 'followers')),
+            getDocs(collection(db, 'users', foundUserId, 'following'))
+          ]);
 
-        // Process followers and following data
-        const followers = followersSnapshot.docs.map(doc => doc.id);
-        const following = followingSnapshot.docs.map(doc => doc.id);
+          // Process followers and following data, filtering out the current user if viewing own profile
+          const followers = followersSnapshot.docs
+            .map(doc => doc.id)
+            .filter(id => currentUser?.uid !== foundUserId || id !== currentUser?.uid);
+          
+          const following = followingSnapshot.docs
+            .map(doc => doc.id)
+            .filter(id => currentUser?.uid !== foundUserId || id !== currentUser?.uid);
 
-        setFollowers(followers);
-        setConnections(following);
+          setFollowers(followers);
+          setConnections(following);
 
-        // Fetch detailed user data for followers and following
-        const [followersData, followingData] = await Promise.all([
-          Promise.all(followers.map(id => getDoc(doc(db, 'users', id)))),
-          Promise.all(following.map(id => getDoc(doc(db, 'users', id))))
-        ]);
+          // Fetch detailed user data for followers and following
+          const [followersData, followingData] = await Promise.all([
+            Promise.all(followers.map(id => getDoc(doc(db, 'users', id)))),
+            Promise.all(following.map(id => getDoc(doc(db, 'users', id))))
+          ]);
 
-        setFollowersList(followersData.map(doc => doc.data() as UserProfile));
-        setFollowingList(followingData.map(doc => doc.data() as UserProfile));
+          setFollowersList(followersData.map(doc => doc.data() as UserProfile));
+          setFollowingList(followingData.map(doc => doc.data() as UserProfile));
+        }
 
         setIsLoading(false);
       } catch (error) {
