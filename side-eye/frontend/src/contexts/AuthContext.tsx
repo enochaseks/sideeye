@@ -150,7 +150,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           } 
           // Set loading false after initial setup/navigation logic is decided
-          setLoading(false); 
+              setLoading(false);
 
         } catch (error) {
           console.error("AuthContext: Error during auth state processing:", error);
@@ -242,7 +242,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentUser(null);
       setUser(null);
       setUserProfile(null);
-      setLoading(false);
+        setLoading(false);
       logError(error, 'Login Function');
       }
   };

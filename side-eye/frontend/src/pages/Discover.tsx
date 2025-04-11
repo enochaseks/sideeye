@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -17,7 +17,11 @@ import {
   IconButton,
   Divider,
   CircularProgress,
-  Chip
+  Chip,
+  Grid,
+  Card,
+  CardContent,
+  CardMedia
 } from '@mui/material';
 import { 
   TrendingUp as TrendingIcon,
@@ -28,20 +32,21 @@ import {
   Message as MessageIcon,
   People as PeopleIcon
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
-import { collection, query as firestoreQuery, where, getDocs, orderBy, limit, Firestore, DocumentData, Timestamp } from 'firebase/firestore';
+import { useNavigate, Link } from 'react-router-dom';
+import { collection, query, where, getDocs, orderBy, limit, DocumentData, Timestamp } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 
 interface UserProfile {
-  uid: string;
-  displayName: string;
-  photoURL: string;
+  id: string;
   username: string;
-  bio?: string;
-  followers?: number;
-  following?: number;
+  name: string;
+  profilePic: string;
+  bio: string;
+  coverPhoto?: string;
+  isPublic: boolean;
+  createdAt: Timestamp;
 }
 
 interface Room {
@@ -78,104 +83,71 @@ interface FirestoreRoom extends DocumentData {
 const Discover: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<{
-    users: UserProfile[];
-    rooms: Room[];
-  }>({ users: [], rooms: [] });
-  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const usersRef = collection(db, 'users');
+        const q = query(
+          usersRef,
+          where('isPublic', '==', true),
+          orderBy('createdAt', 'desc'),
+          limit(20)
+        );
+        
+        const querySnapshot = await getDocs(q);
+        const usersData = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as UserProfile[];
+        
+        setUsers(usersData);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUsers();
+  }, []);
 
   const handleSearch = async (query: string) => {
     setSearchQuery(query);
     
     if (!currentUser || !db) {
-      setSearchResults({ users: [], rooms: [] });
+      setUsers([]);
+      setRooms([]);
       return;
     }
 
     if (query.length < 2) {
-      setSearchResults({ users: [], rooms: [] });
+      setUsers([]);
+      setRooms([]);
       return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      const queryLower = query.toLowerCase();
-
-      const usersRef = collection(db, 'users');
-      
-      const nameQuery = firestoreQuery(
-        usersRef,
-        where('displayNameSearch', '>=', queryLower),
-        where('displayNameSearch', '<=', queryLower + '\uf8ff'),
-        limit(10)
+      const filteredUsers = users.filter(user => 
+        user.username?.toLowerCase().includes(query.toLowerCase()) ||
+        user.name?.toLowerCase().includes(query.toLowerCase())
       );
 
-      const usernameQuery = firestoreQuery(
-        usersRef,
-        where('usernameSearch', '>=', queryLower),
-        where('usernameSearch', '<=', queryLower + '\uf8ff'),
-        limit(10)
+      const filteredRooms = rooms.filter(room => 
+        room.name?.toLowerCase().includes(query.toLowerCase()) ||
+        room.description?.toLowerCase().includes(query.toLowerCase())
       );
 
-      const roomsRef = collection(db, 'sideRooms');
-      const roomQuery = firestoreQuery(
-        roomsRef,
-        where('isPrivate', '==', false),
-        where('nameSearch', '>=', queryLower),
-        where('nameSearch', '<=', queryLower + '\uf8ff'),
-        limit(10)
-      );
-
-      const [nameResults, usernameResults, roomResults] = await Promise.all([
-        getDocs(nameQuery),
-        getDocs(usernameQuery),
-        getDocs(roomQuery)
-      ]);
-
-      const combinedUserResults = new Map<string, UserProfile>();
-      
-      const filterAndAddUser = (doc: DocumentData) => {
-        if (doc.id === currentUser.uid) return;
-        const data = doc.data() as FirestoreUser;
-        combinedUserResults.set(doc.id, {
-          uid: doc.id,
-          displayName: data.displayName || 'Anonymous',
-          photoURL: data.photoURL || '',
-          username: data.username || '',
-          bio: data.bio || '',
-          followers: data.followers || 0,
-          following: data.following || 0
-        });
-      };
-
-      nameResults.docs.forEach(filterAndAddUser);
-      usernameResults.docs.forEach((doc) => {
-        if (!combinedUserResults.has(doc.id)) {
-          filterAndAddUser(doc);
-        }
-      });
-
-      const roomResultsList = roomResults.docs.map(doc => {
-        const data = doc.data() as FirestoreRoom;
-        return {
-          id: doc.id,
-          name: data.name || 'Unnamed Room',
-          description: data.description || '',
-          memberCount: data.memberCount || 0,
-          shareCount: data.shareCount || 0,
-          isPrivate: data.isPrivate || false,
-          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date()
-        } as Room;
-      });
-
-      setSearchResults({
-        users: Array.from(combinedUserResults.values()),
-        rooms: roomResultsList
-      });
+      setUsers(filteredUsers);
+      setRooms(filteredRooms);
 
     } catch (error: any) {
       console.error('Search error:', error);
@@ -197,6 +169,14 @@ const Discover: React.FC = () => {
   const handleRoomClick = (roomId: string) => {
     navigate(`/room/${roomId}`);
   };
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
@@ -238,7 +218,7 @@ const Discover: React.FC = () => {
               </Typography>
             </Box>
             <List>
-              {searchResults.users.length === 0 ? (
+              {users.length === 0 ? (
                 <ListItem>
                   <ListItemText 
                     primary="No users found" 
@@ -246,15 +226,15 @@ const Discover: React.FC = () => {
                   />
                 </ListItem>
               ) : (
-                searchResults.users.map((user, index) => (
-                  <React.Fragment key={user.uid}>
+                users.map((user, index) => (
+                  <React.Fragment key={user.id}>
                     <ListItem
                       secondaryAction={
-                        user.uid !== currentUser?.uid && (
+                        user.id !== currentUser?.uid && (
                           <Box sx={{ display: 'flex', gap: 1 }}>
                             <IconButton
                               edge="end"
-                              onClick={() => navigate(`/messages/${user.uid}`)}
+                              onClick={() => navigate(`/messages/${user.id}`)}
                               title="Send message"
                             >
                               <MessageIcon />
@@ -271,12 +251,12 @@ const Discover: React.FC = () => {
                       }
                     >
                       <ListItemAvatar>
-                        <Avatar src={user.photoURL} alt={user.displayName}>
-                          {user.displayName[0]}
+                        <Avatar src={user.profilePic} alt={user.name}>
+                          {user.name[0]}
                         </Avatar>
                       </ListItemAvatar>
                       <ListItemText
-                        primary={user.displayName}
+                        primary={user.name}
                         secondary={
                           <React.Fragment>
                             @{user.username}
@@ -294,11 +274,11 @@ const Discover: React.FC = () => {
                             )}
                           </React.Fragment>
                         }
-                        onClick={() => handleUserClick(user.uid)}
+                        onClick={() => handleUserClick(user.id)}
                         sx={{ cursor: 'pointer' }}
                       />
                     </ListItem>
-                    {index < searchResults.users.length - 1 && <Divider />}
+                    {index < users.length - 1 && <Divider />}
                   </React.Fragment>
                 ))
               )}
@@ -313,7 +293,7 @@ const Discover: React.FC = () => {
               </Typography>
             </Box>
             <List>
-              {searchResults.rooms.length === 0 ? (
+              {rooms.length === 0 ? (
                 <ListItem>
                   <ListItemText 
                     primary="No rooms found" 
@@ -321,7 +301,7 @@ const Discover: React.FC = () => {
                   />
                 </ListItem>
               ) : (
-                searchResults.rooms.map((room, index) => (
+                rooms.map((room, index) => (
                   <React.Fragment key={room.id}>
                     <ListItem
                       secondaryAction={
@@ -373,7 +353,7 @@ const Discover: React.FC = () => {
                         sx={{ cursor: 'pointer' }}
                       />
                     </ListItem>
-                    {index < searchResults.rooms.length - 1 && <Divider />}
+                    {index < rooms.length - 1 && <Divider />}
                   </React.Fragment>
                 ))
               )}

@@ -125,6 +125,166 @@ interface ProfileProps {
   userId?: string;
 }
 
+interface ConnectionsDialogProps {
+  open: boolean;
+  onClose: () => void;
+  followers: string[];
+  followersList: UserProfile[];
+  followingList: UserProfile[];
+  connections: string[];
+  currentUser: import("../contexts/AuthContext").User | null;
+  isLoading: boolean;
+  handleUnfollow: (userId: string) => void;
+  handleFollow: () => void;
+  initialTab: number;
+}
+
+const ConnectionsDialog: React.FC<ConnectionsDialogProps> = ({
+  open,
+  onClose,
+  followers,
+  followersList,
+  followingList,
+  connections,
+  currentUser,
+  isLoading,
+  handleUnfollow,
+  handleFollow,
+  initialTab
+}) => {
+  const [dialogTab, setDialogTab] = useState(initialTab);
+  
+  useEffect(() => {
+    setDialogTab(initialTab);
+  }, [initialTab, open]);
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="sm"
+      fullWidth
+    >
+      <DialogTitle>
+        <Tabs
+          value={dialogTab}
+          onChange={(e, newValue) => setDialogTab(newValue)}
+          variant="fullWidth"
+        >
+          <Tab label={`Followers (${followers.length})`} />
+          <Tab label={`Following (${connections.length})`} />
+        </Tabs>
+      </DialogTitle>
+      <DialogContent>
+        <List>
+          {dialogTab === 0 ? (
+            followersList.length > 0 ? (
+              followersList.map((user) => (
+                <ListItem key={user.id} divider>
+                  <ListItemAvatar>
+                    <Link to={`/profile/${user.username || user.id}`} style={{ textDecoration: 'none' }}>
+                      <Avatar src={user.profilePic || undefined} />
+                    </Link>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Link to={`/profile/${user.username || user.id}`} style={{ textDecoration: 'none' }}>
+                        <Typography 
+                          variant="subtitle1"
+                          sx={{ 
+                            color: 'text.primary',
+                            '&:hover': { textDecoration: 'underline' }
+                          }}
+                        >
+                          {user.name || user.username || "User"}
+                        </Typography>
+                      </Link>
+                    }
+                    secondary={user.username ? `@${user.username}` : ""}
+                  />
+                  {currentUser?.uid !== user.id && (
+                    <ListItemSecondaryAction>
+                      <Button
+                        variant={connections.includes(user.id) ? "outlined" : "contained"}
+                        color={connections.includes(user.id) ? "error" : "primary"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          connections.includes(user.id) 
+                            ? handleUnfollow(user.id) 
+                            : handleFollow();
+                        }}
+                        disabled={isLoading}
+                        size="small"
+                      >
+                        {isLoading ? 'Loading...' : connections.includes(user.id) ? 'Unfollow' : 'Follow'}
+                      </Button>
+                    </ListItemSecondaryAction>
+                  )}
+                </ListItem>
+              ))
+            ) : (
+              <Typography variant="body1" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+                No followers yet
+              </Typography>
+            )
+          ) : (
+            followingList.length > 0 ? (
+              followingList.map((user) => (
+                <ListItem key={user.id} divider>
+                  <ListItemAvatar>
+                    <Link to={`/profile/${user.username || user.id}`} style={{ textDecoration: 'none' }}>
+                      <Avatar src={user.profilePic || undefined} />
+                    </Link>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Link to={`/profile/${user.username || user.id}`} style={{ textDecoration: 'none' }}>
+                        <Typography 
+                          variant="subtitle1"
+                          sx={{ 
+                            color: 'text.primary',
+                            '&:hover': { textDecoration: 'underline' }
+                          }}
+                        >
+                          {user.name || user.username || "User"}
+                        </Typography>
+                      </Link>
+                    }
+                    secondary={user.username ? `@${user.username}` : ""}
+                  />
+                  {currentUser?.uid !== user.id && (
+                    <ListItemSecondaryAction>
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUnfollow(user.id);
+                        }}
+                        disabled={isLoading}
+                        size="small"
+                      >
+                        {isLoading ? 'Loading...' : 'Unfollow'}
+                      </Button>
+                    </ListItemSecondaryAction>
+                  )}
+                </ListItem>
+              ))
+            ) : (
+              <Typography variant="body1" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+                Not following anyone yet
+              </Typography>
+            )
+          )}
+        </List>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
 const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -167,8 +327,8 @@ const Profile: React.FC = () => {
   const [targetUserId, setTargetUserId] = useState<string | null>(null);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [showCreateStory, setShowCreateStory] = useState(false);
+  const [connectionDialogTab, setConnectionDialogTab] = useState(0);
   
-  // Get the user ID from URL params or current user
   const userId = targetUserId || currentUser?.uid || '';
 
   const fetchUserData = useCallback(async () => {
@@ -192,7 +352,6 @@ const Profile: React.FC = () => {
       let userData: UserProfile | undefined;
       let foundUserId: string | null = null;
 
-      // First try to get user by ID
       try {
         userDoc = await getDoc(doc(db, 'users', urlParam));
         if (userDoc.exists()) {
@@ -203,7 +362,6 @@ const Profile: React.FC = () => {
         console.log('Not a valid user ID, trying username');
       }
 
-      // If not found by ID, try username
       if (!userDoc?.exists()) {
         const usersQuery = query(
           collection(db, 'users'),
@@ -234,143 +392,83 @@ const Profile: React.FC = () => {
       setEmail(userData.email || '');
       setBio(userData.bio || '');
       setProfilePic(userData.profilePic || null);
-      setConnections(userData.connections || []);
-      setFollowers(userData.followers || []);
 
-      // Check if current user is following this user
       if (currentUser?.uid) {
-        setIsFollowing(userData.followers?.includes(currentUser.uid) || false);
+        const followingDoc = await getDoc(doc(db, 'users', currentUser.uid, 'following', foundUserId));
+        setIsFollowing(followingDoc.exists());
       }
 
-      // Fetch posts
+      const followersSnapshot = await getDocs(collection(db, 'users', foundUserId, 'followers'));
+      const followingSnapshot = await getDocs(collection(db, 'users', foundUserId, 'following'));
+      
+      setFollowers(followersSnapshot.docs.map(doc => doc.id));
+      setConnections(followingSnapshot.docs.map(doc => doc.id));
+
       const postsQuery = query(
         collection(db, 'posts'),
         where('authorId', '==', foundUserId),
         orderBy('timestamp', 'desc')
       );
-
-      const unsubscribePosts = onSnapshot(postsQuery, (snapshot) => {
-        const postsList = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Post[];
-        setPosts(postsList);
-      });
-
-      // Fetch forums
-      const forumsQuery = query(
-        collection(db, 'forums'),
-        where('ownerId', '==', foundUserId),
-        orderBy('createdAt', 'desc')
-      );
-
-      const unsubscribeForums = onSnapshot(forumsQuery, (snapshot) => {
-        const forumsList = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Forum[];
-        setForums(forumsList);
-      });
-
-      // Fetch side rooms
-      const roomsQuery = query(
-        collection(db, 'sideRooms'),
-        where('ownerId', '==', foundUserId),
-        orderBy('createdAt', 'desc')
-      );
-
-      const unsubscribeRooms = onSnapshot(roomsQuery, (snapshot) => {
-        const roomsList = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as SideRoom[];
-        setSideRooms(roomsList);
-      });
-
-      // Fetch liked posts
-      const likedPostsQuery = query(
-        collection(db, 'posts'),
-        where('likedBy', 'array-contains', foundUserId),
-        orderBy('timestamp', 'desc')
-      );
-
-      const unsubscribeLikedPosts = onSnapshot(likedPostsQuery, (snapshot) => {
-        const likedPostsList = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Post[];
-        setLikedPosts(likedPostsList);
-      });
-
-      // Fetch deleted items
-      const deletedItemsQuery = query(
-        collection(db, 'deleted_items'),
-        where('content.authorId', '==', foundUserId),
-        orderBy('deletedAt', 'desc')
-      );
-
-      const unsubscribeDeletedItems = onSnapshot(deletedItemsQuery, (snapshot) => {
-        const deletedItemsList = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as DeletedItem[];
-        setDeletedItems(deletedItemsList);
-      });
+      const postsSnapshot = await getDocs(postsQuery);
+      const postsData = postsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Post[];
+      setPosts(postsData);
 
       setIsLoading(false);
-      return () => {
-        unsubscribePosts();
-        unsubscribeForums();
-        unsubscribeRooms();
-        unsubscribeLikedPosts();
-        unsubscribeDeletedItems();
-      };
     } catch (error) {
       console.error('Error fetching user data:', error);
       setError('Failed to load user data');
       setIsLoading(false);
     }
-  }, [urlParam, db, currentUser?.uid]);
+  }, [db, urlParam, currentUser]);
+
+  const fetchUserLists = async () => {
+    if (!db || !userId) return;
+
+    try {
+      console.log('Fetching user lists for userId:', userId);
+      
+      const followersSnapshot = await getDocs(collection(db, 'users', userId, 'followers'));
+      const followerPromises = followersSnapshot.docs.map(async (followerDoc) => {
+        const userDoc = await getDoc(doc(db, 'users', followerDoc.id));
+        if (userDoc.exists()) {
+          return { id: userDoc.id, ...userDoc.data() } as UserProfile;
+        }
+        return null;
+      });
+      const followersData = await Promise.all(followerPromises);
+      const filteredFollowersData = followersData.filter(Boolean) as UserProfile[];
+      console.log('Followers data:', filteredFollowersData);
+      setFollowersList(filteredFollowersData);
+
+      const followingSnapshot = await getDocs(collection(db, 'users', userId, 'following'));
+      const followingPromises = followingSnapshot.docs.map(async (followingDoc) => {
+        const userDoc = await getDoc(doc(db, 'users', followingDoc.id));
+        if (userDoc.exists()) {
+          return { id: userDoc.id, ...userDoc.data() } as UserProfile;
+        }
+        return null;
+      });
+      const followingData = await Promise.all(followingPromises);
+      const filteredFollowingData = followingData.filter(Boolean) as UserProfile[];
+      console.log('Following data:', filteredFollowingData);
+      setFollowingList(filteredFollowingData);
+      
+    } catch (error) {
+      console.error('Error fetching user lists:', error);
+      setError('Failed to load followers/following');
+    }
+  };
 
   useEffect(() => {
     fetchUserData();
   }, [fetchUserData]);
 
   useEffect(() => {
-    const fetchUserLists = async () => {
-      if (!userId || !db) {
-        setError('Database not initialized');
-        return;
-      }
-
-      try {
-        // Fetch followers
-        const followersPromises = followers.map(async (followerId) => {
-          const followerDoc = await getDoc(doc(db, 'users', followerId));
-          return followerDoc.exists() ? followerDoc.data() as UserProfile : null;
-        });
-        const followersData = await Promise.all(followersPromises);
-        setFollowersList(followersData.filter(Boolean) as UserProfile[]);
-
-        // Fetch following
-        const followingPromises = connections.map(async (followingId) => {
-          const followingDoc = await getDoc(doc(db, 'users', followingId));
-          return followingDoc.exists() ? followingDoc.data() as UserProfile : null;
-        });
-        const followingData = await Promise.all(followingPromises);
-        setFollowingList(followingData.filter(Boolean) as UserProfile[]);
-
-        // Log the following list and connections
-        console.log('Following List:', followingData);
-        console.log('Connections:', connections);
-      } catch (error) {
-        console.error('Error fetching user lists:', error);
-        setError('Failed to fetch user lists');
-      }
-    };
-
     fetchUserLists();
-  }, [userId, followers, connections, db]);
+  }, [fetchUserLists]);
 
   useEffect(() => {
     if (userProfile) {
@@ -381,7 +479,6 @@ const Profile: React.FC = () => {
   }, [userProfile]);
 
   useEffect(() => {
-    // Update following status whenever followers change
     setIsFollowing(currentUser?.uid ? followers.includes(currentUser.uid) : false);
   }, [currentUser, followers]);
 
@@ -397,39 +494,32 @@ const Profile: React.FC = () => {
       setError(null);
       const file = e.target.files[0];
       
-      // Validate file type
       if (!file.type.startsWith('image/')) {
         setError('Please upload an image file');
         return;
       }
 
-      // Validate file size (max 5MB)
       if (file.size > 5 * 1024 * 1024) {
         setError('Image size should be less than 5MB');
         return;
       }
 
-      // Create a unique filename with timestamp
       const timestamp = Date.now();
       const fileExtension = file.name.split('.').pop();
       const fileName = `profile_${timestamp}.${fileExtension}`;
       
-      // Upload image to Firebase Storage
       const storageRef = ref(storage, `profile_pictures/${currentUser.uid}/${fileName}`);
       const snapshot = await uploadBytes(storageRef, file);
       const downloadURL = await getDownloadURL(snapshot.ref);
 
-      // Update user profile in Firestore
       const userRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userRef, {
         profilePic: downloadURL,
         updatedAt: serverTimestamp()
       });
 
-      // Update local state
       setProfilePic(downloadURL);
       
-      // Update auth context
       if (userProfile) {
         setUserProfile({
           ...userProfile,
@@ -437,7 +527,6 @@ const Profile: React.FC = () => {
         });
       }
 
-      // Clear the file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -487,20 +576,18 @@ const Profile: React.FC = () => {
     if (!db || !currentUser || !userId) return;
 
     try {
-      const currentUserRef = doc(db, 'users', currentUser.uid);
-      const targetUserRef = doc(db, 'users', userId);
-
-      // Update current user's following list
-      await updateDoc(currentUserRef, {
-        connections: arrayUnion(userId)
+      setIsLoading(true);
+      
+      const followingDocRef = doc(db, 'users', currentUser.uid, 'following', userId);
+      await setDoc(followingDocRef, {
+        timestamp: serverTimestamp()
       });
 
-      // Update target user's followers list
-      await updateDoc(targetUserRef, {
-        followers: arrayUnion(currentUser.uid)
+      const followersRef = doc(db, 'users', userId, 'followers', currentUser.uid);
+      await setDoc(followersRef, {
+        timestamp: serverTimestamp()
       });
 
-      // Create notification for follow
       const notificationData = {
         type: 'follow',
         senderId: currentUser.uid,
@@ -515,18 +602,16 @@ const Profile: React.FC = () => {
 
       await addDoc(collection(db, 'notifications'), notificationData);
 
-      // Update local state
-      if (userProfile) {
-        setUserProfile({
-          ...userProfile,
-          connections: [...(userProfile.connections || []), userId]
-        });
-      }
-      setFollowers(prev => [...prev, currentUser.uid]);
       setIsFollowing(true);
+      setFollowers(prev => [...prev, currentUser.uid]);
+      setConnections(prev => [...prev, userId]);
+      
+      fetchUserLists();
     } catch (error) {
       console.error('Error following user:', error);
       setError('Failed to follow user');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -539,34 +624,18 @@ const Profile: React.FC = () => {
 
     try {
       setIsLoading(true);
-      const userRef = doc(db, 'users', currentUser.uid);
-      const targetUserRef = doc(db, 'users', userToUnfollow);
+      
+      const followingDocRef = doc(db, 'users', currentUser.uid, 'following', userToUnfollow);
+      await deleteDoc(followingDocRef);
 
-      // Remove from current user's following
-      await updateDoc(userRef, {
-        connections: arrayRemove(userToUnfollow)
-      });
+      const followersRef = doc(db, 'users', userToUnfollow, 'followers', currentUser.uid);
+      await deleteDoc(followersRef);
 
-      // Remove from target user's followers
-      await updateDoc(targetUserRef, {
-        followers: arrayRemove(currentUser.uid)
-      });
-
-      // Update local state
-      if (userProfile) {
-        setUserProfile({
-          ...userProfile,
-          connections: (userProfile.connections || []).filter(id => id !== userToUnfollow)
-        });
-      }
-
-      // Refresh the user data to ensure consistency
-      const updatedUserDoc = await getDoc(doc(db, 'users', userId));
-      if (updatedUserDoc.exists()) {
-        const updatedUserData = updatedUserDoc.data() as UserProfile;
-        setConnections(updatedUserData.connections || []);
-        setFollowers(updatedUserData.followers || []);
-      }
+      setIsFollowing(false);
+      setFollowers(prev => prev.filter(id => id !== currentUser.uid));
+      setConnections(prev => prev.filter(id => id !== userToUnfollow));
+      
+      fetchUserLists();
     } catch (error) {
       console.error('Error unfollowing user:', error);
       setError('Failed to unfollow user');
@@ -575,7 +644,41 @@ const Profile: React.FC = () => {
     }
   };
 
-  // Update the message icon button
+  useEffect(() => {
+    if (!db || !userId) return;
+
+    const followersRef = collection(db, 'users', userId, 'followers');
+    const unsubscribe = onSnapshot(followersRef, (snapshot) => {
+      const newFollowers = snapshot.docs.map(doc => doc.id);
+      setFollowers(newFollowers);
+    });
+
+    return () => unsubscribe();
+  }, [db, userId]);
+
+  useEffect(() => {
+    if (!db || !userId) return;
+
+    const followingRef = collection(db, 'users', userId, 'following');
+    const unsubscribe = onSnapshot(followingRef, (snapshot) => {
+      const newFollowing = snapshot.docs.map(doc => doc.id);
+      setConnections(newFollowing);
+    });
+
+    return () => unsubscribe();
+  }, [db, userId]);
+
+  useEffect(() => {
+    if (!db || !currentUser || !userId) return;
+
+    const followingRef = doc(db, 'users', currentUser.uid, 'following', userId);
+    const unsubscribe = onSnapshot(followingRef, (doc) => {
+      setIsFollowing(doc.exists());
+    });
+
+    return () => unsubscribe();
+  }, [db, currentUser, userId]);
+
   const renderMessageButton = () => {
     if (!userId) return null;
 
@@ -584,7 +687,6 @@ const Profile: React.FC = () => {
         color="primary"
         onClick={() => {
           setShowMessagesDialog(true);
-          // Mark all messages as read when opening dialog
           messages.forEach(msg => {
             if (!msg.read) {
               handleMarkAsRead(msg.id);
@@ -612,7 +714,6 @@ const Profile: React.FC = () => {
     );
   };
 
-  // Update the follow button section to include the message button
   const renderFollowButton = () => {
     if (currentUser?.uid === userId || !userId) return null;
 
@@ -695,17 +796,14 @@ const Profile: React.FC = () => {
       const deletedItem = deletedItemDoc.data();
       const targetCollection = type === 'post' ? 'posts' : type === 'room' ? 'sideRooms' : 'forums';
       
-      // Restore to main collection
       await setDoc(doc(db, targetCollection, itemId), {
         ...deletedItem.content,
         deletedAt: null,
         scheduledForPermanentDeletion: null
       });
   
-      // Remove from deleted collection
       await deleteDoc(deletedItemRef);
   
-      // Update local state
       setDeletedItems(prev => prev.filter(item => item.id !== itemId));
       
       setError('Item restored successfully');
@@ -825,12 +923,30 @@ const Profile: React.FC = () => {
       const postData = postDoc.data();
       const isLiked = postData.likedBy?.includes(currentUser.uid);
       
-      await updateDoc(postRef, {
-        likes: isLiked ? increment(-1) : increment(1),
-        likedBy: isLiked 
-          ? arrayRemove(currentUser.uid)
-          : arrayUnion(currentUser.uid)
-      });
+      if (isLiked) {
+        // Remove like from subcollection
+        const likeRef = doc(db, 'posts', postId, 'likes', currentUser.uid);
+        await deleteDoc(likeRef);
+        
+        // Update post document
+        await updateDoc(postRef, {
+          likes: increment(-1),
+          likedBy: arrayRemove(currentUser.uid)
+        });
+      } else {
+        // Add like to subcollection
+        const likeRef = doc(db, 'posts', postId, 'likes', currentUser.uid);
+        await setDoc(likeRef, {
+          userId: currentUser.uid,
+          timestamp: serverTimestamp()
+        });
+        
+        // Update post document
+        await updateDoc(postRef, {
+          likes: increment(1),
+          likedBy: arrayUnion(currentUser.uid)
+        });
+      }
     } catch (error) {
       console.error('Error liking post:', error);
     }
@@ -1039,67 +1155,21 @@ const Profile: React.FC = () => {
     </ListItem>
   );
 
-  // Update the connections dialog to make profiles clickable
+  // Update the connections dialog to properly display users and tab navigation
   const renderConnectionsDialog = () => (
-    <Dialog
+    <ConnectionsDialog 
       open={showConnectionsDialog}
       onClose={() => setShowConnectionsDialog(false)}
-      maxWidth="sm"
-      fullWidth
-    >
-      <DialogTitle>
-        {activeTab === 0 ? 'Followers' : 'Following'}
-      </DialogTitle>
-      <DialogContent>
-        <List>
-          {(activeTab === 0 ? followersList : followingList).map((user) => (
-            <ListItem key={user.id} divider>
-              <ListItemAvatar>
-                <Link to={`/profile/${user.username}`} style={{ textDecoration: 'none' }}>
-                  <Avatar src={user.profilePic || undefined} />
-                </Link>
-              </ListItemAvatar>
-              <ListItemText
-                primary={
-                  <Link to={`/profile/${user.username}`} style={{ textDecoration: 'none' }}>
-                    <Typography 
-                      variant="subtitle1"
-                      sx={{ 
-                        color: 'text.primary',
-                        '&:hover': { textDecoration: 'underline' }
-                      }}
-                    >
-                      {user.name}
-                    </Typography>
-                  </Link>
-                }
-                secondary={`@${user.username}`}
-              />
-              <ListItemSecondaryAction>
-                {currentUser?.uid !== user.id && (
-                  <Button
-                    variant={user.followers?.includes(currentUser?.uid || '') ? "outlined" : "contained"}
-                    color={user.followers?.includes(currentUser?.uid || '') ? "error" : "primary"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      user.followers?.includes(currentUser?.uid || '') 
-                        ? handleUnfollow(user.id) 
-                        : handleFollow();
-                    }}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? 'Loading...' : user.followers?.includes(currentUser?.uid || '') ? 'Unfollow' : 'Follow'}
-                  </Button>
-                )}
-              </ListItemSecondaryAction>
-            </ListItem>
-          ))}
-        </List>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={() => setShowConnectionsDialog(false)}>Close</Button>
-      </DialogActions>
-    </Dialog>
+      followers={followers}
+      followersList={followersList}
+      followingList={followingList}
+      connections={connections}
+      currentUser={currentUser}
+      isLoading={isLoading}
+      handleUnfollow={handleUnfollow}
+      handleFollow={handleFollow}
+      initialTab={connectionDialogTab}
+    />
   );
 
   // Handle menu open
@@ -1111,6 +1181,44 @@ const Profile: React.FC = () => {
   const handleMenuClose = () => {
     setAnchorEl(null);
   };
+
+  useEffect(() => {
+    if (!db || !userId) return;
+
+    // Fetch only the user's own posts
+    const fetchPosts = async () => {
+      try {
+        setIsLoading(true);
+        
+        // Create a query to get only this user's posts
+        const postsQuery = query(
+          collection(db, 'posts'),
+          where('authorId', '==', userId),
+          orderBy('timestamp', 'desc')
+        );
+
+        const unsubscribe = onSnapshot(postsQuery, (snapshot) => {
+          const postsList = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as Post[];
+          setPosts(postsList);
+        }, (error) => {
+          console.error('Error fetching posts:', error);
+          setError('Failed to load posts');
+        });
+
+        return () => unsubscribe();
+      } catch (error) {
+        console.error('Error setting up posts listener:', error);
+        setError('Failed to load posts');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchPosts();
+  }, [db, userId]);
 
   if (authLoading || isLoading) {
     return (
@@ -1223,7 +1331,12 @@ const Profile: React.FC = () => {
                     color: 'primary.main'
                   }
                 }}
-                onClick={() => setShowConnectionsDialog(true)}
+                onClick={() => {
+                  // Ensure data is refreshed before showing dialog
+                  fetchUserLists();
+                  setConnectionDialogTab(0); // Show followers tab
+                  setShowConnectionsDialog(true);
+                }}
               >
                 <Typography variant="h6">{followers.length || 0}</Typography>
                 <Typography variant="body2" color="text.secondary">Followers</Typography>
@@ -1236,7 +1349,12 @@ const Profile: React.FC = () => {
                     color: 'primary.main'
                   }
                 }}
-                onClick={() => setShowConnectionsDialog(true)}
+                onClick={() => {
+                  // Ensure data is refreshed before showing dialog
+                  fetchUserLists();
+                  setConnectionDialogTab(1); // Show following tab
+                  setShowConnectionsDialog(true);
+                }}
               >
                 <Typography variant="h6">{connections.length || 0}</Typography>
                 <Typography variant="body2" color="text.secondary">Following</Typography>

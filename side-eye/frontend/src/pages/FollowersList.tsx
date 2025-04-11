@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import {
   Box,
@@ -28,27 +28,26 @@ const FollowersList: React.FC = () => {
       if (!db || !userId) return;
       
       try {
-        const userDoc = await getDoc(doc(db, 'users', userId));
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as UserProfile;
-          const followersList = userData.followers || [];
+        // Get the followers subcollection
+        const followersRef = collection(db, 'users', userId, 'followers');
+        const followersSnapshot = await getDocs(followersRef);
+        
+        // Fetch follower details
+        const followerPromises = followersSnapshot.docs.map(async (followerDoc) => {
+          const followerId = followerDoc.id;
+          const userDoc = await getDoc(doc(db, 'users', followerId));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as UserProfile;
+            return {
+              ...userData,
+              id: followerId
+            };
+          }
+          return null;
+        });
 
-          // Fetch follower details
-          const followerPromises = followersList.map(async (followerId) => {
-            const followerDoc = await getDoc(doc(db, 'users', followerId));
-            if (followerDoc.exists()) {
-              const followerData = followerDoc.data() as UserProfile;
-              return {
-                ...followerData,
-                id: followerId
-              };
-            }
-            return null;
-          });
-
-          const followersData = await Promise.all(followerPromises);
-          setFollowers(followersData.filter(Boolean) as UserProfile[]);
-        }
+        const followersData = await Promise.all(followerPromises);
+        setFollowers(followersData.filter(Boolean) as UserProfile[]);
       } catch (err) {
         setError('Failed to fetch followers');
         console.error('Error fetching followers:', err);
@@ -82,11 +81,11 @@ const FollowersList: React.FC = () => {
         Followers
       </Typography>
       <List>
-        {followers.map((follower) => (
+        {followers.map((user) => (
           <ListItem
-            key={follower.id}
+            key={user.id}
             component={Link}
-            to={`/profile/${follower.id}`}
+            to={`/profile/${user.id}`}
             sx={{
               textDecoration: 'none',
               color: 'inherit',
@@ -96,11 +95,11 @@ const FollowersList: React.FC = () => {
             }}
           >
             <ListItemAvatar>
-              <Avatar src={follower.profilePic} alt={follower.username} />
+              <Avatar src={user.profilePic} alt={user.username} />
             </ListItemAvatar>
             <ListItemText
-              primary={follower.username}
-              secondary={follower.name}
+              primary={user.username}
+              secondary={user.name}
             />
           </ListItem>
         ))}

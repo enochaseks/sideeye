@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import {
   Box,
@@ -28,27 +28,26 @@ const FollowingList: React.FC = () => {
       if (!db || !userId) return;
       
       try {
-        const userDoc = await getDoc(doc(db, 'users', userId));
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as UserProfile;
-          const followingList = userData.connections || [];
+        // Get the following subcollection
+        const followingRef = collection(db, 'users', userId, 'following');
+        const followingSnapshot = await getDocs(followingRef);
+        
+        // Fetch following details
+        const followingPromises = followingSnapshot.docs.map(async (followingDoc) => {
+          const followingId = followingDoc.id;
+          const userDoc = await getDoc(doc(db, 'users', followingId));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as UserProfile;
+            return {
+              ...userData,
+              id: followingId
+            };
+          }
+          return null;
+        });
 
-          // Fetch following details
-          const followingPromises = followingList.map(async (followingId) => {
-            const followingDoc = await getDoc(doc(db, 'users', followingId));
-            if (followingDoc.exists()) {
-              const followingData = followingDoc.data() as UserProfile;
-              return {
-                ...followingData,
-                id: followingId
-              };
-            }
-            return null;
-          });
-
-          const followingData = await Promise.all(followingPromises);
-          setFollowing(followingData.filter(Boolean) as UserProfile[]);
-        }
+        const followingData = await Promise.all(followingPromises);
+        setFollowing(followingData.filter(Boolean) as UserProfile[]);
       } catch (err) {
         setError('Failed to fetch following');
         console.error('Error fetching following:', err);

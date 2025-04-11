@@ -159,7 +159,6 @@ const Feed: React.FC = () => {
     }
 
     console.log("Feed: Auth finished, currentUser exists. Loading user profile...");
-    setFeedLoading(true);
     const loadUserProfile = async () => {
       try {
         const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
@@ -173,6 +172,7 @@ const Feed: React.FC = () => {
         setUserProfile(userData);
         setFollowing(userData.connections || []);
         setProfileLoaded(true);
+        setFeedLoading(false);
       } catch (error) {
         console.error('Error loading user profile:', error);
         setError('Failed to load user profile');
@@ -184,57 +184,61 @@ const Feed: React.FC = () => {
   }, [currentUser, db, authLoading]);
 
   useEffect(() => {
-    if (!currentUser || !db || !profileLoaded) {
+    if (!db || !currentUser) {
+      setFeedLoading(false);
       return;
     }
 
-    console.log("Feed: Auth finished, profile loaded. Setting up posts listener...");
-    setFeedLoading(true);
-    
-    // First get posts - this is the main subscription
-    const postsRef = collection(db, 'posts');
-    const postsQuery = query(
-      postsRef,
-      where('authorId', 'in', [currentUser.uid, ...following].slice(0, 10)),
-      orderBy('timestamp', 'desc'),
-      limit(50)
-    );
-    
-    // Listen for changes in posts
-    const unsubscribePosts = onSnapshot(postsQuery, (postsSnapshot) => {
-      console.log("Feed: Posts snapshot received.");
-      const regularPosts: PostData[] = [];
-      
-      postsSnapshot.forEach((doc) => {
-        const post = { id: doc.id, ...doc.data() } as PostData;
-        if (!post.deleted) {
-          regularPosts.push(post);
-        }
-      });
+    const fetchPosts = async () => {
+      try {
+        setIsLoading(true);
+        
+        // Get the list of users being followed
+        const followingRef = collection(db, 'users', currentUser.uid, 'following');
+        const followingSnapshot = await getDocs(followingRef);
+        const followingIds = followingSnapshot.docs.map(doc => doc.data().userId);
+        
+        // Add the current user's ID to the list to see their own posts too
+        const userIdsToFetch = [...followingIds, currentUser.uid];
 
-      // Set posts for now (we'll add reposts separately)
-      setPosts(regularPosts);
-      setError(null);
-      setFeedLoading(false);
-      
-      // Now fetch reposts separately - not in the main listener
-      loadReposts(regularPosts);
-    }, (error) => {
-      console.error('Error fetching posts:', error);
-      if (error.code === 'permission-denied') {
-        setError('You do not have permission to view these posts. Please contact support.');
-      } else {
-        setError('Error loading posts. Please try again later.');
+        if (userIdsToFetch.length === 0) {
+          setPosts([]);
+          return;
+        }
+
+        // Create a query to get posts from followed users and own posts
+        const postsQuery = query(
+          collection(db, 'posts'),
+          where('authorId', 'in', userIdsToFetch),
+          orderBy('timestamp', 'desc')
+        );
+
+        const unsubscribe = onSnapshot(postsQuery, (snapshot) => {
+          const postsList = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as PostData[];
+          setPosts(postsList);
+          setIsLoading(false);
+          setFeedLoading(false);
+        }, (error) => {
+          console.error('Error fetching posts:', error);
+          setError('Failed to load posts');
+          setIsLoading(false);
+          setFeedLoading(false);
+        });
+
+        return () => unsubscribe();
+      } catch (error) {
+        console.error('Error setting up posts listener:', error);
+        setError('Failed to load posts');
+        setIsLoading(false);
+        setFeedLoading(false);
       }
-      setFeedLoading(false);
-    });
-    
-    // Return the cleanup function
-    return () => {
-      console.log("Feed: Cleaning up posts listener.");
-      unsubscribePosts();
     };
-  }, [currentUser, db, following, userProfile?.blockedUsers, profileLoaded]);
+
+    fetchPosts();
+  }, [db, currentUser]);
 
   const uploadImage = async (file: File): Promise<string> => {
     const storageRef = ref(storage, `posts/${Date.now()}_${file.name}`);
@@ -358,8 +362,13 @@ const Feed: React.FC = () => {
         // Add to local queue for syncing later
         setLocalReposts(prev => [...prev, { postId, added: false }]);
         
-        // Update UI immediately by removing from posts
-        setPosts(prev => prev.filter(post => 
+        // Update UI immediately by removing from posts and updating original post's repost count
+        setPosts(prev => prev.map(post => {
+          if (post.id === postId && !post.isRepost) {
+            return { ...post, reposts: Math.max(0, (post.reposts || 0) - 1) };
+          }
+          return post;
+        }).filter(post => 
           !(post.isRepost && post.id === postId && post.repostedById === currentUser.uid)
         ));
         
@@ -369,7 +378,7 @@ const Feed: React.FC = () => {
         // Add to local queue for syncing later
         setLocalReposts(prev => [...prev, { postId, added: true }]);
         
-        // Update UI immediately by adding repost to posts
+        // Update UI immediately by adding repost to posts and updating original post's repost count
         setPosts(prev => [
           {
             ...originalPost,
@@ -378,7 +387,12 @@ const Feed: React.FC = () => {
             repostedById: currentUser.uid,
             reposts: (originalPost.reposts || 0) + 1
           },
-          ...prev
+          ...prev.map(post => {
+            if (post.id === postId && !post.isRepost) {
+              return { ...post, reposts: (post.reposts || 0) + 1 };
+            }
+            return post;
+          })
         ]);
         
         toast.success('Post reposted!');
@@ -598,6 +612,11 @@ const Feed: React.FC = () => {
               <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
                 {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
               </Typography>
+              {!post.isRepost && post.reposts > 0 && (
+                <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
+                  • {post.reposts} repost{post.reposts !== 1 ? 's' : ''}
+                </Typography>
+              )}
             </Box>
             {post.authorId === currentUser?.uid && (
               <IconButton
@@ -930,7 +949,7 @@ const Feed: React.FC = () => {
     );
   };
 
-  if (authLoading || feedLoading) {
+  if (authLoading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
         <CircularProgress />

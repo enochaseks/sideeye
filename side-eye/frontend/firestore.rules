@@ -71,19 +71,6 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(userId));
     }
 
-    match /passcodeVerifications/{verificationId} {
-      allow create: if isAuthenticated() &&
-                    hasValidDeviceId() &&
-                    isRegisteredDevice(request.auth.uid, request.resource.data.deviceId) &&
-                    'passcodeHash' in request.resource.data &&
-                    request.resource.data.passcodeHash is string;
-      
-      allow read: if isAuthenticated() && 
-                  (resource.data.userId == request.auth.uid || isAdmin());
-      
-      allow delete: if isAdmin();
-    }
-
     // ======================
     // Core Collections
     // ======================
@@ -94,6 +81,28 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == userId;
       allow update: if request.auth != null && request.auth.uid == userId;
       allow delete: if false;
+
+      // Following subcollection
+      match /following/{followingId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && 
+                      request.auth.uid == userId && 
+                      userExists(followingId) &&
+                      followingId != userId;
+        allow delete: if isAuthenticated() && 
+                      request.auth.uid == userId;
+      }
+
+      // Followers subcollection
+      match /followers/{followerId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && 
+                      request.auth.uid == followerId && 
+                      userExists(userId) &&
+                      followerId != userId;
+        allow delete: if isAuthenticated() && 
+                      request.auth.uid == followerId;
+      }
     }
 
     // Notifications Collection
@@ -111,8 +120,22 @@ service cloud.firestore {
     match /posts/{postId} {
       allow read: if true;
       allow create: if request.auth != null;
-      allow update: if request.auth != null && resource.data.authorId == request.auth.uid;
+      allow update: if request.auth != null && (
+        // Author can update any field
+        resource.data.authorId == request.auth.uid ||
+        // Any authenticated user can update likes and likedBy fields
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy']))
+      );
       allow delete: if request.auth != null && resource.data.authorId == request.auth.uid;
+    }
+
+    // Reposts Collection
+    match /reposts/{repostId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                    request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     // Comments Collection
@@ -158,6 +181,19 @@ service cloud.firestore {
     // ======================
     // Security Collections
     // ======================
+    match /passcodeVerifications/{verificationId} {
+      allow create: if isAuthenticated() &&
+                    hasValidDeviceId() &&
+                    isRegisteredDevice(request.auth.uid, request.resource.data.deviceId) &&
+                    'passcodeHash' in request.resource.data &&
+                    request.resource.data.passcodeHash is string;
+      
+      allow read: if isAuthenticated() && 
+                  (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow delete: if isAdmin();
+    }
+
     match /sourceCodeVerifications/{verificationId} {
       allow create: if isAuthenticated() &&
                    request.resource.data.userId == request.auth.uid;
@@ -183,7 +219,9 @@ service cloud.firestore {
         // User can read their own stories
         resource.data.authorId == request.auth.uid ||
         // User can read stories from users they follow
-        isFollowing(resource.data.authorId)
+        isFollowing(resource.data.authorId) ||
+        // User can read stories from public accounts
+        get(/databases/$(database)/documents/users/$(resource.data.authorId)).data.isPublic
       );
       allow create: if isAuthenticated() && 
         request.resource.data.authorId == request.auth.uid &&
