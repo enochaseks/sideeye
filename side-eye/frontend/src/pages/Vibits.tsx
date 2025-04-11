@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Box, IconButton, Typography, CircularProgress, Dialog, TextField, Button, Avatar, LinearProgress, DialogTitle, DialogContent, DialogActions, Menu, MenuItem, Select, FormControl, InputLabel, SelectChangeEvent, FormHelperText } from '@mui/material';
+import { Box, IconButton, Typography, CircularProgress, Dialog, TextField, Button, Avatar, LinearProgress, DialogTitle, DialogContent, DialogActions, Menu, MenuItem, Select, FormControl, InputLabel, SelectChangeEvent, FormHelperText, Slider } from '@mui/material';
 import { 
   Add as AddIcon, 
   Favorite as FavoriteIcon, 
@@ -14,7 +14,11 @@ import {
   PersonAddAlt1 as PersonAddAlt1Icon,
   MoreVert as MoreVertIcon,
   HighQuality as HighQualityIcon,
-  Info as InfoIcon
+  Info as InfoIcon,
+  VolumeOff as VolumeOffIcon,
+  VolumeUp as VolumeUpIcon,
+  Pause as PauseIcon,
+  PlayArrow as PlayArrowIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -89,7 +93,21 @@ const Vibits: React.FC = () => {
   const [resolutionAnchorEl, setResolutionAnchorEl] = useState<null | HTMLElement>(null);
   const [videoInfoAnchorEl, setVideoInfoAnchorEl] = useState<null | HTMLElement>(null);
   const [currentVideoInfo, setCurrentVideoInfo] = useState<{duration: string, resolution: string}>({duration: '0:00', resolution: 'Unknown'});
+  const [isMuted, setIsMuted] = useState(true);
+  const [volume, setVolume] = useState(0.5);
+  const [isPlaying, setIsPlaying] = useState(true);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.volume = volume;
+      if (isPlaying) {
+        videoRef.current.play();
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, [volume, isPlaying]);
 
   useEffect(() => {
     fetchVideos();
@@ -538,7 +556,7 @@ const Vibits: React.FC = () => {
             src={currentVideo.url}
             autoPlay
             loop
-            muted
+            muted={isMuted}
             playsInline
             style={{
               width: '100%',
@@ -549,14 +567,65 @@ const Vibits: React.FC = () => {
               left: 0,
               zIndex: 1
             }}
+            onClick={() => setIsPlaying(!isPlaying)}
           />
           
           <Box sx={{
             position: 'absolute',
             top: 16,
             right: 16,
-            zIndex: 10
+            zIndex: 10,
+            display: 'flex',
+            gap: 1
           }}>
+            <IconButton 
+              color="primary"
+              onClick={() => setIsPlaying(!isPlaying)}
+              sx={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+            >
+              {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
+            </IconButton>
+            <IconButton 
+              color="primary"
+              onClick={() => setIsMuted(!isMuted)}
+              sx={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+            >
+              {isMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
+            </IconButton>
+            {!isMuted && (
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center',
+                backgroundColor: 'rgba(0,0,0,0.5)',
+                borderRadius: 1,
+                px: 1,
+                py: 0.5
+              }}>
+                <Slider
+                  value={volume}
+                  onChange={(_, newValue) => {
+                    setVolume(newValue as number);
+                  }}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  sx={{
+                    width: 100,
+                    color: 'white',
+                    '& .MuiSlider-thumb': {
+                      width: 12,
+                      height: 12,
+                    },
+                    '& .MuiSlider-track': {
+                      height: 4,
+                    },
+                    '& .MuiSlider-rail': {
+                      height: 4,
+                    }
+                  }}
+                />
+              </Box>
+            )}
             <IconButton 
               color="primary"
               onClick={handleInfoMenuOpen}
