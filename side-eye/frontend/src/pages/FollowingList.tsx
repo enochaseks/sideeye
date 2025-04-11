@@ -31,6 +31,7 @@ const FollowingList: React.FC = () => {
         // Get the following subcollection
         const followingRef = collection(db, 'users', userId, 'following');
         const followingSnapshot = await getDocs(followingRef);
+        console.log('Following snapshot size:', followingSnapshot.size);
         
         // Fetch following details
         const followingPromises = followingSnapshot.docs.map(async (followingDoc) => {

@@ -22,16 +22,39 @@ const FollowersList: React.FC = () => {
   const [followers, setFollowers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { currentUser } = useAuth();
 
   useEffect(() => {
     const fetchFollowers = async () => {
-      if (!db || !userId) return;
-      
+      if (!db || !userId) {
+        console.error('Firestore database or userId is not initialized');
+        return;
+      }
+      console.log('Firestore database initialized:', db);
+      console.log('User ID:', userId);
+
       try {
+        // Check if the user can view the followers
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        if (!userDoc.exists()) {
+          setError('User not found');
+          return;
+        }
+
+        const userData = userDoc.data();
+        const isPrivate = userData.isPrivate || false;
+        const canView = !isPrivate || (currentUser && currentUser.uid === userId);
+
+        if (!canView) {
+          setError('This account is private. Follow to see their followers.');
+          return;
+        }
+
         // Get the followers subcollection
         const followersRef = collection(db, 'users', userId, 'followers');
         const followersSnapshot = await getDocs(followersRef);
-        
+        console.log('Followers snapshot size:', followersSnapshot.size);
+
         // Fetch follower details
         const followerPromises = followersSnapshot.docs.map(async (followerDoc) => {
           const followerId = followerDoc.id;
@@ -57,7 +80,7 @@ const FollowersList: React.FC = () => {
     };
 
     fetchFollowers();
-  }, [db, userId]);
+  }, [db, userId, currentUser]);
 
   if (loading) {
     return (

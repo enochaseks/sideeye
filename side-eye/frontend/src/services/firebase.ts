@@ -1,6 +1,6 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { initializeFirestore, CACHE_SIZE_UNLIMITED, Firestore } from 'firebase/firestore';
+import { initializeApp, getApp, getApps } from 'firebase/app';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { initializeFirestore, CACHE_SIZE_UNLIMITED } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getDatabase } from 'firebase/database';
 
@@ -16,36 +16,25 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+console.log('Initializing Firebase app');
 
-// Initialize Auth
-export const auth = getAuth(app);
+// Initialize services
+const auth = getAuth(app);
+const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+  cacheSizeBytes: CACHE_SIZE_UNLIMITED
+});
+const storage = getStorage(app);
+const rtdb = getDatabase(app);
 
 // Add auth state change listener for debugging
-auth.onAuthStateChanged((user) => {
-  if (user) {
-    console.log('Auth state changed - User:', {
-      uid: user.uid,
-      email: user.email,
-      emailVerified: user.emailVerified,
-      providerData: user.providerData
-    });
-  } else {
-    console.log('Auth state changed - No user');
-  }
+onAuthStateChanged(auth, (user) => {
+  console.log('Firebase auth state changed:', user ? 'User logged in' : 'No user');
 });
 
-// Initialize Firestore with new cache settings
-export const db = initializeFirestore(app, {
-  cacheSizeBytes: CACHE_SIZE_UNLIMITED,
-  experimentalForceLongPolling: true
-});
-
-// Initialize Storage
-export const storage = getStorage(app);
-
-// Initialize Realtime Database
-export const rtdb = getDatabase(app);
+// Export initialized services
+export { auth, db, storage, rtdb };
 
 // Add configuration check function
 export const checkFirebaseConfig = () => {

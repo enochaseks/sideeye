@@ -43,32 +43,59 @@ service cloud.firestore {
     }
 
     function isFollowing(targetUserId) {
-      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return targetUserId in userDoc.data.following || 
-             (userDoc.data.following is list && userDoc.data.following.hasAny([targetUserId]));
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)/following/$(targetUserId));
     }
 
     function isAdmin() {
       return isAuthenticated() && 
-             exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
     function isValidProfileUpdate() {
-      let allowedFields = ['name', 'profilePic', 'bio', 'settings', 'lastUpdated'];
-      let isVerificationUpdate = request.resource.data.isVerified != resource.data.isVerified;
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields) &&
-             (!isVerificationUpdate || isAdmin()) &&
-             isValidTimeValue(request.resource.data.lastUpdated);
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['displayName', 'photoURL', 'bio', 'isPrivate']);
     }
 
     function isValidSessionUpdate() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sessions']) &&
-             request.resource.data.sessions is map &&
-             request.resource.data.sessions.verifications is list;
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['lastActive', 'deviceInfo']);
     }
 
     function userExists(userId) {
       return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    // Helper function to check if a user has a private account
+    function isPrivateAccount(userId) {
+      let userDoc = get(/databases/$(database)/documents/users/$(userId));
+      return userDoc.data.isPrivate == true;
+    }
+
+    // Helper function to check if a user is a follower
+    function isFollowerOf(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)/followers/$(request.auth.uid));
+    }
+
+    // Helper function to check if a follow request exists
+    function hasFollowRequest(userId, requesterId) {
+      return exists(/databases/$(database)/documents/users/$(userId)/followRequests/$(requesterId));
+    }
+
+    function isPublicAccount(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.isPrivate == false;
+    }
+
+    function isOwnProfile(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Add debug function
+    function debug() {
+      return request.auth != null 
+        ? "Auth ID: " + request.auth.uid + " Time: " + request.time
+        : "Unauthenticated";
     }
 
     // ======================
@@ -77,44 +104,59 @@ service cloud.firestore {
 
     // Users Collection
     match /users/{userId} {
-      allow read: if true;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && request.auth.uid == userId;
-      allow delete: if false;
-
-      // Following subcollection
-      match /following/{followingId} {
+      // Allow read access to any authenticated user
+      allow read: if isAuthenticated();
+      
+      // Allow create/update access to:
+      // 1. The user themselves
+      // 2. Admins
+      allow create, update: if isAuthenticated() && (
+        isOwnProfile(userId) ||
+        isAdmin()
+      );
+      
+      // Allow delete access only to admins
+      allow delete: if isAdmin();
+      
+      // Subcollections (excluding followers/following which have their own rules)
+      match /{subcollection}/{document=**} {
+        // Allow read access to any authenticated user
         allow read: if isAuthenticated();
-        allow create: if isAuthenticated() && 
-                      request.auth.uid == userId && 
-                      userExists(followingId) &&
-                      followingId != userId;
-        allow delete: if isAuthenticated() && 
-                      request.auth.uid == userId;
+        
+        allow create, update: if isAuthenticated() && (
+          isOwnProfile(userId) ||
+          isAdmin()
+        );
+        
+        allow delete: if isAdmin();
       }
 
-      // Followers subcollection
+      // Explicit rules for followers subcollection
       match /followers/{followerId} {
-        allow read: if isAuthenticated();
-        allow create: if isAuthenticated() && 
-                      request.auth.uid == followerId && 
-                      userExists(userId) &&
-                      followerId != userId;
-        allow delete: if isAuthenticated() && 
-                      request.auth.uid == followerId;
+        // Allow read access to:
+        // 1. The user themselves
+        // 2. Admins
+        // 3. Public accounts
+        allow read: if isAuthenticated() && (
+          isOwnProfile(userId) || 
+          isAdmin() ||
+          !isPrivateAccount(userId)
+        );
+        allow create: if isAuthenticated() && request.auth.uid == followerId;
+        allow delete: if isAuthenticated() && request.auth.uid == followerId;
       }
 
-      // Notifications subcollection
-      match /notifications/{notificationId} {
-        allow read: if isAuthenticated() && request.auth.uid == userId;
-        allow create: if isAuthenticated();
-        allow update: if isAuthenticated() && request.auth.uid == userId;
-        allow delete: if isAuthenticated() && request.auth.uid == userId;
-      }
-
-      // Favorites subcollection
-      match /favorites/{videoId} {
-        allow read: if isAuthenticated();
+      // Explicit rules for following subcollection
+      match /following/{followingId} {
+        // Allow read access to:
+        // 1. The user themselves
+        // 2. Admins
+        // 3. Public accounts
+        allow read: if isAuthenticated() && (
+          isOwnProfile(userId) || 
+          isAdmin() ||
+          !isPrivateAccount(userId)
+        );
         allow create: if isAuthenticated() && request.auth.uid == userId;
         allow delete: if isAuthenticated() && request.auth.uid == userId;
       }
@@ -133,15 +175,37 @@ service cloud.firestore {
 
     // Posts Collection
     match /posts/{postId} {
-      allow read: if true;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null && (
-        // Author can update any field
+      // Allow read access to:
+      // 1. Admins
+      // 2. Posts from public accounts
+      // 3. Posts from private accounts that the user follows
+      // 4. User's own posts
+      // 5. Posts from users the current user follows
+      allow read: if isAdmin() || 
+        !isPrivateAccount(resource.data.authorId) || 
+        isFollowing(resource.data.authorId) ||
         resource.data.authorId == request.auth.uid ||
-        // Any authenticated user can update likes and likedBy fields
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy']))
-      );
-      allow delete: if request.auth != null && resource.data.authorId == request.auth.uid;
+        (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)/following/$(resource.data.authorId)));
+      
+      // Allow create for authenticated users
+      allow create: if isAuthenticated() && 
+        request.resource.data.authorId == request.auth.uid;
+      
+      // Allow update for:
+      // 1. Admins
+      // 2. Post owners
+      // 3. Anyone for likes/comments
+      allow update: if isAdmin() || 
+        (isAuthenticated() && (
+          request.auth.uid == resource.data.authorId ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments'])
+        ));
+      
+      // Allow delete for:
+      // 1. Admins
+      // 2. Post owners
+      allow delete: if isAdmin() || 
+        (isAuthenticated() && request.auth.uid == resource.data.authorId);
     }
 
     // Reposts Collection
@@ -154,18 +218,55 @@ service cloud.firestore {
     }
 
     // Comments Collection
-    match /posts/{postId}/comments/{commentId} {
-      allow read: if true;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null && resource.data.authorId == request.auth.uid;
-      allow delete: if request.auth != null && resource.data.authorId == request.auth.uid;
+    match /comments/{commentId} {
+      // Allow read access to:
+      // 1. Admins
+      // 2. Comments on public account posts
+      // 3. Comments on private account posts that the user follows
+      // 4. User's own comments
+      allow read: if isAdmin() || 
+        !isPrivateAccount(resource.data.userId) || 
+        isFollowing(resource.data.userId) ||
+        resource.data.userId == request.auth.uid;
+      
+      // Allow create for authenticated users
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid;
+      
+      // Allow update for:
+      // 1. Admins
+      // 2. Comment owners
+      allow update: if isAdmin() || 
+        (isAuthenticated() && request.auth.uid == resource.data.userId);
+      
+      // Allow delete for:
+      // 1. Admins
+      // 2. Comment owners
+      allow delete: if isAdmin() || 
+        (isAuthenticated() && request.auth.uid == resource.data.userId);
     }
 
     // Likes Collection
-    match /posts/{postId}/likes/{userId} {
-      allow read: if true;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow delete: if request.auth != null && request.auth.uid == userId;
+    match /likes/{likeId} {
+      // Allow read access to:
+      // 1. Admins
+      // 2. Likes on public account posts
+      // 3. Likes on private account posts that the user follows
+      // 4. User's own likes
+      allow read: if isAdmin() || 
+        !isPrivateAccount(resource.data.userId) || 
+        isFollowing(resource.data.userId) ||
+        resource.data.userId == request.auth.uid;
+      
+      // Allow create for authenticated users
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid;
+      
+      // Allow delete for:
+      // 1. Admins
+      // 2. Like owners
+      allow delete: if isAdmin() || 
+        (isAuthenticated() && request.auth.uid == resource.data.userId);
     }
 
     // Forums Collection
@@ -182,26 +283,45 @@ service cloud.firestore {
 
     // Side Rooms Collection
     match /sideRooms/{roomId} {
-      allow read: if isAuthenticated() && 
-                  (!resource.data.isPrivate || isDocumentMember(resource));
+      // Allow read access to any authenticated user
+      allow read: if isAuthenticated();
+      
+      // Allow create for authenticated users
       allow create: if isAuthenticated() && 
-                    request.resource.data.ownerId == request.auth.uid;
+        request.resource.data.ownerId == request.auth.uid;
+      
+      // Allow update for:
+      // 1. Room owners
+      // 2. Room members
       allow update: if isAuthenticated() && 
-                    (resource.data.ownerId == request.auth.uid || 
-                    isDocumentMember(resource));
+        (resource.data.ownerId == request.auth.uid || 
+        isDocumentMember(resource));
+      
+      // Allow delete only for room owners
       allow delete: if isAuthenticated() && 
-                    resource.data.ownerId == request.auth.uid;
+        resource.data.ownerId == request.auth.uid;
     }
 
-    // Videos Collection
+    // Videos Collection (Vibits)
     match /videos/{videoId} {
-      allow read: if true;
+      // Allow read access to any authenticated user
+      allow read: if isAuthenticated();
+      
+      // Allow create for authenticated users
       allow create: if isAuthenticated() && 
-                    request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && 
-                    (resource.data.userId == request.auth.uid ||
-                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments']));
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        request.resource.data.userId == request.auth.uid;
+      
+      // Allow update for:
+      // 1. Video owners
+      // 2. Anyone for likes/comments
+      allow update: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments'])
+      );
+      
+      // Allow delete only for video owners
+      allow delete: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
     }
 
     // User Likes subcollection
@@ -220,11 +340,61 @@ service cloud.firestore {
 
     // Video Comments subcollection
     match /videos/{videoId}/comments/{commentId} {
-      allow read: if true;
+      // Allow read access to any authenticated user
+      allow read: if isAuthenticated();
+      
+      // Allow create for authenticated users
       allow create: if isAuthenticated() && 
-                    request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        request.resource.data.userId == request.auth.uid;
+      
+      // Allow update for comment owners
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
+      
+      // Allow delete for comment owners
+      allow delete: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Live Rooms Collection
+    match /liveRooms/{roomId} {
+      // Allow read access to:
+      // 1. Any authenticated user for public rooms
+      // 2. Room members for private rooms
+      allow read: if isAuthenticated() && (
+        !resource.data.isPrivate || 
+        isDocumentMember(resource) ||
+        resource.data.ownerId == request.auth.uid
+      );
+      
+      // Allow create for authenticated users
+      allow create: if isAuthenticated() && 
+        request.resource.data.ownerId == request.auth.uid;
+      
+      // Allow update for:
+      // 1. Room owners
+      // 2. Room members
+      allow update: if isAuthenticated() && 
+        (resource.data.ownerId == request.auth.uid || 
+        isDocumentMember(resource));
+      
+      // Allow delete only for room owners
+      allow delete: if isAuthenticated() && 
+        resource.data.ownerId == request.auth.uid;
+    }
+
+    // Search Collection
+    match /search/{document=**} {
+      // Allow read access to any authenticated user
+      allow read: if isAuthenticated();
+      
+      // Allow write access to:
+      // 1. Admins
+      // 2. The user themselves for their own data
+      allow write: if isAuthenticated() && (
+        isAdmin() ||
+        request.resource.data.userId == request.auth.uid
+      );
     }
 
     // ======================
@@ -270,7 +440,7 @@ service cloud.firestore {
         // User can read stories from users they follow
         isFollowing(resource.data.authorId) ||
         // User can read stories from public accounts
-        get(/databases/$(database)/documents/users/$(resource.data.authorId)).data.isPublic
+        !isPrivateAccount(resource.data.authorId)
       );
       allow create: if isAuthenticated() && 
         request.resource.data.authorId == request.auth.uid &&

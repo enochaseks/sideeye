@@ -327,10 +327,23 @@ export const checkUserWarnings = async (db: Firestore, userId: string): Promise<
 
 // New function to get user's strike information
 export const getUserStrikeInfo = async (userId: string) => {
-  const userRef = doc(db, 'users', userId);
-  const userDoc = await getDoc(userRef);
-  
-  if (userDoc.exists()) {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userDoc = await getDoc(userRef);
+    
+    if (!userDoc.exists()) {
+      console.warn(`User document not found for ID: ${userId}`);
+      return {
+        strikes: 0,
+        suspended: false,
+        restricted: false,
+        strikeHistory: [],
+        warningHistory: [],
+        lastActionTaken: 'none',
+        lastActionDate: null
+      };
+    }
+    
     const userData = userDoc.data();
     return {
       strikes: userData.strikes || 0,
@@ -341,17 +354,10 @@ export const getUserStrikeInfo = async (userId: string) => {
       lastActionTaken: userData.lastActionTaken || 'none',
       lastActionDate: userData.lastActionDate || null
     };
+  } catch (error) {
+    console.error('Error fetching user strike info:', error);
+    throw error;
   }
-  
-  return {
-    strikes: 0,
-    suspended: false,
-    restricted: false,
-    strikeHistory: [],
-    warningHistory: [],
-    lastActionTaken: 'none',
-    lastActionDate: null
-  };
 };
 
 // New function to reset restrictions after time period has elapsed

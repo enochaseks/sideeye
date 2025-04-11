@@ -288,9 +288,10 @@ const ConnectionsDialog: React.FC<ConnectionsDialogProps> = ({
 const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const { userId: urlParam } = useParams<{ userId: string }>();
-  const { currentUser, userProfile, loading: authLoading, setUserProfile } = useAuth();
+  const { currentUser, user, userProfile, loading: authLoading, setUserProfile } = useAuth();
   const { db } = useFirestore();
+  const { userId: urlParam } = useParams<{ userId: string }>();
+  const [targetUserId, setTargetUserId] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -324,151 +325,157 @@ const Profile: React.FC = () => {
   const [showTrashDialog, setShowTrashDialog] = useState(false);
   const [showPostDialog, setShowPostDialog] = useState(false);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
-  const [targetUserId, setTargetUserId] = useState<string | null>(null);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [showCreateStory, setShowCreateStory] = useState(false);
   const [connectionDialogTab, setConnectionDialogTab] = useState(0);
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [canViewFullProfile, setCanViewFullProfile] = useState(false);
   
   const userId = targetUserId || currentUser?.uid || '';
 
   const fetchUserData = useCallback(async () => {
-    if (!urlParam) {
-      setError('No user identifier provided');
+    if (!db) {
+      console.error('Firestore database not initialized');
+      setError('Database connection error');
       setIsLoading(false);
       return;
     }
 
-    if (!db) {
-      setError('Database not initialized');
+    if (!urlParam) {
+      console.error('No user identifier provided in URL');
+      setError('Invalid profile URL');
       setIsLoading(false);
       return;
     }
+
+    setIsLoading(true);
+    setError(null);
 
     try {
-      setIsLoading(true);
-      setError(null);
-
+      console.log('Starting user data fetch for identifier:', urlParam);
+      console.log('Current auth state:', currentUser ? 'Logged in' : 'Not logged in');
+      
+      let foundUserId = urlParam;
       let userDoc;
-      let userData: UserProfile | undefined;
-      let foundUserId: string | null = null;
 
-      try {
-        userDoc = await getDoc(doc(db, 'users', urlParam));
-        if (userDoc.exists()) {
-          userData = userDoc.data() as UserProfile;
-          foundUserId = urlParam;
-        }
-      } catch (error) {
-        console.log('Not a valid user ID, trying username');
-      }
-
-      if (!userDoc?.exists()) {
-        const usersQuery = query(
-          collection(db, 'users'),
-          where('username', '==', urlParam)
-        );
-        const userSnapshot = await getDocs(usersQuery);
+      // Check if the URL parameter is a valid Firebase user ID (28 characters)
+      if (urlParam.length !== 28) {
+        // Try to find user by username
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('username', '==', urlParam));
+        const querySnapshot = await getDocs(q);
         
-        if (userSnapshot.empty) {
+        if (querySnapshot.empty) {
+          console.error('No user found with username:', urlParam);
           setError('User not found');
           setIsLoading(false);
           return;
         }
 
-        userDoc = userSnapshot.docs[0];
-        userData = userDoc.data() as UserProfile;
-        foundUserId = userDoc.id;
+        foundUserId = querySnapshot.docs[0].id;
+        console.log('Found user ID from username:', foundUserId);
       }
 
-      if (!userData || !foundUserId) {
-        setError('User not found');
+      // Get user profile data
+      userDoc = await getDoc(doc(db, 'users', foundUserId));
+      if (!userDoc.exists()) {
+        console.error('User document does not exist for ID:', foundUserId);
+        setError('User profile not found');
         setIsLoading(false);
         return;
       }
 
       setTargetUserId(foundUserId);
+      const userData = userDoc.data();
+      console.log('User data loaded:', userData);
+
+      // Set basic profile data that we can always access
       setUsername(userData.username || '');
       setName(userData.name || '');
       setEmail(userData.email || '');
       setBio(userData.bio || '');
       setProfilePic(userData.profilePic || null);
+      setIsPrivate(userData.isPrivate || false);
+      setIsAdmin(userData.isAdmin || false);
 
-      if (currentUser?.uid) {
-        const followingDoc = await getDoc(doc(db, 'users', currentUser.uid, 'following', foundUserId));
-        setIsFollowing(followingDoc.exists());
+      // Check if we have permission to view the full profile
+      const isOwnProfile = currentUser?.uid === foundUserId;
+      let canView = !userData.isPrivate || isOwnProfile || userData.isAdmin;
+
+      if (!canView && currentUser) {
+        try {
+          // Check if we're following the private account
+          const followingDoc = await getDoc(doc(db, 'users', currentUser.uid, 'following', foundUserId));
+          canView = followingDoc.exists();
+          console.log('Follow status checked:', followingDoc.exists());
+        } catch (error) {
+          console.error('Error checking follow status:', error);
+          canView = false;
+        }
       }
 
-      const followersSnapshot = await getDocs(collection(db, 'users', foundUserId, 'followers'));
-      const followingSnapshot = await getDocs(collection(db, 'users', foundUserId, 'following'));
-      
-      setFollowers(followersSnapshot.docs.map(doc => doc.id));
-      setConnections(followingSnapshot.docs.map(doc => doc.id));
+      setCanViewFullProfile(canView);
 
-      const postsQuery = query(
-        collection(db, 'posts'),
-        where('authorId', '==', foundUserId),
-        orderBy('timestamp', 'desc')
-      );
-      const postsSnapshot = await getDocs(postsQuery);
-      const postsData = postsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Post[];
-      setPosts(postsData);
+      if (canView) {
+        try {
+          // Fetch posts if we have permission
+          const postsQuery = query(
+            collection(db, 'posts'),
+            where('authorId', '==', foundUserId),
+            orderBy('timestamp', 'desc')
+          );
+          const postsSnapshot = await getDocs(postsQuery);
+          const postsData = postsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as Post[];
+          setPosts(postsData);
+        } catch (error) {
+          console.error('Error fetching posts:', error);
+          setError('Error loading posts');
+        }
+      }
 
-      setIsLoading(false);
+      try {
+        // Fetch followers and following
+        const [followersSnapshot, followingSnapshot] = await Promise.all([
+          getDocs(collection(db, 'users', foundUserId, 'followers')),
+          getDocs(collection(db, 'users', foundUserId, 'following'))
+        ]);
+
+        // Process followers and following data
+        const followers = followersSnapshot.docs.map(doc => doc.id);
+        const following = followingSnapshot.docs.map(doc => doc.id);
+
+        setFollowers(followers);
+        setConnections(following);
+
+        // Fetch detailed user data for followers and following
+        const [followersData, followingData] = await Promise.all([
+          Promise.all(followers.map(id => getDoc(doc(db, 'users', id)))),
+          Promise.all(following.map(id => getDoc(doc(db, 'users', id))))
+        ]);
+
+        setFollowersList(followersData.map(doc => doc.data() as UserProfile));
+        setFollowingList(followingData.map(doc => doc.data() as UserProfile));
+
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error fetching followers/following:', error);
+        setError('Error loading followers and following data');
+        setIsLoading(false);
+      }
     } catch (error) {
       console.error('Error fetching user data:', error);
-      setError('Failed to load user data');
+      setError('Error loading profile data');
       setIsLoading(false);
     }
   }, [db, urlParam, currentUser]);
 
-  const fetchUserLists = async () => {
-    if (!db || !userId) return;
-
-    try {
-      console.log('Fetching user lists for userId:', userId);
-      
-      const followersSnapshot = await getDocs(collection(db, 'users', userId, 'followers'));
-      const followerPromises = followersSnapshot.docs.map(async (followerDoc) => {
-        const userDoc = await getDoc(doc(db, 'users', followerDoc.id));
-        if (userDoc.exists()) {
-          return { id: userDoc.id, ...userDoc.data() } as UserProfile;
-        }
-        return null;
-      });
-      const followersData = await Promise.all(followerPromises);
-      const filteredFollowersData = followersData.filter(Boolean) as UserProfile[];
-      console.log('Followers data:', filteredFollowersData);
-      setFollowersList(filteredFollowersData);
-
-      const followingSnapshot = await getDocs(collection(db, 'users', userId, 'following'));
-      const followingPromises = followingSnapshot.docs.map(async (followingDoc) => {
-        const userDoc = await getDoc(doc(db, 'users', followingDoc.id));
-        if (userDoc.exists()) {
-          return { id: userDoc.id, ...userDoc.data() } as UserProfile;
-        }
-        return null;
-      });
-      const followingData = await Promise.all(followingPromises);
-      const filteredFollowingData = followingData.filter(Boolean) as UserProfile[];
-      console.log('Following data:', filteredFollowingData);
-      setFollowingList(filteredFollowingData);
-      
-    } catch (error) {
-      console.error('Error fetching user lists:', error);
-      setError('Failed to load followers/following');
-    }
-  };
-
   useEffect(() => {
     fetchUserData();
   }, [fetchUserData]);
-
-  useEffect(() => {
-    fetchUserLists();
-  }, [fetchUserLists]);
 
   useEffect(() => {
     if (userProfile) {
@@ -483,92 +490,60 @@ const Profile: React.FC = () => {
   }, [currentUser, followers]);
 
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!currentUser || !e.target.files || !e.target.files[0]) return;
-    if (!db) {
-      setError('Database not initialized');
-      return;
-    }
+    if (!currentUser || !e.target.files?.[0] || !db) return;
 
     try {
-      setIsLoading(true);
-      setError(null);
       const file = e.target.files[0];
+      const storageRef = ref(storage, `profilePics/${currentUser.uid}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
       
-      if (!file.type.startsWith('image/')) {
-        setError('Please upload an image file');
-        return;
-      }
-
-      if (file.size > 5 * 1024 * 1024) {
-        setError('Image size should be less than 5MB');
-        return;
-      }
-
-      const timestamp = Date.now();
-      const fileExtension = file.name.split('.').pop();
-      const fileName = `profile_${timestamp}.${fileExtension}`;
-      
-      const storageRef = ref(storage, `profile_pictures/${currentUser.uid}/${fileName}`);
-      const snapshot = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
-
-      const userRef = doc(db, 'users', currentUser.uid);
-      await updateDoc(userRef, {
-        profilePic: downloadURL,
-        updatedAt: serverTimestamp()
+      // Update Firestore
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        profilePic: downloadURL
       });
 
+      // Update local state
       setProfilePic(downloadURL);
-      
       if (userProfile) {
         setUserProfile({
           ...userProfile,
           profilePic: downloadURL
         });
       }
-
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
     } catch (error) {
       console.error('Error updating profile picture:', error);
       setError('Failed to update profile picture');
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const handleSaveProfile = async () => {
-    if (!currentUser || !db) {
-      setError('Database not initialized');
-      return;
-    }
+    if (!currentUser || !db) return;
 
     try {
-      setIsLoading(true);
-      const userRef = doc(db, 'users', currentUser.uid);
-      
-      await updateDoc(userRef, {
+      const editedName = name.trim();
+      const editedBio = bio.trim();
+
+      // Update Firestore
+      await updateDoc(doc(db, 'users', currentUser.uid), {
         name: editedName,
-        bio: editedBio,
-        username: editedUsername,
-        updatedAt: serverTimestamp()
+        bio: editedBio
       });
 
+      // Update local state
+      setName(editedName);
+      setBio(editedBio);
       setIsEditing(false);
       if (userProfile) {
         setUserProfile({
           ...userProfile,
           name: editedName,
-          bio: editedBio,
-          username: editedUsername
+          bio: editedBio
         });
       }
     } catch (error) {
-      console.error('Error updating profile:', error);
-      setError('Failed to update profile');
-    } finally {
-      setIsLoading(false);
+      console.error('Error saving profile:', error);
+      setError('Failed to save profile');
     }
   };
 
@@ -606,7 +581,7 @@ const Profile: React.FC = () => {
       setFollowers(prev => [...prev, currentUser.uid]);
       setConnections(prev => [...prev, userId]);
       
-      fetchUserLists();
+      fetchUserData();
     } catch (error) {
       console.error('Error following user:', error);
       setError('Failed to follow user');
@@ -635,7 +610,7 @@ const Profile: React.FC = () => {
       setFollowers(prev => prev.filter(id => id !== currentUser.uid));
       setConnections(prev => prev.filter(id => id !== userToUnfollow));
       
-      fetchUserLists();
+      fetchUserData();
     } catch (error) {
       console.error('Error unfollowing user:', error);
       setError('Failed to unfollow user');
@@ -1182,44 +1157,6 @@ const Profile: React.FC = () => {
     setAnchorEl(null);
   };
 
-  useEffect(() => {
-    if (!db || !userId) return;
-
-    // Fetch only the user's own posts
-    const fetchPosts = async () => {
-      try {
-        setIsLoading(true);
-        
-        // Create a query to get only this user's posts
-        const postsQuery = query(
-          collection(db, 'posts'),
-          where('authorId', '==', userId),
-          orderBy('timestamp', 'desc')
-        );
-
-        const unsubscribe = onSnapshot(postsQuery, (snapshot) => {
-          const postsList = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as Post[];
-          setPosts(postsList);
-        }, (error) => {
-          console.error('Error fetching posts:', error);
-          setError('Failed to load posts');
-        });
-
-        return () => unsubscribe();
-      } catch (error) {
-        console.error('Error setting up posts listener:', error);
-        setError('Failed to load posts');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchPosts();
-  }, [db, userId]);
-
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -1333,7 +1270,7 @@ const Profile: React.FC = () => {
                 }}
                 onClick={() => {
                   // Ensure data is refreshed before showing dialog
-                  fetchUserLists();
+                  fetchUserData();
                   setConnectionDialogTab(0); // Show followers tab
                   setShowConnectionsDialog(true);
                 }}
@@ -1351,7 +1288,7 @@ const Profile: React.FC = () => {
                 }}
                 onClick={() => {
                   // Ensure data is refreshed before showing dialog
-                  fetchUserLists();
+                  fetchUserData();
                   setConnectionDialogTab(1); // Show following tab
                   setShowConnectionsDialog(true);
                 }}

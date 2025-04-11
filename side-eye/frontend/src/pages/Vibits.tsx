@@ -496,29 +496,51 @@ const Vibits: React.FC = () => {
     if (!currentUser || userId === currentUser.uid) return;
     
     try {
-      const followingRef = doc(db, `users/${currentUser.uid}/following`, userId);
-      const followerRef = doc(db, `users/${userId}/followers`, currentUser.uid);
-      
-      if (following.has(userId)) {
-        // Unfollow
-        await deleteDoc(followingRef);
-        await deleteDoc(followerRef);
-        setFollowing(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(userId);
-          return newSet;
-        });
-        toast.success('Unfollowed user');
+      // Check if the target user has a private account
+      const targetUserDoc = await getDoc(doc(db, 'users', userId));
+      const isTargetPrivate = targetUserDoc.data()?.isPrivate || false;
+
+      if (isTargetPrivate) {
+        // Check if there's already a pending request
+        const existingRequest = await getDoc(doc(db, `users/${userId}/followRequests`, currentUser.uid));
+        
+        if (!existingRequest.exists()) {
+          // Create follow request
+          await setDoc(doc(db, `users/${userId}/followRequests`, currentUser.uid), {
+            userId: currentUser.uid,
+            username: currentUser.displayName || currentUser.email?.split('@')[0] || 'Anonymous',
+            timestamp: serverTimestamp()
+          });
+          toast.success('Follow request sent');
+        } else {
+          toast.error('Follow request already pending');
+        }
       } else {
-        // Follow
-        await setDoc(followingRef, {
-          timestamp: serverTimestamp()
-        });
-        await setDoc(followerRef, {
-          timestamp: serverTimestamp()
-        });
-        setFollowing(prev => new Set(prev).add(userId));
-        toast.success('Followed user');
+        // Handle public account follow
+        const followingRef = doc(db, `users/${currentUser.uid}/following`, userId);
+        const followerRef = doc(db, `users/${userId}/followers`, currentUser.uid);
+        
+        if (following.has(userId)) {
+          // Unfollow
+          await deleteDoc(followingRef);
+          await deleteDoc(followerRef);
+          setFollowing(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(userId);
+            return newSet;
+          });
+          toast.success('Unfollowed user');
+        } else {
+          // Follow
+          await setDoc(followingRef, {
+            timestamp: serverTimestamp()
+          });
+          await setDoc(followerRef, {
+            timestamp: serverTimestamp()
+          });
+          setFollowing(prev => new Set(prev).add(userId));
+          toast.success('Followed user');
+        }
       }
     } catch (error) {
       console.error('Error toggling follow:', error);
