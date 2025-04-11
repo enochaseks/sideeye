@@ -97,6 +97,8 @@ const Vibits: React.FC = () => {
   const [volume, setVolume] = useState(0.5);
   const [isPlaying, setIsPlaying] = useState(true);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const [slideDirection, setSlideDirection] = useState<'up' | 'down'>('up');
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -449,11 +451,22 @@ const Vibits: React.FC = () => {
 
   const handleTouchEnd = () => {
     const diff = touchStartY.current - touchEndY.current;
-    if (Math.abs(diff) > 50) {
+    if (Math.abs(diff) > 50 && !isTransitioning) {
+      setIsTransitioning(true);
       if (diff > 0 && currentVideoIndex < videos.length - 1) {
-        setCurrentVideoIndex(prev => prev + 1);
+        setSlideDirection('up');
+        setTimeout(() => {
+          setCurrentVideoIndex(prev => prev + 1);
+          setIsTransitioning(false);
+        }, 300);
       } else if (diff < 0 && currentVideoIndex > 0) {
-        setCurrentVideoIndex(prev => prev - 1);
+        setSlideDirection('down');
+        setTimeout(() => {
+          setCurrentVideoIndex(prev => prev - 1);
+          setIsTransitioning(false);
+        }, 300);
+      } else {
+        setIsTransitioning(false);
       }
     }
   };
@@ -545,7 +558,8 @@ const Vibits: React.FC = () => {
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
-            alignItems: 'center'
+            alignItems: 'center',
+            position: 'relative'
           }}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
@@ -565,10 +579,56 @@ const Vibits: React.FC = () => {
               position: 'absolute',
               top: 0,
               left: 0,
-              zIndex: 1
+              zIndex: 1,
+              transition: 'transform 0.3s ease-in-out',
+              transform: isTransitioning 
+                ? slideDirection === 'up' 
+                  ? 'translateY(-100%)' 
+                  : 'translateY(100%)'
+                : 'translateY(0)'
             }}
             onClick={() => setIsPlaying(!isPlaying)}
           />
+          
+          {/* Previous video (if exists) */}
+          {currentVideoIndex > 0 && (
+            <video
+              src={videos[currentVideoIndex - 1].url}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                zIndex: 0,
+                transition: 'transform 0.3s ease-in-out',
+                transform: isTransitioning && slideDirection === 'down'
+                  ? 'translateY(0)'
+                  : 'translateY(-100%)'
+              }}
+            />
+          )}
+          
+          {/* Next video (if exists) */}
+          {currentVideoIndex < videos.length - 1 && (
+            <video
+              src={videos[currentVideoIndex + 1].url}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                zIndex: 0,
+                transition: 'transform 0.3s ease-in-out',
+                transform: isTransitioning && slideDirection === 'up'
+                  ? 'translateY(0)'
+                  : 'translateY(100%)'
+              }}
+            />
+          )}
           
           <Box sx={{
             position: 'absolute',
