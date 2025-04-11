@@ -3,7 +3,7 @@ import {
   Routes, 
   Route, 
   Navigate,
-  BrowserRouter,
+  BrowserRouter as Router,
   useLocation
 } from 'react-router-dom';
 import { CssBaseline, Box } from '@mui/material';
@@ -68,7 +68,7 @@ const BottomNavWrapper: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
+      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ThemeContextProvider>
           <CssBaseline />
           <LocalizationProvider dateAdapter={AdapterDateFns}>
@@ -126,7 +126,7 @@ const App: React.FC = () => {
             </AuthProvider>
           </LocalizationProvider>
         </ThemeContextProvider>
-      </BrowserRouter>
+      </Router>
     </ErrorBoundary>
   );
 };

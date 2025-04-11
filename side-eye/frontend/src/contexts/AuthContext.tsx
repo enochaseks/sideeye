@@ -10,6 +10,7 @@ import bcrypt from 'bcryptjs';
 import { checkAndResetRestrictions } from '../services/contentModeration';
 
 export interface User extends FirebaseUser {
+  profilePicture?: string;
   hasUnreadNotifications?: boolean;
 }
 

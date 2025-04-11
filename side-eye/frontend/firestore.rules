@@ -198,7 +198,7 @@ service cloud.firestore {
       allow update: if isAdmin() || 
         (isAuthenticated() && (
           request.auth.uid == resource.data.authorId ||
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments'])
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy', 'comments'])
         ));
       
       // Allow delete for:
@@ -457,6 +457,19 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && request.auth.uid == userId;
       allow delete: if false;
+    }
+
+    // Posts collection rules
+    match /posts/{postId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        // Allow users to like/unlike posts
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy'])) ||
+        // Allow post owner to update their own posts
+        (resource.data.authorId == request.auth.uid)
+      );
+      allow delete: if isAuthenticated() && resource.data.authorId == request.auth.uid;
     }
   }
 }

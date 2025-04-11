@@ -48,7 +48,12 @@ import {
   doc,
   setDoc,
   deleteDoc,
-  serverTimestamp
+  serverTimestamp,
+  addDoc,
+  updateDoc,
+  arrayRemove,
+  arrayUnion,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -106,6 +111,7 @@ interface Video {
   likes: number;
   comments: number;
   timestamp: any;
+  thumbnailUrl?: string;
 }
 
 const Discover: React.FC = () => {
@@ -236,11 +242,143 @@ const Discover: React.FC = () => {
           timestamp: serverTimestamp()
         });
         setFollowing(prev => new Set(prev).add(userId));
+
+        // Create notification for followed user
+        const notificationData = {
+          type: 'follow',
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || 'Anonymous',
+          senderAvatar: currentUser.photoURL || '',
+          recipientId: userId,
+          content: `${currentUser.displayName || 'Someone'} started following you`,
+          createdAt: serverTimestamp(),
+          isRead: false
+        };
+        await addDoc(collection(db, 'users', userId, 'notifications'), notificationData);
+
         toast.success('Followed user');
       }
     } catch (error) {
       console.error('Error toggling follow:', error);
       toast.error('Failed to update follow status');
+    }
+  };
+
+  const handleVibitLike = async (videoId: string, authorId: string) => {
+    if (!currentUser || !db) return;
+    
+    try {
+      const videoRef = doc(db, 'videos', videoId);
+      const videoDoc = await getDoc(videoRef);
+      
+      if (!videoDoc.exists()) {
+        throw new Error('Video not found');
+      }
+      
+      const videoData = videoDoc.data();
+      const isLiked = videoData.likedBy?.includes(currentUser.uid);
+      
+      if (isLiked) {
+        // Unlike
+        await updateDoc(videoRef, {
+          likedBy: arrayRemove(currentUser.uid)
+        });
+      } else {
+        // Like
+        await updateDoc(videoRef, {
+          likedBy: arrayUnion(currentUser.uid)
+        });
+
+        // Create notification for video owner
+        if (authorId !== currentUser.uid) {
+          const notificationData = {
+            type: 'vibit_like',
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || 'Anonymous',
+            senderAvatar: currentUser.photoURL || '',
+            recipientId: authorId,
+            videoId: videoId,
+            content: `${currentUser.displayName || 'Someone'} liked your vibit`,
+            createdAt: serverTimestamp(),
+            isRead: false
+          };
+          await addDoc(collection(db, 'users', authorId, 'notifications'), notificationData);
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling vibit like:', error);
+      toast.error('Failed to update like status');
+    }
+  };
+
+  const handleVibitComment = async (videoId: string, content: string, authorId: string) => {
+    if (!currentUser || !db) return;
+
+    try {
+      const videoRef = doc(db, 'videos', videoId);
+      const videoDoc = await getDoc(videoRef);
+      const videoData = videoDoc.data();
+
+      const commentData = {
+        content,
+        authorId: currentUser.uid,
+        authorName: currentUser.displayName || 'Anonymous',
+        authorAvatar: currentUser.photoURL || '',
+        timestamp: serverTimestamp() as Timestamp,
+        likes: 0
+      };
+
+      await updateDoc(videoRef, {
+        comments: arrayUnion(commentData)
+      });
+
+      // Create notification for video owner
+      if (authorId !== currentUser.uid) {
+        const notificationData = {
+          type: 'vibit_comment',
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || 'Anonymous',
+          senderAvatar: currentUser.photoURL || '',
+          recipientId: authorId,
+          videoId: videoId,
+          content: `${currentUser.displayName || 'Someone'} commented on your vibit: "${content}"`,
+          createdAt: serverTimestamp(),
+          isRead: false
+        };
+        await addDoc(collection(db, 'users', authorId, 'notifications'), notificationData);
+      }
+
+      // Check for mentions in comment
+      const mentions = content.match(/@(\w+)/g);
+      if (mentions) {
+        const uniqueMentions = Array.from(new Set(mentions));
+        for (const mention of uniqueMentions) {
+          const username = mention.slice(1);
+          const userQuery = firestoreQuery(collection(db, 'users'), where('username', '==', username), limit(1));
+          const userDocs = await getDocs(userQuery);
+          
+          if (!userDocs.empty) {
+            const mentionedUser = userDocs.docs[0];
+            if (mentionedUser.id !== currentUser.uid && mentionedUser.id !== authorId) {
+              const notificationData = {
+                type: 'vibit_mention',
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || 'Anonymous',
+                senderAvatar: currentUser.photoURL || '',
+                recipientId: mentionedUser.id,
+                videoId: videoId,
+                content: `${currentUser.displayName || 'Someone'} mentioned you in a vibit comment: "${content}"`,
+                createdAt: serverTimestamp(),
+                isRead: false
+              };
+              await addDoc(collection(db, 'users', mentionedUser.id, 'notifications'), notificationData);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error adding vibit comment:', error);
+      toast.error('Failed to add comment');
     }
   };
 
@@ -577,43 +715,48 @@ const Discover: React.FC = () => {
               <Grid container spacing={2} sx={{ p: 2 }}>
                 {videos.map((video) => (
                   <Grid item xs={12} sm={6} md={4} key={video.id}>
-                    <Card sx={{ 
-                      height: 240, 
-                      cursor: 'pointer',
-                      '&:hover': {
-                        transform: 'scale(1.02)',
-                        transition: 'transform 0.2s ease-in-out'
-                      }
-                    }} onClick={() => navigate('/vibits')}>
-                      <Box sx={{ position: 'relative', height: '100%' }}>
-                        <video
-                          src={video.url}
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'cover',
-                          }}
-                        />
-                        <Box sx={{
-                          position: 'absolute',
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          p: 1,
-                          background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-                          color: 'white'
-                        }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Typography variant="subtitle2">@{video.username}</Typography>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                <FavoriteIcon fontSize="small" />
-                                <Typography variant="caption" sx={{ ml: 0.5 }}>{video.likes}</Typography>
-                              </Box>
-                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                <CommentIcon fontSize="small" />
-                                <Typography variant="caption" sx={{ ml: 0.5 }}>{video.comments}</Typography>
-                              </Box>
+                    <Card key={video.id} sx={{ position: 'relative' }}>
+                      <CardMedia
+                        component="video"
+                        image={video.thumbnailUrl || video.url}
+                        sx={{
+                          height: { xs: 'auto', sm: 200 },
+                          width: '100%',
+                          aspectRatio: '16/9',
+                          objectFit: 'cover',
+                          backgroundColor: 'black',
+                          '@media (max-width: 600px)': {
+                            height: 'auto',
+                            maxHeight: '60vh',
+                            objectFit: 'contain'
+                          }
+                        }}
+                        controls
+                        preload="metadata"
+                        playsInline
+                        muted
+                        loop
+                        poster={video.thumbnailUrl}
+                      />
+                      <Box sx={{
+                        position: 'absolute',
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        p: 1,
+                        background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                        color: 'white'
+                      }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Typography variant="subtitle2">@{video.username}</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <FavoriteIcon fontSize="small" />
+                              <Typography variant="caption" sx={{ ml: 0.5 }}>{video.likes}</Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <CommentIcon fontSize="small" />
+                              <Typography variant="caption" sx={{ ml: 0.5 }}>{video.comments}</Typography>
                             </Box>
                           </Box>
                         </Box>

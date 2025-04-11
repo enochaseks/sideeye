@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Box, IconButton, Typography, CircularProgress, Dialog, TextField, Button, Avatar, LinearProgress, DialogTitle, DialogContent, DialogActions, Menu, MenuItem, Select, FormControl, InputLabel, SelectChangeEvent, FormHelperText, Slider } from '@mui/material';
+import { Box, IconButton, Typography, CircularProgress, Dialog, TextField, Button, Avatar, LinearProgress, DialogTitle, DialogContent, DialogActions, Menu, MenuItem, Select, FormControl, InputLabel, SelectChangeEvent, FormHelperText, Slider, Tabs, Tab, useMediaQuery, useTheme, Drawer, List, ListItem, ListItemAvatar, ListItemText, Card, CardMedia, CardContent, Container } from '@mui/material';
 import { 
   Add as AddIcon, 
   Favorite as FavoriteIcon, 
@@ -18,7 +18,9 @@ import {
   VolumeOff as VolumeOffIcon,
   VolumeUp as VolumeUpIcon,
   Pause as PauseIcon,
-  PlayArrow as PlayArrowIcon
+  PlayArrow as PlayArrowIcon,
+  Save as SaveIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -35,7 +37,9 @@ import {
   increment,
   serverTimestamp,
   getDoc,
-  setDoc
+  setDoc,
+  where,
+  arrayUnion
 } from 'firebase/firestore';
 import { 
   getStorage, 
@@ -44,10 +48,14 @@ import {
   getDownloadURL, 
   deleteObject,
   UploadTaskSnapshot,
-  StorageError
+  StorageError,
+  getBytes,
+  uploadBytes
 } from 'firebase/storage';
 import { toast } from 'react-hot-toast';
 import { Link } from 'react-router-dom';
+import { saveAs } from 'file-saver';
+import { formatDistanceToNow } from 'date-fns';
 
 interface Video {
   id: string;
@@ -60,6 +68,8 @@ interface Video {
   duration?: number;
   resolution?: string;
   resolutions?: string[];
+  thumbnailUrl?: string;
+  commentsList?: Comment[];
 }
 
 interface Comment {
@@ -67,6 +77,23 @@ interface Comment {
   content: string;
   userId: string;
   username: string;
+  userPhotoURL?: string;
+  timestamp: any;
+  likes?: number;
+}
+
+interface UserData {
+  photoURL?: string;
+  username?: string;
+  displayName?: string;
+}
+
+interface CommentData {
+  photoURL: string;
+  profilePicture: string;
+  userId: string;
+  username: string;
+  content: string;
   timestamp: any;
 }
 
@@ -79,7 +106,7 @@ const Vibits: React.FC = () => {
   const [likedVideos, setLikedVideos] = useState<Set<string>>(new Set());
   const [favoriteVideos, setFavoriteVideos] = useState<Set<string>>(new Set());
   const [showComments, setShowComments] = useState(false);
-  const [comments, setComments] = useState<Comment[]>([]);
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [newComment, setNewComment] = useState('');
   const [commentLoading, setCommentLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -93,7 +120,7 @@ const Vibits: React.FC = () => {
   const [resolutionAnchorEl, setResolutionAnchorEl] = useState<null | HTMLElement>(null);
   const [videoInfoAnchorEl, setVideoInfoAnchorEl] = useState<null | HTMLElement>(null);
   const [currentVideoInfo, setCurrentVideoInfo] = useState<{duration: string, resolution: string}>({duration: '0:00', resolution: 'Unknown'});
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(0.5);
   const [isPlaying, setIsPlaying] = useState(true);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -104,6 +131,10 @@ const Vibits: React.FC = () => {
   const [isHolding, setIsHolding] = useState(false);
   const holdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastTap = useRef(0);
+  const [tabIndex, setTabIndex] = useState(0);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [isCommenting, setIsCommenting] = useState(false);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -175,7 +206,7 @@ const Vibits: React.FC = () => {
         setIsTransitioning(false);
         setSwipeDirection(null);
         setSwipeDistance(0);
-      }, 300);
+      }, 500); // Increase transition time for smoother swipe
     } else {
       setSwipeDirection(null);
       setSwipeDistance(0);
@@ -246,17 +277,35 @@ const Vibits: React.FC = () => {
   };
 
   const fetchComments = async (videoId: string) => {
+    if (!videoId) return;
+    
     try {
       const commentsQuery = query(
         collection(db, `videos/${videoId}/comments`),
         orderBy('timestamp', 'desc')
       );
       const snapshot = await getDocs(commentsQuery);
-      const fetchedComments = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+      const fetchedComments = await Promise.all(snapshot.docs.map(async (commentDoc) => {
+        const commentData = commentDoc.data() as CommentData;
+        // Fetch user profile data
+        const userDocRef = doc(db, 'users', commentData.userId);
+        const userDoc = await getDoc(userDocRef);
+        const userData = userDoc.data() as UserData | undefined;
+        
+        console.log('Fetched user data:', userData);
+        
+        return {
+          id: commentDoc.id,
+          ...commentData,
+          userPhotoURL: userData?.photoURL || '',
+          username: userData?.username || userData?.displayName || commentData.username || commentData.photoURL || 'Anonymous'
+        };
       })) as Comment[];
-      setComments(fetchedComments);
+      
+      setSelectedVideo(prev => prev ? ({
+        ...prev,
+        commentsList: fetchedComments
+      }) : null);
     } catch (error) {
       console.error('Error fetching comments:', error);
       toast.error('Failed to load comments');
@@ -290,6 +339,24 @@ const Vibits: React.FC = () => {
           likes: increment(1)
         });
         setLikedVideos(prev => new Set(prev).add(videoId));
+
+        // Create notification for video owner
+        const videoDoc = await getDoc(videoRef);
+        const videoData = videoDoc.data();
+        if (videoData && videoData.userId !== currentUser.uid) {
+          const notificationData = {
+            type: 'like',
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || 'Anonymous',
+            senderAvatar: currentUser.photoURL || '',
+            recipientId: videoData.userId,
+            postId: videoId,
+            content: `${currentUser.displayName || 'Someone'} liked your video`,
+            createdAt: serverTimestamp(),
+            isRead: false
+          };
+          await addDoc(collection(db, 'users', videoData.userId, 'notifications'), notificationData);
+        }
       }
     } catch (error) {
       console.error('Error toggling like:', error);
@@ -325,22 +392,63 @@ const Vibits: React.FC = () => {
   };
 
   const handleComment = async (videoId: string) => {
-    if (!currentUser || !newComment.trim()) return;
+    if (!currentUser || !newComment.trim() || !videoId) {
+      toast.error('Please enter a comment and make sure you are logged in');
+      return;
+    }
+    
+    setCommentLoading(true);
     try {
-      setCommentLoading(true);
-      await addDoc(collection(db, `videos/${videoId}/comments`), {
-        content: newComment,
+      const videoRef = doc(db, 'videos', videoId);
+      const videoDoc = await getDoc(videoRef);
+      const videoData = videoDoc.data();
+
+      const commentRef = await addDoc(collection(db, `videos/${videoId}/comments`), {
+        content: newComment.trim(),
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',
+        userPhotoURL: currentUser.photoURL || '',
         timestamp: serverTimestamp()
       });
-      
-      await updateDoc(doc(db, 'videos', videoId), {
+
+      await updateDoc(videoRef, {
         comments: increment(1)
       });
-      
+
+      // Create notification for video owner
+      if (videoData && videoData.userId !== currentUser.uid) {
+        const notificationData = {
+          type: 'comment',
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || 'Anonymous',
+          senderAvatar: currentUser.photoURL || '',
+          recipientId: videoData.userId,
+          postId: videoId,
+          commentId: commentRef.id,
+          content: `${currentUser.displayName || 'Someone'} commented on your video: "${newComment.trim()}"`,
+          createdAt: serverTimestamp(),
+          isRead: false
+        };
+        await addDoc(collection(db, 'users', videoData.userId, 'notifications'), notificationData);
+      }
+
+      // Update the local state
+      const newCommentObj: Comment = {
+        id: commentRef.id,
+        content: newComment.trim(),
+        userId: currentUser.uid,
+        username: currentUser.displayName || 'Anonymous',
+        userPhotoURL: currentUser.photoURL || '',
+        timestamp: new Date()
+      };
+
+      setSelectedVideo(prev => prev ? {
+        ...prev,
+        comments: (prev.comments ?? 0) + 1,
+        commentsList: [...(prev.commentsList || []), newCommentObj]
+      } : null);
+
       setNewComment('');
-      fetchComments(videoId);
       toast.success('Comment added successfully');
     } catch (error) {
       console.error('Error adding comment:', error);
@@ -393,7 +501,7 @@ const Vibits: React.FC = () => {
         const videoEl = document.createElement('video');
         videoEl.preload = 'metadata';
         
-        videoEl.onloadedmetadata = () => {
+        videoEl.onloadedmetadata = async () => {
           const width = videoEl.videoWidth;
           const height = videoEl.videoHeight;
           const resolution = `${width}x${height}`;
@@ -406,45 +514,69 @@ const Vibits: React.FC = () => {
           if (height >= 1080) resolutions.push('1080p');
           resolutions.push('original');
           
-          // Continue upload
-          const uploadTask = uploadBytesResumable(storageRef, file);
+          // Create thumbnail
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          videoEl.currentTime = 1; // Capture frame at 1 second
           
-          uploadTask.on('state_changed', 
-            (snapshot: UploadTaskSnapshot) => {
-              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              setUploadProgress(progress);
-            },
-            (error: StorageError) => {
-              console.error('Upload error:', error);
-              toast.error('Upload failed');
-              setUploading(false);
-            },
-            async () => {
-              const videoUrl = await getDownloadURL(storageRef);
-              
-              // Get the user's display name from Firestore
-              const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-              const userData = userDoc.data();
-              const username = userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'Anonymous';
-              
-              await addDoc(collection(db, 'videos'), {
-                url: videoUrl,
-                userId: currentUser.uid,
-                username: username,
-                likes: 0,
-                comments: 0,
-                timestamp: serverTimestamp(),
-                duration: duration,
-                resolution: resolution,
-                resolutions: resolutions
+          videoEl.onseeked = async () => {
+            if (ctx) {
+              ctx.drawImage(videoEl, 0, 0, width, height);
+              const thumbnailBlob = await new Promise<Blob>((resolve) => {
+                canvas.toBlob((blob) => {
+                  if (blob) resolve(blob);
+                }, 'image/jpeg', 0.7);
               });
+              
+              // Upload thumbnail
+              const thumbnailRef = ref(storage, `thumbnails/${currentUser.uid}/${timestamp}.jpg`);
+              await uploadBytes(thumbnailRef, thumbnailBlob);
+              const thumbnailUrl = await getDownloadURL(thumbnailRef);
+              
+              // Continue upload
+              const uploadTask = uploadBytesResumable(storageRef, file);
+              
+              uploadTask.on('state_changed', 
+                (snapshot: UploadTaskSnapshot) => {
+                  const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                  setUploadProgress(progress);
+                },
+                (error: StorageError) => {
+                  console.error('Upload error:', error);
+                  toast.error('Upload failed');
+                  setUploading(false);
+                },
+                async () => {
+                  const videoUrl = await getDownloadURL(storageRef);
+                  
+                  // Get the user's display name from Firestore
+                  const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+                  const userData = userDoc.data();
+                  const username = userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'Anonymous';
+                  
+                  await addDoc(collection(db, 'videos'), {
+                    url: videoUrl,
+                    thumbnailUrl: thumbnailUrl,
+                    userId: currentUser.uid,
+                    username: username,
+                    likes: 0,
+                    comments: 0,
+                    timestamp: serverTimestamp(),
+                    duration: duration,
+                    resolution: resolution,
+                    resolutions: resolutions
+                  });
 
-              toast.success('Video uploaded successfully!');
-              fetchVideos();
-              setUploading(false);
-              setUploadProgress(0);
+                  toast.success('Video uploaded successfully!');
+                  fetchVideos();
+                  setUploading(false);
+                  setUploadProgress(0);
+                }
+              );
             }
-          );
+          };
         };
         
         videoEl.src = URL.createObjectURL(file);
@@ -563,6 +695,20 @@ const Vibits: React.FC = () => {
           timestamp: serverTimestamp()
         });
         setFollowing(prev => new Set(prev).add(userId));
+
+        // Create notification for followed user
+        const notificationData = {
+          type: 'follow',
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || 'Anonymous',
+          senderAvatar: currentUser.photoURL || '',
+          recipientId: userId,
+          content: `${currentUser.displayName || 'Someone'} started following you`,
+          createdAt: serverTimestamp(),
+          isRead: false
+        };
+        await addDoc(collection(db, 'users', userId, 'notifications'), notificationData);
+
         toast.success('Followed user');
       }
     } catch (error) {
@@ -570,6 +716,291 @@ const Vibits: React.FC = () => {
       toast.error('Failed to update follow status');
     }
   };
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabIndex(newValue);
+    if (newValue === 0) {
+      fetchVideos(); // Fetch 'For You' videos
+    } else {
+      fetchFollowingVideos(); // Fetch 'Following' videos
+    }
+  };
+
+  const fetchFollowingVideos = async () => {
+    if (!currentUser) return;
+    try {
+      const followingWithCurrentUser = new Set(following);
+      followingWithCurrentUser.add(currentUser.uid);
+
+      const followingVideosQuery = query(
+        collection(db, 'videos'),
+        where('userId', 'in', Array.from(followingWithCurrentUser)),
+        orderBy('timestamp', 'desc'),
+        limit(10)
+      );
+      const snapshot = await getDocs(followingVideosQuery);
+      const fetchedVideos = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Video[];
+      setVideos(fetchedVideos);
+    } catch (error) {
+      console.error('Error fetching following videos:', error);
+      toast.error('Failed to load following videos');
+    }
+  };
+
+  const handleSaveVideo = async () => {
+    try {
+      if (!currentVideo?.url) {
+        throw new Error('No video selected');
+      }
+
+      // Extract the path from the full URL
+      const urlParts = currentVideo.url.split('/');
+      const pathIndex = urlParts.indexOf('videos');
+      const storagePath = decodeURIComponent(urlParts.slice(pathIndex).join('/').split('?')[0]);
+      
+      // Get the storage reference
+      const storage = getStorage();
+      const videoRef = ref(storage, storagePath);
+      
+      // Get the download URL
+      const downloadURL = await getDownloadURL(videoRef);
+      
+      // Create a temporary anchor element
+      const link = document.createElement('a');
+      link.href = downloadURL;
+      link.download = `vibit_${Date.now()}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success('Video download started!');
+    } catch (error) {
+      console.error('Error saving video:', error);
+      toast.error('Failed to save video. Please try again.');
+    }
+  };
+
+  const handleVideoClick = (video: Video) => {
+    setSelectedVideo(video);
+    setShowComments(true);
+    fetchComments(video.id);
+  };
+
+  const formatCommentTimestamp = (timestamp: any) => {
+    if (!timestamp) return '';
+    
+    try {
+      // If it's a Firebase Timestamp
+      if (timestamp.toDate) {
+        return formatDistanceToNow(timestamp.toDate(), { addSuffix: true });
+      }
+      // If it's already a Date object
+      if (timestamp instanceof Date) {
+        return formatDistanceToNow(timestamp, { addSuffix: true });
+      }
+      // If it's a string or number, try to convert to Date
+      const date = new Date(timestamp);
+      if (!isNaN(date.getTime())) {
+        return formatDistanceToNow(date, { addSuffix: true });
+      }
+      return '';
+    } catch (error) {
+      console.error('Error formatting timestamp:', error);
+      return '';
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!currentUser || !selectedVideo) return;
+    
+    try {
+      // Delete from Firestore
+      await deleteDoc(doc(db, `videos/${selectedVideo.id}/comments/${commentId}`));
+      
+      // Update local state
+      setSelectedVideo(prev => prev ? ({
+        ...prev,
+        comments: (prev.comments ?? 0) - 1,
+        commentsList: prev.commentsList?.filter(comment => comment.id !== commentId)
+      }) : null);
+      
+      toast.success('Comment deleted successfully');
+      fetchComments(selectedVideo.id);
+    } catch (error) {
+      console.error('Error deleting comment:', error);
+      toast.error('Failed to delete comment');
+    }
+  };
+
+  const handleLikeComment = async (commentId: string) => {
+    if (!currentUser || !selectedVideo) return;
+    
+    try {
+      // Fetch the comment
+      const commentDoc = await getDoc(doc(db, `videos/${selectedVideo.id}/comments/${commentId}`));
+      const commentData = commentDoc.data() as CommentData;
+      
+      // Update like count
+      await updateDoc(doc(db, `videos/${selectedVideo.id}/comments/${commentId}/likes`), {
+        likes: increment(1)
+      });
+      
+      // Update local state
+      setSelectedVideo(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          commentsList: prev.commentsList?.map(comment =>
+            comment.id === commentId ? { ...comment, likes: (comment.likes ?? 0) + 1 } : comment
+          )
+        };
+      });
+      
+      toast.success('Comment liked successfully');
+      fetchComments(selectedVideo.id);
+    } catch (error) {
+      console.error('Error liking comment:', error);
+      toast.error('Failed to like comment');
+    }
+  };
+
+  const handleReplyToComment = (commentId: string) => {
+    // Implement reply functionality
+    console.log('Reply to comment:', commentId);
+  };
+
+  const CommentsDrawer = () => (
+    <Drawer
+      anchor="bottom"
+      open={showComments}
+      onClose={() => setShowComments(false)}
+      PaperProps={{
+        sx: {
+          height: '80vh',
+          borderTopLeftRadius: 16,
+          borderTopRightRadius: 16,
+        }
+      }}
+    >
+      <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Comments</Typography>
+          <IconButton onClick={() => setShowComments(false)}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
+        
+        <Box sx={{ flex: 1, overflow: 'auto', mb: 2 }}>
+          {selectedVideo?.commentsList && selectedVideo.commentsList.length > 0 ? (
+            <List>
+              {selectedVideo.commentsList.map((comment) => (
+                <ListItem key={comment.id} alignItems="flex-start">
+                  <ListItemAvatar>
+                    <Avatar 
+                      src={comment.userPhotoURL}
+                      alt={comment.username}
+                      sx={{ width: 40, height: 40 }}
+                    >
+                      {!comment.userPhotoURL && comment.username.charAt(0)}
+                    </Avatar>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="subtitle2" component="span">
+                          {comment.username}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {formatCommentTimestamp(comment.timestamp)}
+                        </Typography>
+                        {comment.userId === currentUser?.uid && (
+                          <IconButton
+                            edge="end"
+                            aria-label="delete"
+                            onClick={() => handleDeleteComment(comment.id)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        )}
+                      </Box>
+                    }
+                    secondary={
+                      <Box>
+                        <Typography variant="body2" color="text.primary">
+                          {comment.content}
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleLikeComment(comment.id)}
+                          >
+                            <FavoriteBorderIcon fontSize="small" />
+                          </IconButton>
+                          <Typography variant="caption" color="text.secondary">
+                            {comment.likes || 0}
+                          </Typography>
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleReplyToComment(comment.id)}
+                          >
+                            <CommentIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      </Box>
+                    }
+                  />
+                </ListItem>
+              ))}
+            </List>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50%' }}>
+              <CommentIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+              <Typography color="text.secondary">No comments yet</Typography>
+            </Box>
+          )}
+        </Box>
+
+        <Box sx={{ p: 2, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider' }}>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <TextField
+              fullWidth
+              variant="outlined"
+              placeholder="Add a comment..."
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+              size="small"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && selectedVideo?.id && !e.shiftKey) {
+                  e.preventDefault();
+                  handleComment(selectedVideo.id);
+                }
+              }}
+              multiline
+              maxRows={4}
+              InputProps={{
+                sx: {
+                  '& .MuiInputBase-input': {
+                    padding: '8px 12px',
+                  }
+                }
+              }}
+            />
+            <Button
+              variant="contained"
+              onClick={() => selectedVideo?.id && handleComment(selectedVideo.id)}
+              disabled={!newComment.trim() || commentLoading || !selectedVideo?.id}
+              startIcon={<SendIcon />}
+            >
+              {commentLoading ? <CircularProgress size={20} /> : 'Send'}
+            </Button>
+          </Box>
+        </Box>
+      </Box>
+    </Drawer>
+  );
 
   if (loading) {
     return (
@@ -583,10 +1014,20 @@ const Vibits: React.FC = () => {
 
   return (
     <Box sx={{ height: '100vh', position: 'relative', overflow: 'hidden' }}>
+      <Tabs
+        value={tabIndex}
+        onChange={handleTabChange}
+        indicatorColor="primary"
+        textColor="primary"
+        centered
+      >
+        <Tab label="Discover" />
+        <Tab label="Following" />
+      </Tabs>
       {videos.length > 0 ? (
         <Box
           sx={{
-            height: '100%',
+            height: 'calc(100% - 48px)', // Adjust for tab height
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
@@ -626,24 +1067,26 @@ const Vibits: React.FC = () => {
             loop
             muted={isMuted}
             playsInline
+            preload="metadata"
+            poster={currentVideo.thumbnailUrl || currentVideo.url}
             style={{
               width: '100%',
               height: '100%',
-              objectFit: 'cover',
+              objectFit: isMobile ? 'contain' : 'cover',
               position: 'absolute',
               top: 0,
               left: 0,
               zIndex: 1,
-              transition: 'transform 0.3s ease-in-out',
+              transition: 'transform 0.5s ease-in-out',
               transform: isTransitioning 
                 ? swipeDirection === 'up' 
                   ? 'translateY(-100%)' 
                   : 'translateY(100%)'
-                : 'translateY(0)'
+                : 'translateY(0)',
+              backgroundColor: isMobile ? 'black' : 'transparent'
             }}
             onClick={() => setIsPlaying(!isPlaying)}
           />
-          
           {/* Previous video (if exists) */}
           {currentVideoIndex > 0 && (
             <video
@@ -656,14 +1099,13 @@ const Vibits: React.FC = () => {
                 top: 0,
                 left: 0,
                 zIndex: 0,
-                transition: 'transform 0.3s ease-in-out',
+                transition: 'transform 0.5s ease-in-out',
                 transform: isTransitioning && swipeDirection === 'down'
                   ? 'translateY(0)'
                   : 'translateY(-100%)'
               }}
             />
           )}
-          
           {/* Next video (if exists) */}
           {currentVideoIndex < videos.length - 1 && (
             <video
@@ -676,14 +1118,14 @@ const Vibits: React.FC = () => {
                 top: 0,
                 left: 0,
                 zIndex: 0,
-                transition: 'transform 0.3s ease-in-out',
+                transition: 'transform 0.5s ease-in-out',
                 transform: isTransitioning && swipeDirection === 'up'
                   ? 'translateY(0)'
                   : 'translateY(100%)'
               }}
             />
           )}
-          
+          {/* Video Controls */}
           <Box sx={{
             position: 'absolute',
             top: 16,
@@ -748,7 +1190,44 @@ const Vibits: React.FC = () => {
               <MoreVertIcon />
             </IconButton>
           </Box>
-          
+          {/* Video Info Menu */}
+          <Menu
+            anchorEl={videoInfoAnchorEl}
+            open={Boolean(videoInfoAnchorEl)}
+            onClose={handleInfoMenuClose}
+          >
+            <MenuItem disabled>
+              <Typography variant="subtitle2">Video Information</Typography>
+            </MenuItem>
+            <MenuItem disabled>
+              <InfoIcon fontSize="small" sx={{ mr: 1 }} />
+              Duration: {currentVideoInfo.duration}
+            </MenuItem>
+            <MenuItem disabled>
+              <InfoIcon fontSize="small" sx={{ mr: 1 }} />
+              Resolution: {currentVideoInfo.resolution}
+            </MenuItem>
+          </Menu>
+          {/* Comments Dialog */}
+          <CommentsDrawer />
+          {/* Upload Progress Dialog */}
+          {uploading && (
+            <Dialog open={uploading} maxWidth="sm" fullWidth>
+              <DialogContent>
+                <Typography variant="h6" gutterBottom>
+                  Uploading Video...
+                </Typography>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={uploadProgress} 
+                  sx={{ height: 10, borderRadius: 5 }}
+                />
+                <Typography variant="body2" align="center" sx={{ mt: 1 }}>
+                  {Math.round(uploadProgress)}%
+                </Typography>
+              </DialogContent>
+            </Dialog>
+          )}
           <Box sx={{
             position: 'absolute',
             bottom: 0,
@@ -809,10 +1288,7 @@ const Vibits: React.FC = () => {
               </IconButton>
               <IconButton 
                 color="primary"
-                onClick={() => {
-                  setShowComments(true);
-                  fetchComments(currentVideo.id);
-                }}
+                onClick={() => handleVideoClick(currentVideo)}
               >
                 <CommentIcon />
               </IconButton>
@@ -845,6 +1321,12 @@ const Vibits: React.FC = () => {
                   <DeleteIcon />
                 </IconButton>
               )}
+              <IconButton 
+                color="primary"
+                onClick={handleSaveVideo}
+              >
+                <SaveIcon />
+              </IconButton>
             </Box>
           </Box>
         </Box>
@@ -885,85 +1367,6 @@ const Vibits: React.FC = () => {
           </MenuItem>
         ))}
       </Menu>
-
-      {/* Video Info Menu */}
-      <Menu
-        anchorEl={videoInfoAnchorEl}
-        open={Boolean(videoInfoAnchorEl)}
-        onClose={handleInfoMenuClose}
-      >
-        <MenuItem disabled>
-          <Typography variant="subtitle2">Video Information</Typography>
-        </MenuItem>
-        <MenuItem disabled>
-          <InfoIcon fontSize="small" sx={{ mr: 1 }} />
-          Duration: {currentVideoInfo.duration}
-        </MenuItem>
-        <MenuItem disabled>
-          <InfoIcon fontSize="small" sx={{ mr: 1 }} />
-          Resolution: {currentVideoInfo.resolution}
-        </MenuItem>
-      </Menu>
-
-      {/* Comments Dialog */}
-      <Dialog
-        open={showComments}
-        onClose={() => setShowComments(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <Box sx={{ p: 2 }}>
-          <Typography variant="h6" gutterBottom>
-            Comments
-          </Typography>
-          <Box sx={{ maxHeight: '400px', overflowY: 'auto', mb: 2 }}>
-            {comments.map(comment => (
-              <Box key={comment.id} sx={{ display: 'flex', gap: 1, mb: 2 }}>
-                <Avatar>{comment.username[0]}</Avatar>
-                <Box>
-                  <Typography variant="subtitle2">{comment.username}</Typography>
-                  <Typography variant="body2">{comment.content}</Typography>
-                </Box>
-              </Box>
-            ))}
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <TextField
-              fullWidth
-              size="small"
-              placeholder="Add a comment..."
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-            />
-            <Button
-              variant="contained"
-              onClick={() => handleComment(currentVideo.id)}
-              disabled={commentLoading || !newComment.trim()}
-            >
-              <SendIcon />
-            </Button>
-          </Box>
-        </Box>
-      </Dialog>
-
-      {/* Upload Progress Dialog */}
-      {uploading && (
-        <Dialog open={uploading} maxWidth="sm" fullWidth>
-          <DialogContent>
-            <Typography variant="h6" gutterBottom>
-              Uploading Video...
-            </Typography>
-            <LinearProgress 
-              variant="determinate" 
-              value={uploadProgress} 
-              sx={{ height: 10, borderRadius: 5 }}
-            />
-            <Typography variant="body2" align="center" sx={{ mt: 1 }}>
-              {Math.round(uploadProgress)}%
-            </Typography>
-          </DialogContent>
-        </Dialog>
-      )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog 

@@ -318,30 +318,57 @@ const Feed: React.FC = () => {
   };
 
   const handleLike = async (postId: string) => {
-    if (!currentUser || !db) return;
+    if (!db || !currentUser) return;
     
     try {
       const postRef = doc(db, 'posts', postId);
       const postDoc = await getDoc(postRef);
       
-      if (!postDoc.exists()) return;
+      if (!postDoc.exists()) {
+        throw new Error('Post not found');
+      }
       
       const postData = postDoc.data();
       const isLiked = postData.likedBy?.includes(currentUser.uid);
+      const currentLikes = postData.likes || 0;
       
-      await updateDoc(postRef, {
-        likes: isLiked ? increment(-1) : increment(1),
-        likedBy: isLiked 
-          ? arrayRemove(currentUser.uid)
-          : arrayUnion(currentUser.uid)
-      });
+      if (isLiked) {
+        // Unlike
+        await updateDoc(postRef, {
+          likedBy: arrayRemove(currentUser.uid),
+          likes: Math.max(0, currentLikes - 1)
+        });
+      } else {
+        // Like
+        await updateDoc(postRef, {
+          likedBy: arrayUnion(currentUser.uid),
+          likes: currentLikes + 1
+        });
+
+        // Create notification for post owner
+        if (postData.authorId !== currentUser.uid) {
+          const notificationData = {
+            type: 'like',
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || 'Anonymous',
+            senderAvatar: currentUser.photoURL || '',
+            recipientId: postData.authorId,
+            postId: postId,
+            content: `${currentUser.displayName || 'Someone'} liked your post`,
+            createdAt: serverTimestamp(),
+            isRead: false
+          };
+          await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+        }
+      }
     } catch (error) {
-      console.error('Error liking post:', error);
+      console.error('Error toggling like:', error);
+      toast.error('Failed to update like');
     }
   };
 
   const handleRepost = async (postId: string) => {
-    if (!currentUser) {
+    if (!currentUser || !db) {
       toast.error('You must be logged in to repost');
       return;
     }
@@ -397,6 +424,22 @@ const Feed: React.FC = () => {
           })
         ]);
         
+        // Create notification for post owner
+        if (originalPost.authorId !== currentUser.uid) {
+          const notificationData = {
+            type: 'repost',
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || 'Anonymous',
+            senderAvatar: currentUser.photoURL || '',
+            recipientId: originalPost.authorId,
+            postId: postId,
+            content: `${currentUser.displayName || 'Someone'} reposted your post`,
+            createdAt: serverTimestamp(),
+            isRead: false
+          };
+          await addDoc(collection(db, 'users', originalPost.authorId, 'notifications'), notificationData);
+        }
+        
         toast.success('Post reposted!');
       }
       
@@ -429,16 +472,23 @@ const Feed: React.FC = () => {
         comments: arrayUnion(commentData)
       });
 
+      // Create notification for post owner
       if (postData && postData.authorId !== currentUser.uid) {
-        await createNotification(
-          postData.authorId,
-          'comment',
-          `${currentUser.displayName || 'Someone'} commented on your post`,
-          `/post/${postId}`,
-          postId
-        );
+        const notificationData = {
+          type: 'comment',
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || 'Anonymous',
+          senderAvatar: currentUser.photoURL || '',
+          recipientId: postData.authorId,
+          postId: postId,
+          content: `${currentUser.displayName || 'Someone'} commented on your post: "${content}"`,
+          createdAt: serverTimestamp(),
+          isRead: false
+        };
+        await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
       }
 
+      // Check for mentions in comment
       const mentions = content.match(/@(\w+)/g);
       if (mentions) {
         const uniqueMentions = Array.from(new Set(mentions));
@@ -449,14 +499,19 @@ const Feed: React.FC = () => {
           
           if (!userDocs.empty) {
             const mentionedUser = userDocs.docs[0];
-            if (mentionedUser.id !== currentUser.uid) {
-              await createNotification(
-                mentionedUser.id,
-                'mention',
-                `${currentUser.displayName || 'Someone'} mentioned you in a comment`,
-                `/post/${postId}`,
-                postId
-              );
+            if (postData && mentionedUser.id !== currentUser.uid && mentionedUser.id !== postData.authorId) {
+              const notificationData = {
+                type: 'mention',
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || 'Anonymous',
+                senderAvatar: currentUser.photoURL || '',
+                recipientId: mentionedUser.id,
+                postId: postId,
+                content: `${currentUser.displayName || 'Someone'} mentioned you in a comment: "${content}"`,
+                createdAt: serverTimestamp(),
+                isRead: false
+              };
+              await addDoc(collection(db, 'users', mentionedUser.id, 'notifications'), notificationData);
             }
           }
         }

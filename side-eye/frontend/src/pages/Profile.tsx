@@ -29,7 +29,9 @@ import {
   Badge,
   Alert,
   Menu,
-  MenuItem
+  MenuItem,
+  CardMedia,
+  Drawer
 } from '@mui/material';
 import { 
   Edit as EditIcon,
@@ -41,16 +43,18 @@ import {
   PhotoCamera,
   Message as MessageIcon,
   Delete as DeleteIcon,
-  Repeat as RepeatIcon
+  Repeat as RepeatIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { formatDistanceToNow } from 'date-fns';
 import { User, UserProfile, SideRoom } from '../types/index';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
+import { toast } from 'react-hot-toast';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -99,6 +103,26 @@ interface DeletedItem {
   content: any;
   deletedAt: any;
   scheduledForPermanentDeletion?: any;
+}
+
+interface Video {
+  id: string;
+  url: string;
+  userId: string;
+  username: string;
+  likes: number;
+  comments: number;
+  timestamp: any;
+  duration?: number;
+  resolution?: string;
+  thumbnailUrl?: string;
+  commentsList?: {
+    id: string;
+    userId: string;
+    username: string;
+    content: string;
+    timestamp: any;
+  }[];
 }
 
 function TabPanel(props: TabPanelProps) {
@@ -331,6 +355,11 @@ const Profile: React.FC = () => {
   const [isPrivate, setIsPrivate] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [canViewFullProfile, setCanViewFullProfile] = useState(false);
+  const [videos, setVideos] = useState<Video[]>([]);
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [newComment, setNewComment] = useState('');
+  const [isCommenting, setIsCommenting] = useState(false);
+  const [showComments, setShowComments] = useState(false);
   
   const userId = targetUserId || currentUser?.uid || '';
 
@@ -425,6 +454,32 @@ const Profile: React.FC = () => {
           ...doc.data()
         })) as Post[];
         setPosts(postsData);
+
+        // Fetch liked posts
+        const likedPostsQuery = query(
+          collection(db, 'posts'),
+          where('likedBy', 'array-contains', foundUserId),
+          orderBy('timestamp', 'desc')
+        );
+        const likedPostsSnapshot = await getDocs(likedPostsQuery);
+        const likedPostsData = likedPostsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Post[];
+        setLikedPosts(likedPostsData);
+
+        // Fetch videos
+        const videosQuery = query(
+          collection(db, 'videos'),
+          where('userId', '==', foundUserId),
+          orderBy('timestamp', 'desc')
+        );
+        const videosSnapshot = await getDocs(videosQuery);
+        const videosData = videosSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Video[];
+        setVideos(videosData);
 
         setIsLoading(false);
       } catch (error) {
@@ -534,19 +589,18 @@ const Profile: React.FC = () => {
         timestamp: serverTimestamp()
       });
 
+      // Create notification for the user being followed
       const notificationData = {
         type: 'follow',
         senderId: currentUser.uid,
         senderName: currentUser.displayName || 'Anonymous',
         senderAvatar: currentUser.photoURL || '',
         recipientId: userId,
-        read: false,
-        timestamp: serverTimestamp(),
         content: `${currentUser.displayName || 'Someone'} started following you`,
-        link: `/profile/${currentUser.uid}`
+        createdAt: serverTimestamp(),
+        isRead: false
       };
-
-      await addDoc(collection(db, 'notifications'), notificationData);
+      await addDoc(collection(db, 'users', userId, 'notifications'), notificationData);
 
       setIsFollowing(true);
       setFollowers(prev => [...prev, currentUser.uid]);
@@ -864,37 +918,43 @@ const Profile: React.FC = () => {
       const postRef = doc(db, 'posts', postId);
       const postDoc = await getDoc(postRef);
       
-      if (!postDoc.exists()) return;
+      if (!postDoc.exists()) {
+        throw new Error('Post not found');
+      }
       
       const postData = postDoc.data();
       const isLiked = postData.likedBy?.includes(currentUser.uid);
       
       if (isLiked) {
-        // Remove like from subcollection
-        const likeRef = doc(db, 'posts', postId, 'likes', currentUser.uid);
-        await deleteDoc(likeRef);
-        
-        // Update post document
+        // Unlike
         await updateDoc(postRef, {
-          likes: increment(-1),
           likedBy: arrayRemove(currentUser.uid)
         });
       } else {
-        // Add like to subcollection
-        const likeRef = doc(db, 'posts', postId, 'likes', currentUser.uid);
-        await setDoc(likeRef, {
-          userId: currentUser.uid,
-          timestamp: serverTimestamp()
-        });
-        
-        // Update post document
+        // Like
         await updateDoc(postRef, {
-          likes: increment(1),
           likedBy: arrayUnion(currentUser.uid)
         });
+
+        // Create notification for post owner
+        if (postData.authorId !== currentUser.uid) {
+          const notificationData = {
+            type: 'like',
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || 'Anonymous',
+            senderAvatar: currentUser.photoURL || '',
+            recipientId: postData.authorId,
+            postId: postId,
+            content: `${currentUser.displayName || 'Someone'} liked your post`,
+            createdAt: serverTimestamp(),
+            isRead: false
+          };
+          await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+        }
       }
     } catch (error) {
-      console.error('Error liking post:', error);
+      console.error('Error toggling like:', error);
+      toast.error('Failed to update like');
     }
   };
 
@@ -905,47 +965,270 @@ const Profile: React.FC = () => {
       const postRef = doc(db, 'posts', postId);
       const postDoc = await getDoc(postRef);
       
-      if (!postDoc.exists()) return;
+      if (!postDoc.exists()) {
+        throw new Error('Post not found');
+      }
       
       const postData = postDoc.data();
       const isReposted = postData.repostedBy?.includes(currentUser.uid);
       
       if (isReposted) {
-        // Remove repost
+        // Unrepost
         await updateDoc(postRef, {
-          reposts: increment(-1),
-          repostedBy: arrayRemove(currentUser.uid)
-        });
-        
-        // Delete repost document
-        const repostQuery = query(
-          collection(db, 'reposts'),
-          where('postId', '==', postId),
-          where('userId', '==', currentUser.uid)
-        );
-        const repostSnapshot = await getDocs(repostQuery);
-        repostSnapshot.forEach(async (doc) => {
-          await deleteDoc(doc.ref);
+          repostedBy: arrayRemove(currentUser.uid),
+          reposts: increment(-1)
         });
       } else {
-        // Add repost
+        // Repost
         await updateDoc(postRef, {
-          reposts: increment(1),
-          repostedBy: arrayUnion(currentUser.uid)
+          repostedBy: arrayUnion(currentUser.uid),
+          reposts: increment(1)
         });
-        
-        // Create repost document
-        await addDoc(collection(db, 'reposts'), {
-          postId,
-          userId: currentUser.uid,
-          originalAuthorId: postData.authorId,
-          timestamp: serverTimestamp()
-        });
+
+        // Create notification for post owner
+        if (postData.authorId !== currentUser.uid) {
+          const notificationData = {
+            type: 'repost',
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || 'Anonymous',
+            senderAvatar: currentUser.photoURL || '',
+            recipientId: postData.authorId,
+            postId: postId,
+            content: `${currentUser.displayName || 'Someone'} reposted your post`,
+            createdAt: serverTimestamp(),
+            isRead: false
+          };
+          await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+        }
       }
     } catch (error) {
-      console.error('Error reposting:', error);
+      console.error('Error toggling repost:', error);
+      toast.error('Failed to update repost');
     }
   };
+
+  const handleAddComment = async (postId: string, comment: string) => {
+    if (!currentUser || !comment.trim() || !db) return;
+    
+    try {
+      const postRef = doc(db, 'posts', postId);
+      const postDoc = await getDoc(postRef);
+      
+      if (!postDoc.exists()) {
+        throw new Error('Post not found');
+      }
+      
+      const postData = postDoc.data();
+      
+      // Add comment
+      const commentRef = await addDoc(collection(db, `posts/${postId}/comments`), {
+        content: comment.trim(),
+        userId: currentUser.uid,
+        username: currentUser.displayName || 'Anonymous',
+        userPhotoURL: currentUser.photoURL || '',
+        timestamp: serverTimestamp()
+      });
+
+      // Update post comment count
+      await updateDoc(postRef, {
+        comments: increment(1)
+      });
+
+      // Create notification for post owner
+      if (postData.authorId !== currentUser.uid) {
+        const notificationData = {
+          type: 'comment',
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || 'Anonymous',
+          senderAvatar: currentUser.photoURL || '',
+          recipientId: postData.authorId,
+          postId: postId,
+          commentId: commentRef.id,
+          content: `${currentUser.displayName || 'Someone'} commented on your post: "${comment.trim()}"`,
+          createdAt: serverTimestamp(),
+          isRead: false
+        };
+        await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+      }
+
+      // Check for mentions in comment
+      const mentionRegex = /@(\w+)/g;
+      const mentions = comment.match(mentionRegex);
+      
+      if (mentions) {
+        for (const mention of mentions) {
+          const username = mention.substring(1); // Remove @ symbol
+          const userQuery = query(
+            collection(db, 'users'),
+            where('username', '==', username),
+            limit(1)
+          );
+          const userSnapshot = await getDocs(userQuery);
+          
+          if (!userSnapshot.empty) {
+            const mentionedUser = userSnapshot.docs[0];
+            if (mentionedUser.id !== currentUser.uid && mentionedUser.id !== postData.authorId) {
+              const notificationData = {
+                type: 'mention',
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || 'Anonymous',
+                senderAvatar: currentUser.photoURL || '',
+                recipientId: mentionedUser.id,
+                postId: postId,
+                commentId: commentRef.id,
+                content: `${currentUser.displayName || 'Someone'} mentioned you in a comment: "${comment.trim()}"`,
+                createdAt: serverTimestamp(),
+                isRead: false
+              };
+              await addDoc(collection(db, 'users', mentionedUser.id, 'notifications'), notificationData);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error adding comment:', error);
+      toast.error('Failed to add comment');
+    }
+  };
+
+  const handleVideoClick = (video: Video) => {
+    setSelectedVideo(video);
+    setShowComments(true);
+  };
+
+  const CommentsDrawer = () => (
+    <Drawer
+      anchor="bottom"
+      open={showComments}
+      onClose={() => setShowComments(false)}
+      PaperProps={{
+        sx: {
+          height: '80vh',
+          borderTopLeftRadius: 16,
+          borderTopRightRadius: 16,
+          overflow: 'hidden',
+          '@media (max-width: 600px)': {
+            height: '90vh'
+          }
+        }
+      }}
+    >
+      <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Comments</Typography>
+          <IconButton onClick={() => setShowComments(false)}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
+        {selectedVideo && (
+          <>
+            <Box sx={{ mb: 2 }}>
+              <video
+                src={selectedVideo.url}
+                style={{
+                  width: '100%',
+                  maxHeight: '200px',
+                  objectFit: 'contain',
+                  backgroundColor: 'black'
+                }}
+                controls
+                playsInline
+                muted
+              />
+            </Box>
+            <List sx={{ flex: 1, overflow: 'auto', mb: 2 }}>
+              {selectedVideo.commentsList?.map((comment) => (
+                <ListItem key={comment.id} divider>
+                  <ListItemAvatar>
+                    <Avatar>{comment.username[0]}</Avatar>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={comment.username}
+                    secondary={
+                      <>
+                        <Typography variant="body2">{comment.content}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {formatDistanceToNow(comment.timestamp?.toDate?.() || new Date())} ago
+                        </Typography>
+                      </>
+                    }
+                  />
+                </ListItem>
+              ))}
+            </List>
+            <Box sx={{ mt: 'auto' }}>
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="Add a comment..."
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                InputProps={{
+                  endAdornment: (
+                    <Button
+                      size="small"
+                      onClick={() => selectedVideo && handleAddComment(selectedVideo.id, newComment)}
+                      disabled={!newComment.trim() || isCommenting}
+                    >
+                      Post
+                    </Button>
+                  )
+                }}
+              />
+            </Box>
+          </>
+        )}
+      </Box>
+    </Drawer>
+  );
+
+  // Update the video card click handler
+  const renderVideoCard = (video: Video) => (
+    <Card key={video.id} sx={{ position: 'relative' }}>
+      <CardMedia
+        component="video"
+        image={video.thumbnailUrl || video.url}
+        sx={{
+          height: { xs: 'auto', sm: 200 },
+          width: '100%',
+          aspectRatio: '16/9',
+          objectFit: 'cover',
+          backgroundColor: 'black',
+          '@media (max-width: 600px)': {
+            height: 'auto',
+            maxHeight: '60vh',
+            objectFit: 'contain'
+          }
+        }}
+        controls
+        preload="metadata"
+        playsInline
+        muted
+        loop
+        poster={video.thumbnailUrl}
+      />
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <FavoriteIcon fontSize="small" color="action" />
+          <Typography variant="body2" color="text.secondary">
+            {video.likes}
+          </Typography>
+          <IconButton 
+            size="small" 
+            onClick={(e) => {
+              e.stopPropagation();
+              handleVideoClick(video);
+            }}
+          >
+            <CommentIcon fontSize="small" color="action" />
+            <Typography variant="body2" color="text.secondary" sx={{ ml: 0.5 }}>
+              {video.comments}
+            </Typography>
+          </IconButton>
+        </Box>
+      </CardContent>
+    </Card>
+  );
 
   // Update the messages dialog content
   const renderMessagesDialog = () => (
@@ -1290,7 +1573,7 @@ const Profile: React.FC = () => {
                 }}
               >
                 <Tab label="Posts" />
-                <Tab label="Forums" />
+                <Tab label="Vibits" />
                 <Tab label="Side Rooms" />
                 <Tab label="Liked Posts" />
                 {currentUser?.uid === userId && <Tab label="Deleted Items" />}
@@ -1311,27 +1594,19 @@ const Profile: React.FC = () => {
             )}
           </TabPanel>
           <TabPanel value={activeTab} index={1}>
-            {forums.length === 0 ? (
-              <Typography>Not a member of any forums yet</Typography>
+            {videos.length === 0 ? (
+              <Typography>No videos uploaded yet</Typography>
             ) : (
-              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-                {forums.map((forum) => (
-                  <Box key={forum.id}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="h6">{forum.title}</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {forum.description}
-                        </Typography>
-                        <Chip
-                          size="small"
-                          label={`${forum.memberCount} members`}
-                          sx={{ mt: 1 }}
-                        />
-                      </CardContent>
-                    </Card>
-                  </Box>
-                ))}
+              <Box sx={{ 
+                display: 'grid', 
+                gridTemplateColumns: { 
+                  xs: '1fr', 
+                  sm: '1fr 1fr', 
+                  md: '1fr 1fr 1fr' 
+                }, 
+                gap: 2 
+              }}>
+                {videos.map(renderVideoCard)}
               </Box>
             )}
           </TabPanel>
@@ -1366,22 +1641,87 @@ const Profile: React.FC = () => {
             ) : (
               <List>
                 {likedPosts.map((post) => (
-                  <ListItem key={post.id} divider>
+                  <ListItem 
+                    key={post.id} 
+                    divider
+                    sx={{ 
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: 'action.hover'
+                      }
+                    }}
+                    onClick={() => {
+                      setSelectedPost(post);
+                      setShowPostDialog(true);
+                    }}
+                  >
+                    <ListItemAvatar>
+                      <Link to={`/profile/${post.authorName}`} style={{ textDecoration: 'none' }}>
+                        <Avatar src={post.authorAvatar || undefined} />
+                      </Link>
+                    </ListItemAvatar>
                     <ListItemText
-                      primary={post.content}
-                      secondary={`Posted ${formatDistanceToNow(
-                        post.timestamp instanceof Date 
-                          ? post.timestamp 
-                          : post.timestamp?.toDate?.() || new Date()
-                      )} ago`}
+                      primary={
+                        <Box>
+                          <Link to={`/profile/${post.authorName}`} style={{ textDecoration: 'none' }}>
+                            <Typography 
+                              variant="subtitle1" 
+                              component="span"
+                              sx={{ 
+                                color: 'text.primary',
+                                '&:hover': { textDecoration: 'underline' }
+                              }}
+                            >
+                              {post.authorName}
+                            </Typography>
+                          </Link>
+                          <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
+                            {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={
+                        <Box>
+                          <Typography variant="body1" sx={{ mt: 1 }}>
+                            {post.content}
+                          </Typography>
+                          {post.isEdited && (
+                            <Typography variant="caption" color="text.secondary">
+                              (edited)
+                            </Typography>
+                          )}
+                        </Box>
+                      }
                     />
                     <ListItemSecondaryAction>
-                      <IconButton edge="end" aria-label="likes">
-                        <FavoriteIcon />
-                        <Typography variant="body2" sx={{ ml: 1 }}>
-                          {post.likes.length}
-                        </Typography>
-                      </IconButton>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <IconButton 
+                          edge="end" 
+                          aria-label="likes"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLike(post.id);
+                          }}
+                        >
+                          <FavoriteIcon color={post.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />
+                          <Typography variant="body2" sx={{ ml: 1 }}>
+                            {post.likes || 0}
+                          </Typography>
+                        </IconButton>
+                        <IconButton
+                          edge="end"
+                          aria-label="repost"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRepost(post.id);
+                          }}
+                        >
+                          <RepeatIcon color={post.repostedBy?.includes(currentUser?.uid || '') ? "primary" : "inherit"} />
+                          <Typography variant="body2" sx={{ ml: 1 }}>
+                            {post.reposts || 0}
+                          </Typography>
+                        </IconButton>
+                      </Box>
                     </ListItemSecondaryAction>
                   </ListItem>
                 ))}
@@ -1586,6 +1926,8 @@ const Profile: React.FC = () => {
           Add to Story
         </MenuItem>
       </Menu>
+
+      <CommentsDrawer />
     </Container>
   );
 };
