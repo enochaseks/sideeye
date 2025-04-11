@@ -37,6 +37,7 @@ import TwoFactorAuth from './pages/TwoFactorAuth';
 import TrashPage from './pages/TrashPage';
 import FollowersList from './pages/FollowersList';
 import FollowingList from './pages/FollowingList';
+import DeletionDeactivatePage from './pages/DeletionDeactivatePage';
 import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import RateLimiter from './components/RateLimiter';
@@ -110,6 +111,7 @@ const App: React.FC = () => {
                           <Route path="/profile/:userId/following" element={<ProtectedRoute><FollowingList /></ProtectedRoute>} />
                           <Route path="/notifications" element={<ProtectedRoute><NotificationPage /></ProtectedRoute>} />
                           <Route path="/debug" element={<Debug />} />
+                          <Route path="/account-management" element={<ProtectedRoute><DeletionDeactivatePage /></ProtectedRoute>} />
                         </Routes>
                       </Box>
                       <CookieConsent />
