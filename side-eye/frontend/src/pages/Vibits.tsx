@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Box, IconButton, Typography, CircularProgress, Dialog, TextField, Button, Avatar, LinearProgress, DialogTitle, DialogContent, DialogActions, Menu, MenuItem, Select, FormControl, InputLabel, SelectChangeEvent, FormHelperText, Slider } from '@mui/material';
 import { 
   Add as AddIcon, 
@@ -103,6 +103,7 @@ const Vibits: React.FC = () => {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isHolding, setIsHolding] = useState(false);
   const holdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTap = useRef(0);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -123,6 +124,63 @@ const Vibits: React.FC = () => {
       fetchFollowing();
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'VolumeUp' || e.key === 'VolumeDown') {
+        console.log('Volume button pressed');
+        // Handle volume button press
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const handleDoubleTap = useCallback(() => {
+    console.log('Double tap detected');
+    // Handle double tap
+  }, []);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const currentTime = new Date().getTime();
+    const tapLength = currentTime - lastTap.current;
+    if (tapLength < 300 && tapLength > 0) {
+      handleDoubleTap();
+    }
+    lastTap.current = currentTime;
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const currentY = e.touches[0].clientY;
+    const diff = touchStartY.current - currentY;
+    if (Math.abs(diff) > 10) {
+      setSwipeDirection(diff > 0 ? 'up' : 'down');
+      setSwipeDistance(Math.abs(diff));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (swipeDirection && swipeDistance > SWIPE_THRESHOLD) {
+      setIsTransitioning(true);
+      if (swipeDirection === 'up' && currentVideoIndex < videos.length - 1) {
+        setCurrentVideoIndex(prev => prev + 1);
+      } else if (swipeDirection === 'down' && currentVideoIndex > 0) {
+        setCurrentVideoIndex(prev => prev - 1);
+      }
+      setTimeout(() => {
+        setIsTransitioning(false);
+        setSwipeDirection(null);
+        setSwipeDistance(0);
+      }, 300);
+    } else {
+      setSwipeDirection(null);
+      setSwipeDistance(0);
+    }
+  };
 
   const fetchVideos = async () => {
     try {
@@ -445,109 +503,6 @@ const Vibits: React.FC = () => {
     }
   };
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartY.current = e.touches[0].clientY;
-    setSwipeDirection(null);
-    setSwipeDistance(0);
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    const currentY = e.touches[0].clientY;
-    const diff = touchStartY.current - currentY;
-    
-    // Update swipe direction and distance
-    if (Math.abs(diff) > 10) {
-      setSwipeDirection(diff > 0 ? 'up' : 'down');
-      setSwipeDistance(Math.abs(diff));
-    }
-  };
-
-  const handleTouchEnd = () => {
-    if (swipeDirection && swipeDistance > SWIPE_THRESHOLD) {
-      setIsTransitioning(true);
-      
-      if (swipeDirection === 'up' && currentVideoIndex < videos.length - 1) {
-        setCurrentVideoIndex(prev => prev + 1);
-      } else if (swipeDirection === 'down' && currentVideoIndex > 0) {
-        setCurrentVideoIndex(prev => prev - 1);
-      }
-      
-      setTimeout(() => {
-        setIsTransitioning(false);
-        setSwipeDirection(null);
-        setSwipeDistance(0);
-      }, 300);
-    } else {
-      setSwipeDirection(null);
-      setSwipeDistance(0);
-    }
-  };
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (holdTimeoutRef.current) {
-        clearTimeout(holdTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const handleFollow = async (userId: string) => {
-    if (!currentUser || userId === currentUser.uid) return;
-    
-    try {
-      // Check if the target user has a private account
-      const targetUserDoc = await getDoc(doc(db, 'users', userId));
-      const isTargetPrivate = targetUserDoc.data()?.isPrivate || false;
-
-      if (isTargetPrivate) {
-        // Check if there's already a pending request
-        const existingRequest = await getDoc(doc(db, `users/${userId}/followRequests`, currentUser.uid));
-        
-        if (!existingRequest.exists()) {
-          // Create follow request
-          await setDoc(doc(db, `users/${userId}/followRequests`, currentUser.uid), {
-            userId: currentUser.uid,
-            username: currentUser.displayName || currentUser.email?.split('@')[0] || 'Anonymous',
-            timestamp: serverTimestamp()
-          });
-          toast.success('Follow request sent');
-        } else {
-          toast.error('Follow request already pending');
-        }
-      } else {
-        // Handle public account follow
-        const followingRef = doc(db, `users/${currentUser.uid}/following`, userId);
-        const followerRef = doc(db, `users/${userId}/followers`, currentUser.uid);
-        
-        if (following.has(userId)) {
-          // Unfollow
-          await deleteDoc(followingRef);
-          await deleteDoc(followerRef);
-          setFollowing(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(userId);
-            return newSet;
-          });
-          toast.success('Unfollowed user');
-        } else {
-          // Follow
-          await setDoc(followingRef, {
-            timestamp: serverTimestamp()
-          });
-          await setDoc(followerRef, {
-            timestamp: serverTimestamp()
-          });
-          setFollowing(prev => new Set(prev).add(userId));
-          toast.success('Followed user');
-        }
-      }
-    } catch (error) {
-      console.error('Error toggling follow:', error);
-      toast.error('Failed to update follow status');
-    }
-  };
-
   const handleResolutionMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setResolutionAnchorEl(event.currentTarget);
   };
@@ -580,6 +535,40 @@ const Vibits: React.FC = () => {
 
   const handleInfoMenuClose = () => {
     setVideoInfoAnchorEl(null);
+  };
+
+  const handleFollow = async (userId: string) => {
+    if (!currentUser || userId === currentUser.uid) return;
+    
+    try {
+      const followingRef = doc(db, `users/${currentUser.uid}/following`, userId);
+      const followerRef = doc(db, `users/${userId}/followers`, currentUser.uid);
+      
+      if (following.has(userId)) {
+        // Unfollow
+        await deleteDoc(followingRef);
+        await deleteDoc(followerRef);
+        setFollowing(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(userId);
+          return newSet;
+        });
+        toast.success('Unfollowed user');
+      } else {
+        // Follow
+        await setDoc(followingRef, {
+          timestamp: serverTimestamp()
+        });
+        await setDoc(followerRef, {
+          timestamp: serverTimestamp()
+        });
+        setFollowing(prev => new Set(prev).add(userId));
+        toast.success('Followed user');
+      }
+    } catch (error) {
+      console.error('Error toggling follow:', error);
+      toast.error('Failed to update follow status');
+    }
   };
 
   if (loading) {
