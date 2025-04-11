@@ -97,7 +97,9 @@ const Vibits: React.FC = () => {
   const [volume, setVolume] = useState(0.5);
   const [isPlaying, setIsPlaying] = useState(true);
   const videoInputRef = useRef<HTMLInputElement>(null);
-  const [slideDirection, setSlideDirection] = useState<'up' | 'down'>('up');
+  const [swipeDirection, setSwipeDirection] = useState<'up' | 'down' | null>(null);
+  const [swipeDistance, setSwipeDistance] = useState(0);
+  const SWIPE_THRESHOLD = 100; // Minimum distance to trigger swipe
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isHolding, setIsHolding] = useState(false);
   const holdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -445,50 +447,39 @@ const Vibits: React.FC = () => {
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
-    // Start the hold timer with a shorter duration
-    holdTimeoutRef.current = setTimeout(() => {
-      setIsHolding(true);
-    }, 150); // Reduced from 300ms to 150ms
+    setSwipeDirection(null);
+    setSwipeDistance(0);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    touchEndY.current = e.touches[0].clientY;
-    // If not holding, clear the timeout
-    if (!isHolding && holdTimeoutRef.current) {
-      clearTimeout(holdTimeoutRef.current);
+    const currentY = e.touches[0].clientY;
+    const diff = touchStartY.current - currentY;
+    
+    // Update swipe direction and distance
+    if (Math.abs(diff) > 10) {
+      setSwipeDirection(diff > 0 ? 'up' : 'down');
+      setSwipeDistance(Math.abs(diff));
     }
   };
 
   const handleTouchEnd = () => {
-    // Clear any pending hold timeout
-    if (holdTimeoutRef.current) {
-      clearTimeout(holdTimeoutRef.current);
-    }
-
-    const diff = touchStartY.current - touchEndY.current;
-    // Reduced the swipe threshold from 50 to 30 pixels
-    if (Math.abs(diff) > 30 && !isTransitioning && isHolding) {
+    if (swipeDirection && swipeDistance > SWIPE_THRESHOLD) {
       setIsTransitioning(true);
-      if (diff > 0 && currentVideoIndex < videos.length - 1) {
-        setSlideDirection('up');
-        setTimeout(() => {
-          setCurrentVideoIndex(prev => prev + 1);
-          setIsTransitioning(false);
-          setIsHolding(false);
-        }, 200); // Reduced from 300ms to 200ms
-      } else if (diff < 0 && currentVideoIndex > 0) {
-        setSlideDirection('down');
-        setTimeout(() => {
-          setCurrentVideoIndex(prev => prev - 1);
-          setIsTransitioning(false);
-          setIsHolding(false);
-        }, 200); // Reduced from 300ms to 200ms
-      } else {
-        setIsTransitioning(false);
-        setIsHolding(false);
+      
+      if (swipeDirection === 'up' && currentVideoIndex < videos.length - 1) {
+        setCurrentVideoIndex(prev => prev + 1);
+      } else if (swipeDirection === 'down' && currentVideoIndex > 0) {
+        setCurrentVideoIndex(prev => prev - 1);
       }
+      
+      setTimeout(() => {
+        setIsTransitioning(false);
+        setSwipeDirection(null);
+        setSwipeDistance(0);
+      }, 300);
     } else {
-      setIsHolding(false);
+      setSwipeDirection(null);
+      setSwipeDistance(0);
     }
   };
 
@@ -595,6 +586,28 @@ const Vibits: React.FC = () => {
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
+          {/* Swipe Direction Indicator */}
+          {swipeDirection && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 2,
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                padding: '8px 16px',
+                borderRadius: '20px',
+                color: 'white',
+                fontSize: '1.2rem',
+                fontWeight: 'bold',
+                opacity: Math.min(swipeDistance / SWIPE_THRESHOLD, 1)
+              }}
+            >
+              Swiping {swipeDirection}
+            </Box>
+          )}
+
           <video
             ref={videoRef}
             src={currentVideo.url}
@@ -612,7 +625,7 @@ const Vibits: React.FC = () => {
               zIndex: 1,
               transition: 'transform 0.3s ease-in-out',
               transform: isTransitioning 
-                ? slideDirection === 'up' 
+                ? swipeDirection === 'up' 
                   ? 'translateY(-100%)' 
                   : 'translateY(100%)'
                 : 'translateY(0)'
@@ -633,7 +646,7 @@ const Vibits: React.FC = () => {
                 left: 0,
                 zIndex: 0,
                 transition: 'transform 0.3s ease-in-out',
-                transform: isTransitioning && slideDirection === 'down'
+                transform: isTransitioning && swipeDirection === 'down'
                   ? 'translateY(0)'
                   : 'translateY(-100%)'
               }}
@@ -653,7 +666,7 @@ const Vibits: React.FC = () => {
                 left: 0,
                 zIndex: 0,
                 transition: 'transform 0.3s ease-in-out',
-                transform: isTransitioning && slideDirection === 'up'
+                transform: isTransitioning && swipeDirection === 'up'
                   ? 'translateY(0)'
                   : 'translateY(100%)'
               }}
