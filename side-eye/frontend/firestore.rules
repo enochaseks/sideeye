@@ -104,6 +104,14 @@ service cloud.firestore {
                       request.auth.uid == followerId;
       }
 
+      // Notifications subcollection
+      match /notifications/{notificationId} {
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        allow create: if isAuthenticated();
+        allow update: if isAuthenticated() && request.auth.uid == userId;
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
+      }
+
       // Favorites subcollection
       match /favorites/{videoId} {
         allow read: if isAuthenticated();

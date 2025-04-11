@@ -196,13 +196,15 @@ const Feed: React.FC = () => {
         // Get the list of users being followed
         const followingRef = collection(db, 'users', currentUser.uid, 'following');
         const followingSnapshot = await getDocs(followingRef);
-        const followingIds = followingSnapshot.docs.map(doc => doc.data().userId);
+        const followingIds = followingSnapshot.docs.map(doc => doc.id).filter(Boolean);
         
         // Add the current user's ID to the list to see their own posts too
-        const userIdsToFetch = [...followingIds, currentUser.uid];
+        const userIdsToFetch = [...followingIds, currentUser.uid].filter(Boolean);
 
         if (userIdsToFetch.length === 0) {
           setPosts([]);
+          setFeedLoading(false);
+          setIsLoading(false);
           return;
         }
 
