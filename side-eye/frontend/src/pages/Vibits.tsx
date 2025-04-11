@@ -895,14 +895,20 @@ const Vibits: React.FC = () => {
           component="span"
           sx={{
             position: 'fixed',
-            bottom: 80,
+            bottom: 140,
             right: 16,
             backgroundColor: 'primary.main',
             '&:hover': {
               backgroundColor: 'primary.dark'
-            }
+            },
+            boxShadow: 3,
+            width: 56,
+            height: 56,
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}
-          disabled={uploading}
           onClick={() => {
             // Show duration limit toast before opening file picker
             toast('Videos must be between 5 seconds and 3 minutes long');
@@ -911,7 +917,21 @@ const Vibits: React.FC = () => {
             }, 1000);
           }}
         >
-          {uploading ? <CircularProgress size={24} color="inherit" /> : <AddIcon />}
+          {uploading ? (
+            <CircularProgress 
+              size={24} 
+              color="inherit" 
+              sx={{ 
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                marginTop: '-12px',
+                marginLeft: '-12px'
+              }} 
+            />
+          ) : (
+            <AddIcon sx={{ fontSize: 32 }} />
+          )}
         </IconButton>
       </label>
     </Box>
