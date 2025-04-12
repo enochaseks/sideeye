@@ -41,9 +41,9 @@ import {
 } from '@mui/icons-material';
 import { Link } from 'react-router-dom';
 import { useThemeContext } from '../contexts/ThemeContext';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, usePrivacy } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { doc, updateDoc, arrayRemove, getDoc, setDoc, deleteDoc, collection, getDocs, orderBy, serverTimestamp, query } from 'firebase/firestore';
+import { doc, updateDoc, arrayRemove, getDoc, setDoc, deleteDoc, collection, getDocs, orderBy, serverTimestamp, query, onSnapshot } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 
 interface FollowRequest {
@@ -125,13 +125,19 @@ const Settings: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { isDarkMode, toggleDarkMode } = useThemeContext();
-  const { currentUser } = useAuth();
+  const { currentUser, userProfile } = useAuth();
+  const { canViewProfile, canViewContent } = usePrivacy();
   const [devices, setDevices] = useState<Array<{ id: string; name: string; lastActive: string }>>([]);
   const [showDeviceDialog, setShowDeviceDialog] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPrivate, setIsPrivate] = useState(false);
   const [followRequests, setFollowRequests] = useState<FollowRequest[]>([]);
+  const [privacyStats, setPrivacyStats] = useState({
+    followers: 0,
+    following: 0,
+    pendingRequests: 0
+  });
 
   const settingsItems = [
     {
@@ -187,13 +193,21 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
     if (currentUser) {
-      // Fetch privacy settings
-      const fetchPrivacySettings = async () => {
-        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-        if (userDoc.exists()) {
-          setIsPrivate(userDoc.data().isPrivate || false);
+      // Add real-time listener for privacy settings and stats
+      const userRef = doc(db, 'users', currentUser.uid);
+      const unsubscribe = onSnapshot(userRef, (doc) => {
+        if (doc.exists()) {
+          const userData = doc.data();
+          setIsPrivate(userData.isPrivate || false);
+          
+          // Update privacy stats
+          setPrivacyStats({
+            followers: userData.followers?.length || 0,
+            following: userData.following?.length || 0,
+            pendingRequests: followRequests.length
+          });
         }
-      };
+      });
 
       // Fetch follow requests
       const fetchFollowRequests = async () => {
@@ -214,10 +228,10 @@ const Settings: React.FC = () => {
         setFollowRequests(requests);
       };
 
-      fetchPrivacySettings();
       fetchFollowRequests();
+      return () => unsubscribe();
     }
-  }, [currentUser]);
+  }, [currentUser, followRequests.length]);
 
   const handleRemoveDevice = async (deviceId: string) => {
     if (!currentUser) return;
@@ -236,21 +250,25 @@ const Settings: React.FC = () => {
     }
   };
 
-  // Add a console log to verify the update
-const handlePrivacyToggle = async () => {
-  if (!currentUser) return;
-  try {
-      console.log('Updating privacy setting to:', !isPrivate); // Add this line
+  const handlePrivacyToggle = async () => {
+    if (!currentUser?.uid) return;
+    try {
       await updateDoc(doc(db, 'users', currentUser.uid), {
-          isPrivate: !isPrivate
+        isPrivate: !isPrivate,
+        updatedAt: serverTimestamp()
       });
-      setIsPrivate(!isPrivate);
-      toast.success(`Account is now ${!isPrivate ? 'private' : 'public'}`);
-  } catch (error) {
+      
+      // If switching to public, auto-accept all pending follow requests
+      if (!isPrivate) {
+        for (const request of followRequests) {
+          await handleFollowRequest(request.id, request.userId, true);
+        }
+      }
+    } catch (error) {
       console.error('Error updating privacy settings:', error);
       toast.error('Failed to update privacy settings');
-  }
-};
+    }
+  };
 
   const handleFollowRequest = async (requestId: string, userId: string, accept: boolean) => {
     if (!currentUser) return;
@@ -281,7 +299,7 @@ const handlePrivacyToggle = async () => {
   };
 
   return (
-    <Container maxWidth="md">
+    <Container maxWidth="md" sx={{ py: 4 }}>
       <Box sx={{ py: 4 }}>
         <Typography variant="h4" sx={{ mb: 3, fontWeight: 'bold' }}>
           Settings
@@ -384,82 +402,113 @@ const handlePrivacyToggle = async () => {
           </DialogActions>
         </Dialog>
 
-        {/* Privacy Settings */}
+        {/* Enhanced Privacy Settings Section */}
         <Box sx={{ mb: 4, mt: 4 }}>
           <Typography variant="h6" gutterBottom>Privacy Settings</Typography>
-          <Box sx={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            p: 2,
-            bgcolor: 'background.paper',
-            borderRadius: 1,
-            boxShadow: 1
-          }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              {isPrivate ? <LockIcon color="primary" /> : <LockOpenIcon color="primary" />}
-              <Box>
-                <Typography variant="subtitle1">Private Account</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {isPrivate 
-                    ? 'Only approved followers can see your content' 
-                    : 'Anyone can see your content'}
-                </Typography>
+          <Paper elevation={2} sx={{ p: 3 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              mb: 2
+            }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                {isPrivate ? <LockIcon color="primary" /> : <LockOpenIcon color="primary" />}
+                <Box>
+                  <Typography variant="subtitle1">Private Account</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {isPrivate 
+                      ? 'Only approved followers can see your content' 
+                      : 'Anyone can see your content'}
+                  </Typography>
+                </Box>
               </Box>
+              <Switch
+                checked={isPrivate}
+                onChange={handlePrivacyToggle}
+                color="primary"
+              />
             </Box>
-            <Switch
-              checked={isPrivate}
-              onChange={handlePrivacyToggle}
-              color="primary"
-            />
-          </Box>
 
-          {/* Follow Requests */}
-          {isPrivate && followRequests.length > 0 && (
-            <Box sx={{ mt: 3 }}>
-              <Typography variant="subtitle1" gutterBottom>Follow Requests</Typography>
-              <List>
-                {followRequests.map(request => (
-                  <ListItem
-                    key={request.id}
-                    sx={{
-                      bgcolor: 'background.paper',
-                      borderRadius: 1,
-                      mb: 1,
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Avatar>{request.username[0]}</Avatar>
-                      <Box>
-                        <Typography variant="subtitle1">@{request.username}</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {new Date(request.timestamp?.toDate()).toLocaleDateString()}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <IconButton
-                        color="success"
-                        onClick={() => handleFollowRequest(request.id, request.userId, true)}
-                      >
-                        <CheckIcon />
-                      </IconButton>
-                      <IconButton
-                        color="error"
-                        onClick={() => handleFollowRequest(request.id, request.userId, false)}
-                      >
-                        <CloseIcon />
-                      </IconButton>
-                    </Box>
-                  </ListItem>
-                ))}
-              </List>
+            {/* Privacy Stats */}
+            <Box sx={{ 
+              display: 'flex', 
+              gap: 3, 
+              mt: 2,
+              p: 2,
+              bgcolor: 'background.default',
+              borderRadius: 1
+            }}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">Followers</Typography>
+                <Typography variant="h6">{privacyStats.followers}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">Following</Typography>
+                <Typography variant="h6">{privacyStats.following}</Typography>
+              </Box>
+              {isPrivate && (
+                <Box>
+                  <Typography variant="subtitle2" color="text.secondary">Pending Requests</Typography>
+                  <Typography variant="h6">{privacyStats.pendingRequests}</Typography>
+                </Box>
+              )}
             </Box>
-          )}
+
+            {/* Privacy Tips */}
+            <Alert severity="info" sx={{ mt: 2 }}>
+              {isPrivate 
+                ? 'When your account is private, only approved followers can see your content. New followers must send a follow request.'
+                : 'When your account is public, anyone can see your content and follow you without approval.'}
+            </Alert>
+          </Paper>
         </Box>
+
+        {/* Follow Requests */}
+        {isPrivate && followRequests.length > 0 && (
+          <Box sx={{ mt: 3 }}>
+            <Typography variant="subtitle1" gutterBottom>Follow Requests</Typography>
+            <List>
+              {followRequests.map(request => (
+                <ListItem
+                  key={request.id}
+                  sx={{
+                    bgcolor: 'background.paper',
+                    borderRadius: 1,
+                    mb: 1,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Avatar>{request.username[0]}</Avatar>
+                    <Box>
+                      <Typography variant="subtitle1">@{request.username}</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {new Date(request.timestamp?.toDate()).toLocaleDateString()}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <IconButton
+                      color="success"
+                      onClick={() => handleFollowRequest(request.id, request.userId, true)}
+                    >
+                      <CheckIcon />
+                    </IconButton>
+                    <IconButton
+                      color="error"
+                      onClick={() => handleFollowRequest(request.id, request.userId, false)}
+                    >
+                      <CloseIcon />
+                    </IconButton>
+                  </Box>
+                </ListItem>
+              ))}
+            </List>
+          </Box>
+        )}
       </Box>
     </Container>
   );

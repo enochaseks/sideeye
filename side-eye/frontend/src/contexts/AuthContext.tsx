@@ -12,6 +12,9 @@ import { checkAndResetRestrictions } from '../services/contentModeration';
 export interface User extends FirebaseUser {
   profilePicture?: string;
   hasUnreadNotifications?: boolean;
+  isPrivate?: boolean;
+  followers?: string[];
+  following?: string[];
 }
 
 interface AuthContextType {
@@ -99,6 +102,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubscribe();
     };
   }, []);
+
+  // Enhanced real-time listener for privacy settings
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+
+    const userRef = doc(db, 'users', currentUser.uid);
+    const unsubscribe = onSnapshot(userRef, (doc) => {
+      if (doc.exists()) {
+        const userData = doc.data() as UserProfile;
+        const previousIsPrivate = userProfile?.isPrivate;
+        setUserProfile(userData);
+        
+        // Update user state with new privacy settings and followers
+        setUser(prev => prev ? {
+          ...prev,
+          ...userData,
+          isPrivate: userData.isPrivate || false,
+          followers: userData.followers || [],
+          following: userData.following || []
+        } : null);
+
+        // Notify other components of privacy changes
+        if (previousIsPrivate !== userData.isPrivate) {
+          toast.success(`Account is now ${userData.isPrivate ? 'private' : 'public'}`);
+          // Force a refresh of the profile data
+          if (window.location.pathname.includes('/profile')) {
+            window.location.reload();
+          }
+        }
+      }
+    }, (error) => {
+      console.error('Error listening to privacy changes:', error);
+      toast.error('Failed to sync privacy settings');
+    });
+
+    return () => unsubscribe();
+  }, [currentUser?.uid, db, userProfile?.isPrivate]);
 
   const login = async (email: string, password: string) => {
     setLoading(true);
@@ -527,4 +567,30 @@ const getAuthErrorMessage = (code: string): string => {
     default:
       return 'An error occurred. Please try again';
   }
+};
+
+// Add privacy-related helper functions
+export const usePrivacy = () => {
+  const { currentUser, userProfile } = useAuth();
+  
+  const canViewProfile = (targetUserId: string) => {
+    if (!currentUser || !userProfile) return false;
+    if (currentUser.uid === targetUserId) return true;
+    
+    const targetUser = userProfile.followers?.includes(targetUserId);
+    return !userProfile.isPrivate || targetUser;
+  };
+
+  const canViewContent = (targetUserId: string) => {
+    if (!currentUser || !userProfile) return false;
+    if (currentUser.uid === targetUserId) return true;
+    
+    const isFollowing = userProfile.following?.includes(targetUserId);
+    return !userProfile.isPrivate || isFollowing;
+  };
+
+  return {
+    canViewProfile,
+    canViewContent
+  };
 }; 

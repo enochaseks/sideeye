@@ -364,143 +364,211 @@ const Profile: React.FC = () => {
   const [followRequested, setFollowRequested] = useState(false);
   const [showFollowRequests, setShowFollowRequests] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<string[]>([]);
+  const [userData, setUserData] = useState<UserProfile | null>(null);
+  const [following, setFollowing] = useState<string[]>([]);
   
   const userId = targetUserId || currentUser?.uid || '';
 
+  useEffect(() => {
+    if (!urlParam) {
+      setTargetUserId(currentUser?.uid || null);
+    } else {
+      setTargetUserId(urlParam);
+    }
+  }, [urlParam, currentUser?.uid]);
+
   const fetchUserData = useCallback(async () => {
-    if (!db) {
-      console.error('Firestore database is not initialized');
+    if (!db || !targetUserId) {
+      setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
-
     try {
-      let foundUserId = urlParam;
-      let userDoc;
+      setIsLoading(true);
+      setError(null);
 
-      // First try to find user by username
-      if (urlParam && !urlParam.includes('@')) {
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('username', '==', urlParam));
-        const querySnapshot = await getDocs(q);
-        
-        if (!querySnapshot.empty) {
-          userDoc = querySnapshot.docs[0];
-          foundUserId = userDoc.id;
-        }
-      }
-
-      // If not found by username, try by ID
-      if (!userDoc && foundUserId) {
-        userDoc = await getDoc(doc(db, 'users', foundUserId));
-      }
-
-      if (!userDoc?.exists()) {
-        setError('User not found');
+      // First check if we can view the profile
+      const userRef = doc(db, 'users', targetUserId);
+      const userDoc = await getDoc(userRef);
+      
+      if (!userDoc.exists()) {
+        setError('Profile not found');
         setIsLoading(false);
         return;
       }
 
       const userData = userDoc.data() as UserProfile;
-      setUserProfile(userData);
-      setTargetUserId(foundUserId || null);
+      const isPrivateAccount = userData.isPrivate || false;
+      const isOwnProfile = currentUser?.uid === targetUserId;
       
-      // Set basic profile data
+      setIsPrivate(isPrivateAccount);
+      setUserData(userData);
       setUsername(userData.username || '');
       setName(userData.name || '');
-      setEmail(userData.email || '');
       setBio(userData.bio || '');
       setProfilePic(userData.profilePic || null);
-      setIsPrivate(userData.isPrivate || false);
-      setIsAdmin(userData.isAdmin || false);
 
-      try {
-        // Fetch followers and following
-        if (foundUserId) {
-          const [followersSnapshot, followingSnapshot] = await Promise.all([
-            getDocs(collection(db, 'users', foundUserId, 'followers')),
-            getDocs(collection(db, 'users', foundUserId, 'following'))
-          ]);
-
-          // Process followers and following data, filtering out the current user if viewing own profile
-          const followers = followersSnapshot.docs
-            .map(doc => doc.id)
-            .filter(id => currentUser?.uid !== foundUserId || id !== currentUser?.uid);
+      // Set view permissions
+      if (isOwnProfile || !isPrivateAccount) {
+        setCanViewFullProfile(true);
+        setError(null);
+      } else {
+        // For private accounts, check if we're a follower
+        if (currentUser?.uid) {
+          const followerRef = doc(db, `users/${targetUserId}/followers/${currentUser.uid}`);
+          const followerDoc = await getDoc(followerRef);
+          const isFollower = followerDoc.exists();
           
-          const following = followingSnapshot.docs
-            .map(doc => doc.id)
-            .filter(id => currentUser?.uid !== foundUserId || id !== currentUser?.uid);
-
-          setFollowers(followers);
-          setConnections(following);
-
-          // Fetch detailed user data for followers and following
-          const [followersData, followingData] = await Promise.all([
-            Promise.all(followers.map(id => getDoc(doc(db, 'users', id)))),
-            Promise.all(following.map(id => getDoc(doc(db, 'users', id))))
-          ]);
-
-          setFollowersList(followersData.map(doc => doc.data() as UserProfile));
-          setFollowingList(followingData.map(doc => doc.data() as UserProfile));
+          setCanViewFullProfile(isFollower);
+          if (!isFollower) {
+            setError('This profile is private');
+          }
+        } else {
+          setCanViewFullProfile(false);
+          setError('This profile is private');
         }
+      }
 
-        // Fetch posts
-        const postsQuery = query(
-          collection(db, 'posts'),
-          where('authorId', '==', foundUserId),
-          orderBy('timestamp', 'desc')
-        );
-        const postsSnapshot = await getDocs(postsQuery);
-        const postsData = postsSnapshot.docs.map(doc => ({
+      // Fetch followers and following
+      const [followersSnapshot, followingSnapshot] = await Promise.all([
+        getDocs(collection(db, `users/${targetUserId}/followers`)),
+        getDocs(collection(db, `users/${targetUserId}/following`))
+      ]);
+
+      const followers = followersSnapshot.docs.map(doc => doc.id);
+      const following = followingSnapshot.docs.map(doc => doc.id);
+
+      setFollowers(followers);
+      setFollowing(following);
+      setConnections(following);
+
+      // Only fetch additional data if we can view the profile
+      if (canViewFullProfile) {
+        // Fetch detailed user data and other content
+        const [followersData, followingData] = await Promise.all([
+          Promise.all(followers.map(userId => getDoc(doc(db, 'users', userId)))),
+          Promise.all(following.map(userId => getDoc(doc(db, 'users', userId))))
+        ]);
+
+        setFollowersList(followersData.map(doc => ({
           id: doc.id,
           ...doc.data()
-        })) as Post[];
-        setPosts(postsData);
-
-        // Fetch liked posts
-        const likedPostsQuery = query(
-          collection(db, 'posts'),
-          where('likedBy', 'array-contains', foundUserId),
-          orderBy('timestamp', 'desc')
-        );
-        const likedPostsSnapshot = await getDocs(likedPostsQuery);
-        const likedPostsData = likedPostsSnapshot.docs.map(doc => ({
+        } as UserProfile)));
+        
+        setFollowingList(followingData.map(doc => ({
           id: doc.id,
           ...doc.data()
-        })) as Post[];
-        setLikedPosts(likedPostsData);
+        } as UserProfile)));
 
-        // Fetch videos
-        const videosQuery = query(
-          collection(db, 'videos'),
-          where('userId', '==', foundUserId),
-          orderBy('timestamp', 'desc')
-        );
-        const videosSnapshot = await getDocs(videosQuery);
-        const videosData = videosSnapshot.docs.map(doc => ({
+        // Fetch posts, videos, and other data
+        const [postsSnapshot, likedPostsSnapshot, videosSnapshot] = await Promise.all([
+          getDocs(query(
+            collection(db, 'posts'),
+            where('authorId', '==', targetUserId),
+            orderBy('timestamp', 'desc')
+          )),
+          getDocs(query(
+            collection(db, 'posts'),
+            where('likedBy', 'array-contains', targetUserId),
+            orderBy('timestamp', 'desc')
+          )),
+          getDocs(query(
+            collection(db, 'videos'),
+            where('userId', '==', targetUserId),
+            orderBy('timestamp', 'desc')
+          ))
+        ]);
+
+        setPosts(postsSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
-        })) as Video[];
-        setVideos(videosData);
+        } as Post)));
 
-        setIsLoading(false);
-      } catch (error) {
-        console.error('Error fetching followers/following:', error);
-        setError('Error loading followers and following data');
-        setIsLoading(false);
+        setLikedPosts(likedPostsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as Post)));
+
+        setVideos(videosSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as Video)));
       }
     } catch (error) {
-      console.error('Error fetching user data:', error);
-      setError('Error loading profile data');
+      console.error('Error in fetchUserData:', error);
+      setError('Failed to load profile data');
+    } finally {
       setIsLoading(false);
     }
-  }, [db, urlParam, currentUser]);
+  }, [db, targetUserId, currentUser?.uid, canViewFullProfile]);
+
+  // Add real-time listener for privacy settings and profile data
+  useEffect(() => {
+    if (!db || !targetUserId) return;
+
+    const userRef = doc(db, 'users', targetUserId);
+    const unsubscribe = onSnapshot(userRef, async (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const userData = docSnapshot.data() as UserProfile;
+        const isPrivateAccount = userData.isPrivate || false;
+        const isOwnProfile = currentUser?.uid === targetUserId;
+
+        // Update basic profile data
+        setUserData(userData);
+        setIsPrivate(isPrivateAccount);
+        setUsername(userData.username || '');
+        setName(userData.name || '');
+        setBio(userData.bio || '');
+        setProfilePic(userData.profilePic || null);
+
+        // Set view permissions - always allow full view for own profile or public accounts
+        if (isOwnProfile || !isPrivateAccount) {
+          setCanViewFullProfile(true);
+          setError(null);
+        } else {
+          // For private accounts, check if we're a follower
+          if (currentUser?.uid) {
+            const followerRef = doc(db, `users/${targetUserId}/followers/${currentUser.uid}`);
+            const followerDoc = await getDoc(followerRef);
+            const isFollower = followerDoc.exists();
+            
+            setCanViewFullProfile(isFollower);
+            if (!isFollower) {
+              setError('This profile is private');
+            }
+          } else {
+            setCanViewFullProfile(false);
+            setError('This profile is private');
+          }
+        }
+
+        // If account becomes public, clear any follow requests
+        if (!isPrivateAccount && followRequested) {
+          try {
+            // Delete the follow request if it exists
+            if (currentUser?.uid) {
+              const requestRef = doc(db, 'users', targetUserId, 'followRequests', currentUser.uid);
+              await deleteDoc(requestRef);
+              setFollowRequested(false);
+            }
+          } catch (error) {
+            console.error('Error clearing follow request:', error);
+          }
+        }
+      }
+    }, (error) => {
+      console.error('Error in privacy settings listener:', error);
+      setError('Failed to sync privacy settings');
+    });
+
+    return () => unsubscribe();
+  }, [db, targetUserId, currentUser?.uid, followRequested]);
 
   useEffect(() => {
-    fetchUserData();
-  }, [fetchUserData]);
+    if (targetUserId) {
+      fetchUserData();
+    }
+  }, [fetchUserData, targetUserId]);
 
   useEffect(() => {
     if (userProfile) {
@@ -677,9 +745,10 @@ const Profile: React.FC = () => {
 
       setIsFollowing(false);
       setFollowers(prev => prev.filter(id => id !== currentUser.uid));
-      setConnections(prev => prev.filter(id => id !== userToUnfollow));
+      setFollowing(prev => prev.filter(id => id !== userToUnfollow));
       
-      fetchUserData();
+      // Refresh the data
+      await fetchUserData();
     } catch (error) {
       console.error('Error unfollowing user:', error);
       setError('Failed to unfollow user');
@@ -722,6 +791,22 @@ const Profile: React.FC = () => {
 
     return () => unsubscribe();
   }, [db, currentUser, userId]);
+
+  useEffect(() => {
+    if (currentUser?.uid && targetUserId) {
+      const checkCanViewProfile = async () => {
+        if (!db) return;
+        try {
+          const followersRef = doc(db, 'users', targetUserId, 'followers', currentUser.uid);
+          const followersDoc = await getDoc(followersRef);
+          setCanViewFullProfile(followersDoc.exists() || currentUser.uid === targetUserId);
+        } catch (error) {
+          console.error('Error checking profile visibility:', error);
+        }
+      };
+      checkCanViewProfile();
+    }
+  }, [currentUser?.uid, targetUserId, db]);
 
   const renderMessageButton = () => {
     if (!userId) return null;
@@ -767,9 +852,9 @@ const Profile: React.FC = () => {
         color={isFollowing ? "error" : "primary"}
         startIcon={isFollowing ? <PersonRemoveIcon /> : <PersonAddIcon />}
         onClick={isFollowing ? () => handleUnfollow(targetUserId) : handleFollow}
-        disabled={isLoading || followRequested}
+        disabled={isLoading || (isPrivate && followRequested)}
       >
-        {isLoading ? 'Loading...' : isFollowing ? 'Unfollow' : followRequested ? 'Requested' : 'Follow'}
+        {isLoading ? 'Loading...' : isFollowing ? 'Unfollow' : isPrivate ? (followRequested ? 'Requested' : 'Follow') : 'Follow'}
       </Button>
     );
   };
@@ -1555,22 +1640,6 @@ const Profile: React.FC = () => {
     );
   };
 
-  useEffect(() => {
-    if (currentUser?.uid && targetUserId) {
-      const checkCanViewProfile = async () => {
-        if (!db) return;
-        try {
-          const followersRef = doc(db, 'users', targetUserId, 'followers', currentUser.uid);
-          const followersDoc = await getDoc(followersRef);
-          setCanViewFullProfile(followersDoc.exists() || currentUser.uid === targetUserId);
-        } catch (error) {
-          console.error('Error checking profile visibility:', error);
-        }
-      };
-      checkCanViewProfile();
-    }
-  }, [currentUser?.uid, targetUserId, db]);
-
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -1581,20 +1650,10 @@ const Profile: React.FC = () => {
     );
   }
 
-  if (error) {
-    return (
-      <Container maxWidth="lg">
-        <Box sx={{ mt: 4 }}>
-          <Alert severity="error">{error}</Alert>
-        </Box>
-      </Container>
-    );
-  }
-
   return (
     <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {/* Profile Header */}
+        {/* Profile Header - Always visible */}
         <Paper elevation={0} sx={{ p: 3, borderRadius: 2, backgroundColor: 'background.paper' }}>
           <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3, alignItems: 'center' }}>
             <Box sx={{ position: 'relative' }}>
@@ -1602,7 +1661,7 @@ const Profile: React.FC = () => {
                 overlap="circular"
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
                 badgeContent={
-                  currentUser?.uid === userId && (
+                  currentUser?.uid === targetUserId && (
                     <IconButton
                       component="label"
                       size="small"
@@ -1641,7 +1700,16 @@ const Profile: React.FC = () => {
               <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
                 @{username || 'No username set'}
               </Typography>
-              {canViewFullProfile ? (
+              {isPrivate && !canViewFullProfile && currentUser?.uid !== userId ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    This account is private. Follow to see their posts and other content.
+                  </Alert>
+                  <Box sx={{ display: 'flex', gap: 2 }}>
+                    {renderFollowButton()}
+                  </Box>
+                </Box>
+              ) : (
                 <>
                   <Typography variant="body1" sx={{ mb: 2 }}>
                     {bio || 'No bio set'}
@@ -1667,22 +1735,13 @@ const Profile: React.FC = () => {
                     )}
                   </Box>
                 </>
-              ) : (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="body1" color="text.secondary">
-                    This account is private
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 2 }}>
-                    {renderFollowButton()}
-                  </Box>
-                </Box>
               )}
             </Box>
           </Box>
         </Paper>
 
-        {/* Stats and Tabs */}
-        {canViewFullProfile && (
+        {/* Stats and Tabs - Only visible if canViewFullProfile is true */}
+        {(!isPrivate || canViewFullProfile || currentUser?.uid === userId) ? (
           <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
             {/* Stats Card */}
             <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: 'background.paper', flex: { md: 1 } }}>
@@ -1700,9 +1759,8 @@ const Profile: React.FC = () => {
                     }
                   }}
                   onClick={() => {
-                    // Ensure data is refreshed before showing dialog
                     fetchUserData();
-                    setConnectionDialogTab(0); // Show followers tab
+                    setConnectionDialogTab(0);
                     setShowConnectionsDialog(true);
                   }}
                 >
@@ -1718,13 +1776,12 @@ const Profile: React.FC = () => {
                     }
                   }}
                   onClick={() => {
-                    // Ensure data is refreshed before showing dialog
                     fetchUserData();
-                    setConnectionDialogTab(1); // Show following tab
+                    setConnectionDialogTab(1);
                     setShowConnectionsDialog(true);
                   }}
                 >
-                  <Typography variant="h6">{connections.length || 0}</Typography>
+                  <Typography variant="h6">{following.length || 0}</Typography>
                   <Typography variant="body2" color="text.secondary">Following</Typography>
                 </Box>
               </Box>
@@ -1758,6 +1815,23 @@ const Profile: React.FC = () => {
               </Paper>
             </Box>
           </Box>
+        ) : (
+          <Paper elevation={0} sx={{ p: 3, borderRadius: 2, backgroundColor: 'background.paper' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2 }}>
+              <Box sx={{ textAlign: 'center' }}>
+                <Typography variant="h6">{posts.length || 0}</Typography>
+                <Typography variant="body2" color="text.secondary">Posts</Typography>
+              </Box>
+              <Box sx={{ textAlign: 'center' }}>
+                <Typography variant="h6">{followers.length || 0}</Typography>
+                <Typography variant="body2" color="text.secondary">Followers</Typography>
+              </Box>
+              <Box sx={{ textAlign: 'center' }}>
+                <Typography variant="h6">{following.length || 0}</Typography>
+                <Typography variant="body2" color="text.secondary">Following</Typography>
+              </Box>
+            </Box>
+          </Paper>
         )}
 
         {/* Tab Content */}
