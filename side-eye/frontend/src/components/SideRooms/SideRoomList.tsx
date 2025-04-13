@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, arrayUnion, where, getDocs, addDoc, serverTimestamp, Firestore, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, arrayUnion, where, getDocs, addDoc, serverTimestamp, Firestore, Timestamp, runTransaction } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
   Box,
@@ -209,40 +209,53 @@ const SideRoomList: React.FC = () => {
         setIsProcessing(true);
         const roomRef = doc(db, 'sideRooms', room.id);
         
-        // First check if user is already a member
-        const isMember = room.members?.some(member => member.userId === currentUser.uid);
-        
-        if (isMember) {
-          navigate(`/side-room/${room.id}`);
-          return;
-        }
+        // Use a transaction to ensure atomic updates
+        await runTransaction(db, async (transaction) => {
+          const roomDoc = await transaction.get(roomRef);
+          if (!roomDoc.exists()) {
+            throw new Error('Room not found');
+          }
 
-        // Check if room is full
-        if (room.memberCount >= room.maxMembers) {
-          toast.error('Room is full');
-          return;
-        }
+          const roomData = roomDoc.data() as SideRoomData;
+          
+          // Check if user is already a member
+          const isMember = roomData.members?.some(member => member.userId === currentUser.uid);
+          if (isMember) {
+            navigate(`/side-room/${room.id}`);
+            return;
+          }
 
-        // Try to join the room
-        const newMember: SideRoomMember = {
-          userId: currentUser.uid,
-          username: currentUser.displayName || 'Anonymous',
-          avatar: currentUser.photoURL || '',
-          role: 'member',
-          joinedAt: new Date()
-        };
+          // Check if room is full
+          if (roomData.memberCount >= roomData.maxMembers) {
+            throw new Error('Room is full');
+          }
 
-        await updateDoc(roomRef, {
-          members: arrayUnion(newMember),
-          memberCount: room.memberCount + 1,
-          lastActive: serverTimestamp()
+          // Create new member data
+          const newMember: SideRoomMember = {
+            userId: currentUser.uid,
+            username: currentUser.displayName || 'Anonymous',
+            avatar: currentUser.photoURL || '',
+            role: 'member',
+            joinedAt: new Date()
+          };
+
+          // Update both members and memberCount atomically
+          transaction.update(roomRef, {
+            members: arrayUnion(newMember),
+            memberCount: (roomData.memberCount || 0) + 1,
+            lastActive: serverTimestamp()
+          });
         });
 
         toast.success('Joined room successfully');
         navigate(`/side-room/${room.id}`);
       } catch (error) {
         console.error('Error joining room:', error);
-        toast.error('Failed to join room');
+        if (error instanceof Error) {
+          toast.error(error.message);
+        } else {
+          toast.error('Failed to join room');
+        }
       } finally {
         setIsProcessing(false);
       }

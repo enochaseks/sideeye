@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp, FieldValue } from 'firebase/firestore';
 
 export interface User {
   uid: string;
@@ -56,7 +56,7 @@ export interface RoomMember {
   username: string;
   avatar: string;
   role: 'owner' | 'admin' | 'moderator' | 'member';
-  joinedAt: Date;
+  joinedAt: Date | FieldValue;
 }
 
 export interface SideReveal {

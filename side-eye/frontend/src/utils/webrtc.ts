@@ -65,7 +65,10 @@ export const createPeerConnection = (roomId: string, userId: string): PeerConnec
   // Handle negotiation needed
   pc.onnegotiationneeded = async () => {
     try {
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
       await pc.setLocalDescription(offer);
       signaling.sendOffer(offer, userId);
     } catch (err) {

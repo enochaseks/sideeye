@@ -16,14 +16,29 @@ export const getUserMedia = async (constraints: MediaStreamConstraints = { audio
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
-        sampleRate: 44100
+        sampleRate: 44100,
+        channelCount: 2
       } : false,
       video: constraints.video ? {
         width: { ideal: 1280 },
         height: { ideal: 720 },
         frameRate: { ideal: 30 },
-        facingMode: 'user'
+        facingMode: 'user',
+        aspectRatio: { ideal: 1.7777777778 }
       } : false
+    });
+
+    // Add event listeners to track state changes
+    stream.getTracks().forEach(track => {
+      track.onended = () => {
+        console.log(`${track.kind} track ended`);
+      };
+      track.onmute = () => {
+        console.log(`${track.kind} track muted`);
+      };
+      track.onunmute = () => {
+        console.log(`${track.kind} track unmuted`);
+      };
     });
 
     console.log('Got media stream:', stream.getTracks().map(track => `${track.kind}: ${track.label}`));
@@ -69,7 +84,8 @@ export const getDisplayMedia = async () => {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
-        sampleRate: 44100
+        sampleRate: 44100,
+        channelCount: 2
       }
     });
 
@@ -107,6 +123,7 @@ export const stopMediaStream = (stream: MediaStream | null) => {
   stream.getTracks().forEach(track => {
     console.log(`Stopping ${track.kind} track:`, track.label);
     track.stop();
+    track.enabled = false;
   });
 };
 
@@ -122,6 +139,7 @@ export const toggleTrack = (stream: MediaStream | null, kind: 'audio' | 'video')
   const enabled = !tracks[0].enabled;
   tracks.forEach(track => {
     track.enabled = enabled;
+    console.log(`${track.kind} track ${enabled ? 'enabled' : 'disabled'}:`, track.label);
   });
 
   return enabled;
@@ -146,7 +164,8 @@ export const checkMediaDevices = async () => {
       devices: devices.map(device => ({
         id: device.deviceId,
         kind: device.kind,
-        label: device.label
+        label: device.label,
+        groupId: device.groupId
       }))
     };
   } catch (err) {
