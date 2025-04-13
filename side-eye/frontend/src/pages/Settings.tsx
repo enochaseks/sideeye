@@ -20,7 +20,8 @@ import {
   DialogActions,
   Button,
   Alert,
-  Avatar
+  Avatar,
+  TextField
 } from '@mui/material';
 import {
   Security as SecurityIcon,
@@ -37,7 +38,8 @@ import {
   LockOpen as LockOpenIcon,
   PersonAdd as PersonAddIcon,
   Check as CheckIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  Code as CodeIcon
 } from '@mui/icons-material';
 import { Link } from 'react-router-dom';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -45,6 +47,8 @@ import { useAuth, usePrivacy } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, updateDoc, arrayRemove, getDoc, setDoc, deleteDoc, collection, getDocs, orderBy, serverTimestamp, query, onSnapshot } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
+import type { UserProfile } from '../types';
+import bcrypt from 'bcryptjs';
 
 interface FollowRequest {
   id: string;
@@ -138,6 +142,13 @@ const Settings: React.FC = () => {
     following: 0,
     pendingRequests: 0
   });
+  const [showVerificationDialog, setShowVerificationDialog] = useState(false);
+  const [showCreateCodeDialog, setShowCreateCodeDialog] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [newVerificationCode, setNewVerificationCode] = useState('');
+  const [registrationSourceCode, setRegistrationSourceCode] = useState('');
+  const [showSourceCodeDialog, setShowSourceCodeDialog] = useState(false);
+  const [sourceCode, setSourceCode] = useState('');
 
   const settingsItems = [
     {
@@ -295,6 +306,71 @@ const Settings: React.FC = () => {
     } catch (error) {
       console.error('Error handling follow request:', error);
       toast.error('Failed to process follow request');
+    }
+  };
+
+  const handleViewSourceCode = async () => {
+    if (!currentUser) return;
+
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        if (userData.verificationCode) {
+          // User has a verification code, show verification dialog
+          setShowVerificationDialog(true);
+        } else {
+          // User needs to create a verification code
+          setShowCreateCodeDialog(true);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking verification code:', error);
+      toast.error('Failed to check verification status');
+    }
+  };
+
+  const handleCreateVerificationCode = async () => {
+    if (!currentUser || !newVerificationCode) return;
+
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
+        verificationCode: newVerificationCode
+      });
+      setShowCreateCodeDialog(false);
+      setShowVerificationDialog(true);
+      toast.success('Verification code created successfully');
+    } catch (error) {
+      console.error('Error creating verification code:', error);
+      toast.error('Failed to create verification code');
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (!currentUser) return;
+
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        if (userData.verificationCode === verificationCode) {
+          // Show the source code
+          setSourceCode(userData.sourceCodeHash ? verificationCode : '');
+          setShowSourceCodeDialog(true);
+          setShowVerificationDialog(false);
+          toast.success('Code verified successfully');
+        } else {
+          toast.error('Invalid verification code');
+        }
+      }
+    } catch (error) {
+      console.error('Error verifying code:', error);
+      toast.error('Failed to verify code');
     }
   };
 
@@ -461,8 +537,120 @@ const Settings: React.FC = () => {
                 ? 'When your account is private, only approved followers can see your content. New followers must send a follow request.'
                 : 'When your account is public, anyone can see your content and follow you without approval.'}
             </Alert>
+
+            <Divider />
+            <ListItem button onClick={handleViewSourceCode}>
+              <ListItemIcon>
+                <CodeIcon />
+              </ListItemIcon>
+              <ListItemText 
+                primary="View Registration Source Code" 
+                secondary="Verify your code to view your registration source code"
+              />
+            </ListItem>
           </Paper>
         </Box>
+
+        {/* Create Verification Code Dialog */}
+        <Dialog
+          open={showCreateCodeDialog}
+          onClose={() => setShowCreateCodeDialog(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>Create Verification Code</DialogTitle>
+          <DialogContent>
+            <TextField
+              label="Create a verification code"
+              value={newVerificationCode}
+              onChange={(e) => setNewVerificationCode(e.target.value)}
+              fullWidth
+              margin="normal"
+              type="password"
+              inputProps={{
+                maxLength: 8,
+                inputMode: 'numeric',
+                pattern: '[0-9]*'
+              }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowCreateCodeDialog(false)}>Cancel</Button>
+            <Button onClick={handleCreateVerificationCode} variant="contained">Create</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Verify Code Dialog */}
+        <Dialog
+          open={showVerificationDialog}
+          onClose={() => setShowVerificationDialog(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>Verify Code</DialogTitle>
+          <DialogContent>
+            <TextField
+              label="Enter your verification code"
+              value={verificationCode}
+              onChange={(e) => setVerificationCode(e.target.value)}
+              fullWidth
+              margin="normal"
+              type="password"
+              inputProps={{
+                maxLength: 8,
+                inputMode: 'numeric',
+                pattern: '[0-9]*'
+              }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowVerificationDialog(false)}>Cancel</Button>
+            <Button onClick={handleVerifyCode} variant="contained">Verify</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* View Source Code Dialog */}
+        <Dialog
+          open={showSourceCodeDialog}
+          onClose={() => setShowSourceCodeDialog(false)}
+          maxWidth="md"
+          fullWidth
+        >
+          <DialogTitle>Your Registration Source Code</DialogTitle>
+          <DialogContent>
+            <Box sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 1, 
+              mb: 3,
+              color: 'info.main'
+            }}>
+              <InfoIcon color="info" />
+              <Typography sx={{ 
+                color: 'info.main',
+                fontSize: '1rem'
+              }}>
+                When your account is used on another device, you will need this Source Code to register your account.
+              </Typography>
+            </Box>
+            <Box sx={{ 
+              p: 2, 
+              bgcolor: 'background.paper', 
+              borderRadius: 1,
+              fontFamily: 'monospace',
+              whiteSpace: 'pre-wrap',
+              overflow: 'auto',
+              maxHeight: '60vh',
+              fontSize: '24px',
+              textAlign: 'center'
+            }}>
+              {sourceCode}
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowSourceCodeDialog(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Follow Requests */}
         {isPrivate && followRequests.length > 0 && (

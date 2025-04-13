@@ -8,14 +8,14 @@ interface ProtectedRouteProps {
   children: React.ReactNode;
   requireAuth?: boolean;
   requireEmailVerification?: boolean;
-  require2FA?: boolean;
+  requireDeviceSetup?: boolean;
 }
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
   requireAuth = true,
-  requireEmailVerification = false,
-  require2FA = false
+  requireEmailVerification = true,
+  requireDeviceSetup = true
 }) => {
   const { currentUser, userProfile, loading } = useAuth();
 
@@ -31,8 +31,8 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to="/verify-email" replace />;
   }
 
-  if (require2FA && userProfile && !userProfile.isVerified) {
-    return <Navigate to="/2fa" replace />;
+  if (requireDeviceSetup && currentUser && userProfile && !userProfile.sourceCodeSetupComplete) {
+    return <Navigate to="/setup-source-code" replace />;
   }
 
   return <>{children}</>;

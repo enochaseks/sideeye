@@ -27,6 +27,16 @@ service firebase.storage {
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Allow users to upload and read video thumbnails
+    match /thumbnails/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && 
+                   request.auth.uid == userId &&
+                   request.resource.contentType.matches('image/.*') &&
+                   request.resource.size < 5 * 1024 * 1024; // 5MB limit for thumbnails
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Default deny all other access
     match /{allPaths=**} {
       allow read, write: if false;

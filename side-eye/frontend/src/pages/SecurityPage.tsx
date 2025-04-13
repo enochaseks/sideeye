@@ -44,7 +44,6 @@ const SecurityPage: React.FC = () => {
   const [isPrivate, setIsPrivate] = useState(false);
   const [securityStatus, setSecurityStatus] = useState({
     emailVerified: false,
-    twoFactorEnabled: false,
     deviceVerified: false,
     lastSecurityUpdate: null
   });
@@ -60,16 +59,15 @@ const SecurityPage: React.FC = () => {
         
         // Update security status
         setSecurityStatus({
-          emailVerified: userData.emailVerified || false,
-          twoFactorEnabled: userData.twoFactorEnabled || false,
-          deviceVerified: userData.deviceVerified || false,
+          emailVerified: currentUser.emailVerified || false,
+          deviceVerified: userData.sourceCodeSetupComplete || false,
           lastSecurityUpdate: userData.lastSecurityUpdate || null
         });
       }
     });
 
     return () => unsubscribe();
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, currentUser?.emailVerified]);
 
   const handlePrivacyToggle = async () => {
     if (!currentUser?.uid) return;
@@ -108,12 +106,6 @@ const SecurityPage: React.FC = () => {
               icon={securityStatus.emailVerified ? <CheckCircleIcon /> : <ErrorIcon />}
               label={securityStatus.emailVerified ? "Email Verified" : "Email Not Verified"}
               color={securityStatus.emailVerified ? "success" : "error"}
-              variant="outlined"
-            />
-            <Chip
-              icon={securityStatus.twoFactorEnabled ? <CheckCircleIcon /> : <ErrorIcon />}
-              label={securityStatus.twoFactorEnabled ? "2FA Enabled" : "2FA Disabled"}
-              color={securityStatus.twoFactorEnabled ? "success" : "error"}
               variant="outlined"
             />
             <Chip

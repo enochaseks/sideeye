@@ -56,6 +56,7 @@ import { toast } from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import { saveAs } from 'file-saver';
 import { formatDistanceToNow } from 'date-fns';
+import VibitIcon from '../components/VibitIcon';
 
 interface Video {
   id: string;
@@ -474,116 +475,109 @@ const Vibits: React.FC = () => {
     if (!file || !currentUser) return;
 
     try {
-      // Check video duration
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      
-      video.onloadedmetadata = async () => {
-        window.URL.revokeObjectURL(video.src);
-        const duration = video.duration;
-        
-        // Check if video is between 1-3 minutes (60-180 seconds)
-        if (duration < 5 || duration > 180) {
-          toast('Videos must be between 5 seconds and 3 minutes long');
-          return;
-        }
-        
-        // Continue with upload
-        setUploading(true);
-        setUploadProgress(0);
-        const storage = getStorage();
-        
-        const timestamp = Date.now();
-        const fileName = `${timestamp}_${file.name}`;
-        const storageRef = ref(storage, `videos/${currentUser.uid}/${fileName}`);
-        
-        // Create a video element to get resolution
-        const videoEl = document.createElement('video');
-        videoEl.preload = 'metadata';
-        
-        videoEl.onloadedmetadata = async () => {
-          const width = videoEl.videoWidth;
-          const height = videoEl.videoHeight;
-          const resolution = `${width}x${height}`;
-          window.URL.revokeObjectURL(videoEl.src);
-          
-          // Generate available resolutions based on original
-          const resolutions = ['360p'];
-          if (height >= 480) resolutions.push('480p');
-          if (height >= 720) resolutions.push('720p');
-          if (height >= 1080) resolutions.push('1080p');
-          resolutions.push('original');
-          
-          // Create thumbnail
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          videoEl.currentTime = 1; // Capture frame at 1 second
-          
-          videoEl.onseeked = async () => {
-            if (ctx) {
-              ctx.drawImage(videoEl, 0, 0, width, height);
-              const thumbnailBlob = await new Promise<Blob>((resolve) => {
-                canvas.toBlob((blob) => {
-                  if (blob) resolve(blob);
-                }, 'image/jpeg', 0.7);
-              });
-              
-              // Upload thumbnail
-              const thumbnailRef = ref(storage, `thumbnails/${currentUser.uid}/${timestamp}.jpg`);
-              await uploadBytes(thumbnailRef, thumbnailBlob);
-              const thumbnailUrl = await getDownloadURL(thumbnailRef);
-              
-              // Continue upload
-              const uploadTask = uploadBytesResumable(storageRef, file);
-              
-              uploadTask.on('state_changed', 
-                (snapshot: UploadTaskSnapshot) => {
-                  const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                  setUploadProgress(progress);
-                },
-                (error: StorageError) => {
-                  console.error('Upload error:', error);
-                  toast.error('Upload failed');
-                  setUploading(false);
-                },
-                async () => {
-                  const videoUrl = await getDownloadURL(storageRef);
-                  
-                  // Get the user's display name from Firestore
-                  const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-                  const userData = userDoc.data();
-                  const username = userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'Anonymous';
-                  
-                  await addDoc(collection(db, 'videos'), {
-                    url: videoUrl,
-                    thumbnailUrl: thumbnailUrl,
-                    userId: currentUser.uid,
-                    username: username,
-                    likes: 0,
-                    comments: 0,
-                    timestamp: serverTimestamp(),
-                    duration: duration,
-                    resolution: resolution,
-                    resolutions: resolutions
-                  });
+      setUploading(true);
+      setUploadProgress(0);
 
-                  toast.success('Video uploaded successfully!');
-                  fetchVideos();
-                  setUploading(false);
-                  setUploadProgress(0);
-                }
-              );
-            }
-          };
-        };
-        
-        videoEl.src = URL.createObjectURL(file);
-      };
+      // Create a URL for the video file
+      const videoURL = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.src = videoURL;
+
+      // Wait for video metadata to load
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = resolve;
+        video.onerror = reject;
+        video.load();
+      });
+
+      const duration = video.duration;
       
-      video.src = URL.createObjectURL(file);
+      // Clean up the temporary URL
+      URL.revokeObjectURL(videoURL);
       
+      // Check duration
+      if (duration < 5 || duration > 180) {
+        toast.error('Videos must be between 5 seconds and 3 minutes long');
+        setUploading(false);
+        return;
+      }
+
+      const storage = getStorage();
+      const timestamp = Date.now();
+      const fileName = `${timestamp}_${file.name}`;
+      const storageRef = ref(storage, `videos/${currentUser.uid}/${fileName}`);
+
+      // Create thumbnail
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Set canvas dimensions based on video dimensions
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      // Draw the video frame
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      }
+
+      // Convert canvas to blob
+      const thumbnailBlob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+        }, 'image/jpeg', 0.7);
+      });
+
+      // Upload thumbnail
+      const thumbnailRef = ref(storage, `thumbnails/${currentUser.uid}/${timestamp}.jpg`);
+      await uploadBytes(thumbnailRef, thumbnailBlob);
+      const thumbnailUrl = await getDownloadURL(thumbnailRef);
+
+      // Upload video
+      const uploadTask = uploadBytesResumable(storageRef, file);
+      
+      uploadTask.on('state_changed',
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setUploadProgress(progress);
+        },
+        (error) => {
+          console.error('Upload error:', error);
+          toast.error('Upload failed');
+          setUploading(false);
+        },
+        async () => {
+          try {
+            const videoUrl = await getDownloadURL(storageRef);
+            
+            // Get user data
+            const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+            const userData = userDoc.data();
+            const username = userData?.username || currentUser.displayName || 'Anonymous';
+
+            // Add video document to Firestore
+            await addDoc(collection(db, 'videos'), {
+              url: videoUrl,
+              thumbnailUrl,
+              userId: currentUser.uid,
+              username,
+              likes: 0,
+              comments: 0,
+              timestamp: serverTimestamp(),
+              duration,
+              resolution: `${video.videoWidth}x${video.videoHeight}`
+            });
+
+            toast.success('Video uploaded successfully!');
+            fetchVideos(); // Refresh video list
+          } catch (error) {
+            console.error('Error saving video data:', error);
+            toast.error('Failed to save video data');
+          } finally {
+            setUploading(false);
+            setUploadProgress(0);
+          }
+        }
+      );
     } catch (error) {
       console.error('Error uploading video:', error);
       toast.error('Failed to upload video. Please try again.');
@@ -650,17 +644,17 @@ const Vibits: React.FC = () => {
   };
 
   const handleInfoMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
-    if (!currentVideo) return;
+    if (!selectedVideo) return;
     
     // Format duration
-    const totalSeconds = currentVideo.duration || 0;
+    const totalSeconds = selectedVideo.duration || 0;
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = Math.floor(totalSeconds % 60);
     const formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
     
     setCurrentVideoInfo({
       duration: formattedDuration,
-      resolution: currentVideo.resolution || 'Unknown'
+      resolution: selectedVideo.resolution || 'Unknown'
     });
     setVideoInfoAnchorEl(event.currentTarget);
   };
@@ -752,12 +746,12 @@ const Vibits: React.FC = () => {
 
   const handleSaveVideo = async () => {
     try {
-      if (!currentVideo?.url) {
+      if (!selectedVideo?.url) {
         throw new Error('No video selected');
       }
 
       // Extract the path from the full URL
-      const urlParts = currentVideo.url.split('/');
+      const urlParts = selectedVideo.url.split('/');
       const pathIndex = urlParts.indexOf('videos');
       const storagePath = decodeURIComponent(urlParts.slice(pathIndex).join('/').split('?')[0]);
       
@@ -1010,69 +1004,115 @@ const Vibits: React.FC = () => {
     );
   }
 
-  const currentVideo = videos[currentVideoIndex];
-
   return (
-    <Box sx={{ height: '100vh', position: 'relative', overflow: 'hidden' }}>
-      <Tabs
-        value={tabIndex}
-        onChange={handleTabChange}
-        indicatorColor="primary"
-        textColor="primary"
-        centered
-      >
-        <Tab label="Discover" />
-        <Tab label="Following" />
-      </Tabs>
-      {videos.length > 0 ? (
+    <Box sx={{ 
+      height: 'calc(100vh - 56px)',
+      position: 'relative', 
+      overflow: 'hidden',
+      bgcolor: 'black',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+      <Box sx={{ 
+        position: 'relative',
+        width: '100%',
+        bgcolor: 'background.default',
+        height: '48px',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <Tabs
+          value={tabIndex}
+          onChange={handleTabChange}
+          indicatorColor="primary"
+          textColor="primary"
+          centered
+          sx={{
+            width: '100%',
+            height: '100%',
+            '& .MuiTab-root': {
+              color: 'text.primary',
+              fontSize: '1.1rem',
+              fontWeight: 500,
+              textTransform: 'none',
+              minHeight: '48px',
+              '&.Mui-selected': {
+                color: 'primary.main'
+              }
+            },
+            '& .MuiTabs-indicator': {
+              height: '3px'
+            }
+          }}
+        >
+          <Tab 
+            label="DISCOVER" 
+            sx={{ 
+              flex: 1,
+              maxWidth: 'none'
+            }}
+          />
+          <Tab 
+            label="FOLLOWING" 
+            sx={{ 
+              flex: 1,
+              maxWidth: 'none'
+            }}
+          />
+        </Tabs>
         <Box
           sx={{
-            height: 'calc(100% - 48px)', // Adjust for tab height
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: '32px',
+            height: '32px',
+            bgcolor: 'primary.main',
+            borderRadius: '50%',
             display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
             alignItems: 'center',
-            position: 'relative'
+            justifyContent: 'center',
+            zIndex: 2,
+            boxShadow: 2,
+            cursor: 'pointer'
+          }}
+        >
+          <VibitIcon sx={{ color: '#fff', fontSize: 20 }} />
+        </Box>
+      </Box>
+      {loading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+          <CircularProgress />
+        </Box>
+      ) : videos.length > 0 ? (
+        <Box
+          sx={{
+            height: '100%',
+            width: '100%',
+            position: 'relative',
+            overflow: 'hidden',
+            mt: '0'
           }}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          {/* Swipe Direction Indicator */}
-          {swipeDirection && (
-            <Box
-              sx={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                zIndex: 2,
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                padding: '8px 16px',
-                borderRadius: '20px',
-                color: 'white',
-                fontSize: '1.2rem',
-                fontWeight: 'bold',
-                opacity: Math.min(swipeDistance / SWIPE_THRESHOLD, 1)
-              }}
-            >
-              Swiping {swipeDirection}
-            </Box>
-          )}
-
           <video
             ref={videoRef}
-            src={currentVideo.url}
+            src={videos[currentVideoIndex]?.url}
             autoPlay
             loop
             muted={isMuted}
             playsInline
             preload="metadata"
-            poster={currentVideo.thumbnailUrl || currentVideo.url}
+            poster={videos[currentVideoIndex]?.thumbnailUrl}
             style={{
               width: '100%',
               height: '100%',
-              objectFit: isMobile ? 'contain' : 'cover',
+              objectFit: 'contain',
               position: 'absolute',
               top: 0,
               left: 0,
@@ -1083,7 +1123,7 @@ const Vibits: React.FC = () => {
                   ? 'translateY(-100%)' 
                   : 'translateY(100%)'
                 : 'translateY(0)',
-              backgroundColor: isMobile ? 'black' : 'transparent'
+              backgroundColor: 'black'
             }}
             onClick={() => setIsPlaying(!isPlaying)}
           />
@@ -1246,7 +1286,7 @@ const Vibits: React.FC = () => {
               width: '100%'
             }}>
               <Link 
-                to={`/profile/${currentVideo.userId}`} 
+                to={`/profile/${videos[currentVideoIndex]?.userId}`} 
                 style={{ 
                   textDecoration: 'none',
                   color: 'white'
@@ -1258,16 +1298,16 @@ const Vibits: React.FC = () => {
                     cursor: 'pointer'
                   }
                 }}>
-                  @{currentVideo.username}
+                  @{videos[currentVideoIndex]?.username}
                 </Typography>
               </Link>
-              {currentUser && currentVideo.userId !== currentUser.uid && (
+              {currentUser && videos[currentVideoIndex]?.userId !== currentUser.uid && (
                 <Button
                   variant="contained"
                   size="small"
-                  onClick={() => handleFollow(currentVideo.userId)}
-                  startIcon={following.has(currentVideo.userId) ? <PersonAddAlt1Icon /> : <PersonAddIcon />}
-                  color={following.has(currentVideo.userId) ? "primary" : "secondary"}
+                  onClick={() => handleFollow(videos[currentVideoIndex]?.userId)}
+                  startIcon={following.has(videos[currentVideoIndex]?.userId) ? <PersonAddAlt1Icon /> : <PersonAddIcon />}
+                  color={following.has(videos[currentVideoIndex]?.userId) ? "primary" : "secondary"}
                   sx={{ 
                     fontWeight: 'bold',
                     borderRadius: '20px',
@@ -1275,32 +1315,32 @@ const Vibits: React.FC = () => {
                     minWidth: '100px'
                   }}
                 >
-                  {following.has(currentVideo.userId) ? 'Following' : 'Follow'}
+                  {following.has(videos[currentVideoIndex]?.userId) ? 'Following' : 'Follow'}
                 </Button>
               )}
             </Box>
             <Box sx={{ display: 'flex', gap: 2 }}>
               <IconButton 
                 color="primary" 
-                onClick={() => handleLike(currentVideo.id)}
+                onClick={() => handleLike(videos[currentVideoIndex]?.id)}
               >
-                {likedVideos.has(currentVideo.id) ? <FavoriteIcon /> : <FavoriteBorderIcon />}
+                {likedVideos.has(videos[currentVideoIndex]?.id) ? <FavoriteIcon /> : <FavoriteBorderIcon />}
               </IconButton>
               <IconButton 
                 color="primary"
-                onClick={() => handleVideoClick(currentVideo)}
+                onClick={() => handleVideoClick(videos[currentVideoIndex])}
               >
                 <CommentIcon />
               </IconButton>
               <IconButton 
                 color="primary"
-                onClick={() => handleFavorite(currentVideo.id)}
+                onClick={() => handleFavorite(videos[currentVideoIndex]?.id)}
               >
-                {favoriteVideos.has(currentVideo.id) ? <BookmarkIcon /> : <BookmarkBorderIcon />}
+                {favoriteVideos.has(videos[currentVideoIndex]?.id) ? <BookmarkIcon /> : <BookmarkBorderIcon />}
               </IconButton>
               <IconButton 
                 color="primary"
-                onClick={() => handleShare(currentVideo.id)}
+                onClick={() => handleShare(videos[currentVideoIndex]?.id)}
               >
                 <ShareIcon />
               </IconButton>
@@ -1310,11 +1350,11 @@ const Vibits: React.FC = () => {
               >
                 <HighQualityIcon />
               </IconButton>
-              {currentUser?.uid === currentVideo.userId && (
+              {currentUser?.uid === videos[currentVideoIndex]?.userId && (
                 <IconButton 
                   color="error"
                   onClick={() => {
-                    setVideoToDelete(currentVideo);
+                    setVideoToDelete(videos[currentVideoIndex]);
                     setShowDeleteDialog(true);
                   }}
                 >
@@ -1358,7 +1398,7 @@ const Vibits: React.FC = () => {
         <MenuItem onClick={() => handleResolutionChange('auto')}>
           Auto (Recommended)
         </MenuItem>
-        {currentVideo?.resolutions?.map((resolution) => (
+        {videos[currentVideoIndex]?.resolutions?.map((resolution) => (
           <MenuItem 
             key={resolution} 
             onClick={() => handleResolutionChange(resolution)}
@@ -1427,7 +1467,6 @@ const Vibits: React.FC = () => {
             justifyContent: 'center'
           }}
           onClick={() => {
-            // Show duration limit toast before opening file picker
             toast('Videos must be between 5 seconds and 3 minutes long');
             setTimeout(() => {
               videoInputRef.current?.click();

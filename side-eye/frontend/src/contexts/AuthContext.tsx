@@ -140,6 +140,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, [currentUser?.uid, db, userProfile?.isPrivate]);
 
+  // Add effect to check verification status
+  useEffect(() => {
+    if (currentUser && !loading) {
+      // Check email verification
+      if (!currentUser.emailVerified) {
+        toast.error('Please verify your email to continue', {
+          duration: 5000,
+          id: 'email-verification-needed'
+        });
+      }
+      
+      // Check source code setup
+      if (userProfile && !userProfile.sourceCodeSetupComplete) {
+        toast.error('Please set up your source code to continue', {
+          duration: 5000,
+          id: 'source-code-setup-needed'
+        });
+      }
+    }
+  }, [currentUser, userProfile, loading]);
+
   const login = async (email: string, password: string) => {
     setLoading(true);
     setError(null);
