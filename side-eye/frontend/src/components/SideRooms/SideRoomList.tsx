@@ -105,41 +105,43 @@ const SideRoomList: React.FC = () => {
     }
 
     try {
-      setLoading(true); // Start loading
-      const q = query(
-        collection(db, 'sideRooms'),
-        where('isPrivate', '==', false), // Fetch only public rooms
-        orderBy('createdAt', 'desc')
+      setLoading(true);
+      const sideRoomsRef = collection(db, 'sideRooms');
+      const q = query(sideRoomsRef, orderBy('createdAt', 'desc'));
+      
+      const unsubscribe = onSnapshot(q, 
+        (snapshot) => {
+          const roomsData = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              name: data.name || '',
+              description: data.description,
+              createdAt: data.createdAt as Timestamp,
+              lastActive: data.lastActive as Timestamp,
+              memberCount: data.memberCount || 0,
+              maxMembers: data.maxMembers || 50,
+              members: data.members as SideRoomMember[] | undefined,
+              isPrivate: data.isPrivate,
+              password: data.password,
+              genre: data.genre,
+              tags: data.tags as string[] | undefined,
+              category: data.category
+            } as SideRoomData;
+          });
+          
+          // Filter public rooms on the client side
+          const publicRooms = roomsData.filter(room => !room.isPrivate);
+          setRooms(publicRooms);
+          setLoading(false);
+          setError(null);
+        },
+        (err) => {
+          console.error("Error fetching side rooms:", err);
+          setError('Error fetching rooms. Please check permissions or network.');
+          setLoading(false);
+        }
       );
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const roomsData = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            name: data.name || '',
-            description: data.description,
-            createdAt: data.createdAt as Timestamp,
-            lastActive: data.lastActive as Timestamp,
-            memberCount: data.memberCount || 0,
-            maxMembers: data.maxMembers || 50,
-            members: data.members as SideRoomMember[] | undefined,
-            isPrivate: data.isPrivate,
-            password: data.password,
-            genre: data.genre,
-            tags: data.tags as string[] | undefined,
-            category: data.category
-          } as SideRoomData;
-        });
-        
-        setRooms(roomsData); // Store the raw public rooms first
-        setLoading(false);
-        setError(null); // Clear previous errors
-
-      }, (err) => {
-        console.error("Error fetching side rooms:", err);
-        setError('Error fetching public rooms. Please check permissions or network.');
-        setLoading(false);
-      });
 
       return () => unsubscribe();
     } catch (err: any) {
@@ -147,7 +149,7 @@ const SideRoomList: React.FC = () => {
       setError(`Error setting up query: ${err.message}`);
       setLoading(false);
     }
-  }, [db]); // Depend only on db initialization
+  }, [db]);
 
   // Separate useEffect for filtering/sorting based on user interaction
   useEffect(() => {
@@ -209,10 +211,40 @@ const SideRoomList: React.FC = () => {
         setIsProcessing(true);
         const roomRef = doc(db, 'sideRooms', room.id);
         
-        // Only track active users, don't add as member
-        await updateDoc(roomRef, {
-          activeUsers: increment(1),
-          lastActive: serverTimestamp()
+        // Add user as a member and track active users
+        await runTransaction(db, async (transaction) => {
+          const roomDoc = await transaction.get(roomRef);
+          if (!roomDoc.exists()) {
+            throw new Error('Room not found');
+          }
+
+          const roomData = roomDoc.data();
+          const members = roomData.members || [];
+          
+          // Check if user is already a member
+          const isMember = members.some((member: any) => member.userId === currentUser.uid);
+          
+          if (!isMember) {
+            // Add user as a member
+            transaction.update(roomRef, {
+              members: arrayUnion({
+                userId: currentUser.uid,
+                username: currentUser.displayName || 'Anonymous',
+                avatar: currentUser.photoURL || '',
+                role: 'member',
+                joinedAt: new Date()
+              }),
+              memberCount: increment(1),
+              activeUsers: increment(1),
+              lastActive: serverTimestamp()
+            });
+          } else {
+            // Just update active users count
+            transaction.update(roomRef, {
+              activeUsers: increment(1),
+              lastActive: serverTimestamp()
+            });
+          }
         });
 
         toast.success('Joined room successfully');
@@ -238,10 +270,40 @@ const SideRoomList: React.FC = () => {
         setIsProcessing(true);
         const roomRef = doc(db, 'sideRooms', selectedRoom.id);
         
-        // Only track active users, don't add as member
-        await updateDoc(roomRef, {
-          activeUsers: increment(1),
-          lastActive: serverTimestamp()
+        // Add user as a member and track active users
+        await runTransaction(db, async (transaction) => {
+          const roomDoc = await transaction.get(roomRef);
+          if (!roomDoc.exists()) {
+            throw new Error('Room not found');
+          }
+
+          const roomData = roomDoc.data();
+          const members = roomData.members || [];
+          
+          // Check if user is already a member
+          const isMember = members.some((member: any) => member.userId === currentUser.uid);
+          
+          if (!isMember) {
+            // Add user as a member
+            transaction.update(roomRef, {
+              members: arrayUnion({
+                userId: currentUser.uid,
+                username: currentUser.displayName || 'Anonymous',
+                avatar: currentUser.photoURL || '',
+                role: 'member',
+                joinedAt: new Date()
+              }),
+              memberCount: increment(1),
+              activeUsers: increment(1),
+              lastActive: serverTimestamp()
+            });
+          } else {
+            // Just update active users count
+            transaction.update(roomRef, {
+              activeUsers: increment(1),
+              lastActive: serverTimestamp()
+            });
+          }
         });
 
         toast.success('Joined room successfully');

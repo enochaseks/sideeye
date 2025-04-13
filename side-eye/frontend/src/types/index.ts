@@ -241,4 +241,33 @@ export interface Message {
   read: boolean;
   senderName?: string;
   senderAvatar?: string;
+}
+
+export interface SignalingData {
+  type: 'offer' | 'answer' | 'ice-candidate';
+  data: any;
+  senderId: string;
+  recipientId: string;
+  timestamp: number;
+}
+
+export interface SignalingChannel {
+  listenForOffer: (callback: (data: SignalingData) => void) => () => void;
+  listenForAnswer: (callback: (data: SignalingData) => void) => () => void;
+  listenForIceCandidate: (callback: (data: SignalingData) => void) => () => void;
+  sendOffer: (offer: RTCSessionDescriptionInit, recipientId: string, senderId: string) => Promise<void>;
+  sendAnswer: (answer: RTCSessionDescriptionInit, recipientId: string, senderId: string) => Promise<void>;
+  sendIceCandidate: (candidate: RTCIceCandidate, recipientId: string, senderId: string) => Promise<void>;
+  cleanup: () => void;
+}
+
+export interface PeerConnection {
+  pc: RTCPeerConnection;
+  signaling: SignalingChannel;
+  addStream: (stream: MediaStream) => void;
+  createOffer: (recipientId: string, senderId: string) => Promise<RTCSessionDescriptionInit>;
+  handleOffer: (offer: RTCSessionDescriptionInit, senderId: string) => Promise<void>;
+  handleAnswer: (answer: RTCSessionDescriptionInit) => Promise<void>;
+  handleIceCandidate: (candidate: RTCIceCandidate) => Promise<void>;
+  cleanup: () => void;
 } 

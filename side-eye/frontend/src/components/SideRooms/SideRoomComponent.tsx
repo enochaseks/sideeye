@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { db } from '../../services/firebase';
+import { db, auth } from '../../services/firebase';
 import { 
   doc, 
   getDoc, 
@@ -65,12 +65,6 @@ import {
   Lock, 
   Group, 
   LocalFireDepartment, 
-  Mic, 
-  MicOff,
-  Videocam, 
-  VideocamOff,
-  ScreenShare,
-  StopScreenShare,
   Chat,
   MoreVert,
   Send,
@@ -78,14 +72,10 @@ import {
   Delete,
   PersonAdd,
   Search,
-  Close,
-  VolumeUp,
-  VolumeDown,
-  VolumeMute
+  Close
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember } from '../../types/index';
-import { createPeerConnection, getMediaStream, getScreenShare, stopMediaStream } from '../../utils/webrtc';
-import { getDisplayMedia } from '../../utils/mediaStream';
+import MuxStream from '../Stream/MuxStream';
 import RoomForm from './RoomForm';
 
 interface Message {
@@ -97,30 +87,27 @@ interface Message {
   timestamp: Date;
 }
 
-interface MediaState {
-  audioEnabled: boolean;
-  videoEnabled: boolean;
-  screenSharing: boolean;
-}
-
 interface User {
   id: string;
   username: string;
   avatar: string;
+  uid?: string;
+  displayName?: string;
+  photoURL?: string;
 }
 
-interface AudioState {
-  volume: number;
-  monitoring: boolean;
-  gainNode: GainNode | null;
-  audioContext: AudioContext | null;
-  monitorNode: MediaStreamAudioDestinationNode | null;
+interface PresenceData {
+  userId: string;
+  username: string;
+  avatar: string;
+  lastSeen: number;
+  isOnline: boolean;
 }
 
 const SideRoomComponent: React.FC = () => {
-  const { roomId } = useParams<{ roomId: string }>();
+  const { roomId } = useParams();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
   const [room, setRoom] = useState<SideRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,22 +118,7 @@ const SideRoomComponent: React.FC = () => {
   const [newMessage, setNewMessage] = useState('');
   const [isLive, setIsLive] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
-  const [mediaState, setMediaState] = useState<MediaState>({
-    audioEnabled: true,
-    videoEnabled: true,
-    screenSharing: false
-  });
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [peerConnection, setPeerConnection] = useState<ReturnType<typeof createPeerConnection> | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<{ [key: string]: MediaStream }>({});
-  const [screenShareError, setScreenShareError] = useState<string | null>(null);
-  const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({});
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const screenShareRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const mountedRef = useRef(true);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [showChat, setShowChat] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -155,41 +127,27 @@ const SideRoomComponent: React.FC = () => {
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
   const [isInviting, setIsInviting] = useState(false);
-  const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [peerConnectionStatus, setPeerConnectionStatus] = useState<'new' | 'connecting' | 'connected' | 'closed'>('new');
-  const [showChat, setShowChat] = useState(false);
-  const [audioState, setAudioState] = useState<AudioState>({
-    volume: 100,
-    monitoring: false,
-    gainNode: null,
-    audioContext: null,
-    monitorNode: null
-  });
-  const monitorAudioRef = useRef<HTMLAudioElement>(null);
-  const [showScreenShare, setShowScreenShare] = useState(true);
-  const [screenShareMenuAnchor, setScreenShareMenuAnchor] = useState<null | HTMLElement>(null);
-  const [screenShareOwnerId, setScreenShareOwnerId] = useState<string | null>(null);
+  const [presence, setPresence] = useState<PresenceData[]>([]);
+  const messagesUnsubscribe = useRef<(() => void) | null>(null);
+  const presenceUnsubscribe = useRef<(() => void) | null>(null);
 
-  // Add this check at the top of the component, right after the state declarations
-  const isRoomOwnerOrMember = currentUser && room && (
-    room.ownerId === currentUser.uid || 
-    room.members?.some(member => member.userId === currentUser.uid)
-  );
+  const mountedRef = useRef(true);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const isRoomOwner = useMemo(() => {
+    return room?.ownerId === user?.uid;
+  }, [room?.ownerId, user?.uid]);
+
+  // Add a function to check if user is a member
+  const isMember = user && room?.members?.some(member => member.userId === user.uid);
+
+  // Combine owner and member check
+  const isRoomOwnerOrMember = isRoomOwner || isMember;
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      if (screenShareRef.current?.srcObject) {
-        const tracks = (screenShareRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(track => track.stop());
-      }
     };
   }, []);
 
@@ -206,127 +164,284 @@ const SideRoomComponent: React.FC = () => {
     }
   }, []);
 
+  const setupMessagesListener = () => {
+    if (!user || !roomId) return;
+
+    const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+    const q = query(messagesRef, orderBy('timestamp', 'asc'));
+
+    messagesUnsubscribe.current = onSnapshot(q, (snapshot) => {
+      const newMessages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Message[];
+      setMessages(newMessages);
+    }, (error) => {
+      console.error('Error listening to messages:', error);
+      if (error.code === 'permission-denied') {
+        setError('You do not have permission to view messages in this room');
+      }
+    });
+  };
+
+  const setupPresenceListener = () => {
+    if (!user || !roomId) return;
+
+    const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
+    const q = query(presenceRef);
+
+    presenceUnsubscribe.current = onSnapshot(q, (snapshot) => {
+      const newPresence = snapshot.docs.map(doc => ({
+        userId: doc.id,
+        username: doc.data().username || '',
+        avatar: doc.data().avatar || '',
+        lastSeen: doc.data().lastSeen?.toDate() || new Date(),
+        isOnline: doc.data().isOnline || false
+      })) as PresenceData[];
+      setPresence(newPresence);
+    }, (error) => {
+      console.error('Error listening to presence:', error);
+      if (error.code === 'permission-denied') {
+        setError('You do not have permission to view presence in this room');
+      }
+    });
+  };
+
   useEffect(() => {
-    const setupRoomListener = () => {
+    if (!user || !roomId) return;
+
+    const setupRoomListener = async () => {
       try {
-        if (!roomId || !db) return () => {};
-        
-        // Add authentication check
-        if (!currentUser) {
-          setError('You must be logged in to access this room');
-          setLoading(false);
-          return () => {};
+        // First check if the room exists and get its data
+        const roomRef = doc(db, 'sideRooms', roomId);
+        const roomDoc = await getDoc(roomRef);
+
+        if (!roomDoc.exists()) {
+          setError('Room not found');
+          return;
         }
 
+        const roomData = roomDoc.data();
+        
+        // Check if user is already a member
+        const memberRef = doc(db, 'sideRooms', roomId, 'members', user.uid);
+        const memberDoc = await getDoc(memberRef);
+
+        if (!memberDoc.exists()) {
+          // Check if room is private
+          if (roomData.isPrivate) {
+            setError('This is a private room. You need an invitation to join.');
+            return;
+          }
+
+          // If not a member and room is public, add them
+          try {
+            await setDoc(memberRef, {
+              joinedAt: new Date(),
+              role: 'member'
+            });
+          } catch (error) {
+            console.error('Error adding member:', error);
+            setError('Failed to join room. Please try again.');
+            return;
+          }
+        }
+
+        // Verify membership again before setting up listeners
+        const updatedMemberDoc = await getDoc(memberRef);
+        if (!updatedMemberDoc.exists()) {
+          setError('Failed to verify membership. Please try again.');
+          return;
+        }
+
+        // Now set up the listeners
+        setupMessagesListener();
+        setupPresenceListener();
+      } catch (error: any) {
+        console.error('Error setting up room:', error);
+        if (error.code === 'permission-denied') {
+          setError('You do not have permission to join this room');
+        } else {
+          setError('Failed to join room. Please try again.');
+        }
+      }
+    };
+
+    setupRoomListener();
+
+    return () => {
+      if (messagesUnsubscribe.current) messagesUnsubscribe.current();
+      if (presenceUnsubscribe.current) presenceUnsubscribe.current();
+    };
+  }, [user, roomId]);
+
+  useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+
+    let roomUnsubscribe: (() => void) | undefined;
+    let messagesUnsubscribe: (() => void) | undefined;
+    let presenceUnsubscribe: (() => void) | undefined;
+
+    const setupRoomListener = async () => {
+      try {
+        if (!roomId || !db) return;
+        
         const roomRef = doc(db, 'sideRooms', roomId);
-        const unsubscribe = onSnapshot(roomRef, (doc) => {
-          if (doc.exists()) {
-            const data = doc.data();
-            const roomData: SideRoom = {
-              id: doc.id,
-              name: data.name || '',
-              description: data.description || '',
-              ownerId: data.ownerId || '',
-              members: data.members || [],
-              memberCount: data.memberCount || 0,
-              createdAt: data.createdAt || new Date(),
-              isPrivate: data.isPrivate || false,
-              password: data.password || '',
-              tags: data.tags || [],
-              lastActive: data.lastActive || new Date(),
-              maxMembers: data.maxMembers || 50,
-              bannedUsers: data.bannedUsers || [],
-              isLive: data.isLive || false,
-              liveParticipants: data.liveParticipants || [],
-              category: data.category || '',
-              scheduledReveals: data.scheduledReveals || [],
-              activeUsers: data.activeUsers || 0
-            };
-            setRoom(roomData);
-            setLoading(false);
-
-            // Check if user is banned
-            if (currentUser && roomData.bannedUsers?.includes(currentUser.uid)) {
-              setError('You have been banned from this room');
+        roomUnsubscribe = onSnapshot(roomRef, 
+          async (doc) => {
+            if (doc.exists()) {
+              const roomData = doc.data() as SideRoom;
+              setRoom(roomData);
               setLoading(false);
-              return;
-            }
 
-            // Check if user is already a member (Add null check for currentUser)
-            const isMember = currentUser && roomData.members?.some(member => member.userId === currentUser.uid);
-            if (!isMember && roomData.isPrivate) {
-              setShowPasswordDialog(true);
-            } else if (isMember) {
-              // Only set up messages listener if user is a member
-              setupMessagesListener();
+              // Check if user is a member
+              const isMember = roomData.members?.some(member => member.userId === user.uid);
+              const isOwner = roomData.ownerId === user.uid;
+
+              if (isMember || isOwner) {
+                // If user is a member or owner, set up listeners
+                setupMessagesListener();
+                setupPresenceListener();
+              } else {
+                // If not a member, unsubscribe from any existing listeners
+                if (messagesUnsubscribe) messagesUnsubscribe();
+                if (presenceUnsubscribe) presenceUnsubscribe();
+                messagesUnsubscribe = undefined;
+                presenceUnsubscribe = undefined;
+                setError('You need to be a member of this room to view messages and presence');
+              }
+            } else {
+              setError('Room not found');
+              setLoading(false);
             }
-          } else {
-            setError('Room not found');
+          },
+          (error) => {
+            console.error('Error listening to room:', error);
+            setError('Failed to load room data');
             setLoading(false);
           }
-        }, (error) => {
-          console.error('Error accessing room:', error);
-          if (error.code === 'permission-denied') {
-            setError('You do not have permission to access this room. Please ensure you are logged in and have the proper permissions.');
-          } else {
-            setError(`Error accessing room: ${error.message}`);
-          }
-          setLoading(false);
-        });
-
-        return () => unsubscribe();
-      } catch (error) {
-        console.error('Error setting up room listener:', error);
-        setError('Failed to set up room listener');
+        );
+      } catch (err) {
+        console.error('Error setting up room listener:', err);
+        setError('Failed to setup room listener');
         setLoading(false);
-        return () => {};
       }
     };
 
     const setupMessagesListener = () => {
       try {
-        if (!roomId || !db) return () => {};
-        const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-        const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
+        if (!roomId || !db) return;
         
-        const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-          const newMessages = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as Message[];
-          
-          setMessages(newMessages);
-        });
-
-        return unsubscribe;
-      } catch (error) {
-        console.error('Error setting up messages listener:', error);
-        setError('Failed to listen to messages');
-        return () => {};
+        const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+        const q = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
+        
+        messagesUnsubscribe = onSnapshot(q,
+          (snapshot) => {
+            const messages = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data(),
+              timestamp: doc.data().timestamp?.toDate() || new Date()
+            })) as Message[];
+            setMessages(messages.reverse());
+          },
+          (error) => {
+            console.error('Error listening to messages:', error);
+            if (error instanceof FirestoreError && error.code === 'permission-denied') {
+              setError('You need to be a member of this room to view messages');
+            }
+          }
+        );
+      } catch (err) {
+        console.error('Error setting up messages listener:', err);
       }
     };
 
-    const roomUnsubscribe = setupRoomListener();
+    const setupPresenceListener = () => {
+      try {
+        if (!roomId || !db) return;
+        
+        const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
+        presenceUnsubscribe = onSnapshot(presenceRef,
+          (snapshot) => {
+            const presenceData = snapshot.docs.map(doc => ({
+              ...doc.data(),
+              lastSeen: doc.data().lastSeen?.toDate() || new Date()
+            })) as PresenceData[];
+            setPresence(presenceData);
+          },
+          (error) => {
+            console.error('Error listening to presence:', error);
+            if (error instanceof FirestoreError && error.code === 'permission-denied') {
+              setError('You need to be a member of this room to view presence');
+            }
+          }
+        );
+      } catch (err) {
+        console.error('Error setting up presence listener:', err);
+      }
+    };
+
+    setupRoomListener();
+
     return () => {
       if (roomUnsubscribe) roomUnsubscribe();
+      if (messagesUnsubscribe) messagesUnsubscribe();
+      if (presenceUnsubscribe) presenceUnsubscribe();
     };
-  }, [db, roomId, currentUser]);
+  }, [user, authLoading, roomId, navigate]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleJoinRoom = useCallback(async () => {
-    if (!room || !currentUser || !roomId || isProcessing) return;
+    if (!room || !user || !roomId || isProcessing) return;
 
     try {
       setIsProcessing(true);
       const roomRef = doc(db, 'sideRooms', roomId);
 
-      // Only track active users, don't add as member
-      await updateDoc(roomRef, {
-        activeUsers: increment(1),
-        lastActive: serverTimestamp()
+      // Add user as a member and track active users
+      await runTransaction(db, async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if (!roomDoc.exists()) {
+          throw new Error('Room not found');
+        }
+
+        const roomData = roomDoc.data();
+        const members = roomData.members || [];
+        
+        // Check if user is already a member
+        const isMember = members.some((member: any) => member.userId === user.uid);
+        
+        if (!isMember) {
+          // Add user as a member
+          transaction.update(roomRef, {
+            members: arrayUnion({
+              userId: user.uid,
+              username: user.displayName || 'Anonymous',
+              avatar: user.photoURL || '',
+              role: 'member',
+              joinedAt: serverTimestamp()
+            }),
+            memberCount: increment(1),
+            activeUsers: increment(1),
+            lastActive: serverTimestamp()
+          });
+        } else {
+          // Just update active users count
+          transaction.update(roomRef, {
+            activeUsers: increment(1),
+            lastActive: serverTimestamp()
+          });
+        }
       });
 
       if (mountedRef.current) {
@@ -348,11 +463,11 @@ const SideRoomComponent: React.FC = () => {
         setIsProcessing(false);
       }
     }
-  }, [room, currentUser, roomId, isProcessing, db, setShowPasswordDialog, setIsProcessing]);
+  }, [room, user, roomId, isProcessing, db, setShowPasswordDialog, setIsProcessing]);
 
   // Add new function for room owners to add members
   const handleAddMember = async (userId: string) => {
-    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) return;
+    if (!room || !user || !roomId || user.uid !== room.ownerId) return;
 
     try {
       setIsProcessing(true);
@@ -411,7 +526,7 @@ const SideRoomComponent: React.FC = () => {
   }, [room, password, handleJoinRoom]);
 
   const handleLeaveRoom = useCallback(async () => {
-    if (!room || !currentUser || !roomId || isProcessing) return;
+    if (!room || !user || !roomId || isProcessing) return;
 
     try {
       setIsProcessing(true);
@@ -425,9 +540,9 @@ const SideRoomComponent: React.FC = () => {
 
         const roomData = roomDoc.data() as SideRoom;
         const memberToRemove: RoomMember = {
-          userId: currentUser.uid,
-          username: currentUser.displayName || 'Anonymous',
-          avatar: currentUser.photoURL || '',
+          userId: user.uid,
+          username: user.displayName || 'Anonymous',
+          avatar: user.photoURL || '',
           role: 'member',
           joinedAt: new Date()
         };
@@ -455,18 +570,14 @@ const SideRoomComponent: React.FC = () => {
         setIsProcessing(false);
       }
     }
-  }, [room, currentUser, roomId, isProcessing, navigate, handleError]);
+  }, [room, user, roomId, isProcessing, navigate, handleError]);
 
   const handleGoLive = async () => {
-    if (!room || !currentUser || !roomId || !isRoomOwnerOrMember) {
-      toast.error('Only room owners and members can go live');
-      return;
-    }
+    if (!room || !user || !roomId) return;
 
     try {
       setIsProcessing(true);
       const roomRef = doc(db, 'sideRooms', roomId);
-      
       await updateDoc(roomRef, {
         isLive: !room.isLive,
         lastActivity: serverTimestamp()
@@ -483,14 +594,14 @@ const SideRoomComponent: React.FC = () => {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomId || !currentUser || !newMessage.trim()) return;
+    if (!roomId || !user || !newMessage.trim()) return;
 
     try {
       const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
       await addDoc(messagesRef, {
-        userId: currentUser.uid,
-        username: currentUser.displayName || 'Anonymous',
-        avatar: currentUser.photoURL || '',
+        userId: user.uid,
+        username: user.displayName || 'Anonymous',
+        avatar: user.photoURL || '',
         content: newMessage.trim(),
         timestamp: serverTimestamp()
       });
@@ -500,394 +611,6 @@ const SideRoomComponent: React.FC = () => {
       handleError(err, 'Failed to send message');
     }
   };
-
-  // Add WebRTC initialization back
-  useEffect(() => {
-    if (!room?.isLive || !currentUser || !roomId) return;
-
-    const isMember = room.members?.some(member => member.userId === currentUser.uid);
-    if (!isMember) {
-      console.log('User is not a member, skipping WebRTC initialization');
-      return;
-    }
-
-    let pc: ReturnType<typeof createPeerConnection> | null = null;
-    let isNegotiating = false;
-
-    const setupPeerConnection = async () => {
-      try {
-        pc = createPeerConnection(roomId, currentUser.uid);
-        setPeerConnection(pc);
-
-        // Set up event handlers
-        pc.pc.onnegotiationneeded = async () => {
-          if (isNegotiating) return;
-          isNegotiating = true;
-          try {
-            const offer = await pc!.createOffer();
-            await pc!.pc.setLocalDescription(offer);
-          } catch (err) {
-            console.error('Error during negotiation:', err);
-          } finally {
-            isNegotiating = false;
-          }
-        };
-
-        // Set up signaling listeners
-        const unsubscribeOffer = pc.signaling.listenForOffer(async (data) => {
-          if (data.senderId === currentUser.uid) return;
-          
-          try {
-            if (pc!.pc.signalingState === 'stable') {
-              await pc!.handleOffer(data.data);
-            } else {
-              console.log('Ignoring offer, signaling state:', pc!.pc.signalingState);
-            }
-          } catch (err) {
-            console.error('Error handling offer:', err);
-          }
-        });
-
-        const unsubscribeAnswer = pc.signaling.listenForAnswer(async (data) => {
-          if (data.senderId === currentUser.uid) return;
-          
-          try {
-            if (pc!.pc.signalingState === 'have-local-offer') {
-              await pc!.handleAnswer(data.data);
-            } else {
-              console.log('Ignoring answer, signaling state:', pc!.pc.signalingState);
-            }
-          } catch (err) {
-            console.error('Error handling answer:', err);
-          }
-        });
-
-        const unsubscribeIce = pc.signaling.listenForIceCandidate(async (data) => {
-          if (data.senderId === currentUser.uid) return;
-          
-          try {
-            await pc!.handleIceCandidate(data.data);
-          } catch (err) {
-            console.error('Error handling ICE candidate:', err);
-          }
-        });
-
-        // Add local stream if available
-        if (localStream) {
-          localStream.getTracks().forEach(track => {
-            pc!.pc.addTrack(track, localStream);
-          });
-        }
-
-        return () => {
-          unsubscribeOffer();
-          unsubscribeAnswer();
-          unsubscribeIce();
-          if (pc) {
-            pc.cleanup();
-          }
-        };
-      } catch (err) {
-        console.error('Error setting up peer connection:', err);
-        return () => {}; // Return empty cleanup function in case of error
-      }
-    };
-
-    const cleanupPromise = setupPeerConnection();
-
-    return () => {
-      cleanupPromise.then(cleanup => {
-        if (cleanup) {
-          cleanup();
-        }
-      });
-    };
-  }, [room?.isLive, currentUser, roomId, localStream]);
-
-  // Add debugging logs for media streams
-  useEffect(() => {
-    console.log('Local Stream Status:', {
-      hasStream: !!localStream,
-      audioTracks: localStream?.getAudioTracks().length || 0,
-      videoTracks: localStream?.getVideoTracks().length || 0,
-      tracks: localStream?.getTracks().map(t => ({
-        kind: t.kind,
-        enabled: t.enabled,
-        label: t.label
-      }))
-    });
-  }, [localStream]);
-
-  // Add debugging logs for remote streams
-  useEffect(() => {
-    console.log('Remote Streams Status:', {
-      count: Object.keys(remoteStreams).length,
-      streams: Object.entries(remoteStreams).map(([id, stream]) => ({
-        id,
-        audioTracks: stream.getAudioTracks().length,
-        videoTracks: stream.getVideoTracks().length,
-        tracks: stream.getTracks().map(t => ({
-          kind: t.kind,
-          enabled: t.enabled,
-          label: t.label
-        }))
-      }))
-    });
-  }, [remoteStreams]);
-
-  // Add debugging logs for peer connection
-  useEffect(() => {
-    if (peerConnection) {
-      console.log('Peer Connection Status:', {
-        connectionState: peerConnection.pc.connectionState,
-        iceConnectionState: peerConnection.pc.iceConnectionState,
-        signalingState: peerConnection.pc.signalingState
-      });
-
-      peerConnection.pc.onconnectionstatechange = () => {
-        console.log('Connection state changed:', peerConnection.pc.connectionState);
-      };
-
-      peerConnection.pc.oniceconnectionstatechange = () => {
-        console.log('ICE connection state changed:', peerConnection.pc.iceConnectionState);
-      };
-
-      peerConnection.pc.onsignalingstatechange = () => {
-        console.log('Signaling state changed:', peerConnection.pc.signalingState);
-      };
-    }
-  }, [peerConnection]);
-
-  // Update the media initialization useEffect
-  useEffect(() => {
-    // Only initialize media if user is owner or member
-    if (!room?.isLive || !currentUser || !isRoomOwnerOrMember) {
-      // Clean up any existing streams if user is not owner/member
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          track.stop();
-        });
-        setLocalStream(null);
-      }
-      return;
-    }
-
-    const setupMedia = async () => {
-      try {
-        const stream = await getMediaStream({ 
-          audio: true,
-          video: true
-        });
-        
-        setLocalStream(stream);
-        
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-
-        if (peerConnection) {
-          peerConnection.addStream(stream);
-        }
-
-        stream.getTracks().forEach(track => {
-          track.enabled = true;
-        });
-
-        console.log('Media setup complete for owner/member');
-      } catch (err) {
-        console.error('Error setting up media:', err);
-        if (err instanceof Error) {
-          toast.error(err.message);
-        } else {
-          toast.error('Failed to setup media devices');
-        }
-      }
-    };
-
-    setupMedia();
-
-    return () => {
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          track.stop();
-        });
-      }
-    };
-  }, [room?.isLive, currentUser, isRoomOwnerOrMember]);
-
-  // Add audio setup function
-  const setupAudioContext = useCallback((stream: MediaStream) => {
-    try {
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const gainNode = audioContext.createGain();
-      const monitorNode = audioContext.createMediaStreamDestination();
-
-      source.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      gainNode.connect(monitorNode);
-
-      setAudioState(prev => ({
-        ...prev,
-        gainNode,
-        audioContext,
-        monitorNode
-      }));
-
-      // Set initial volume
-      gainNode.gain.value = audioState.volume / 100;
-
-      console.log('Audio context setup complete');
-    } catch (err) {
-      console.error('Error setting up audio context:', err);
-    }
-  }, [audioState.volume]);
-
-  // Update audio setup in toggleAudio
-  const toggleAudio = async () => {
-    console.log('Toggling audio...');
-    if (!localStream) {
-      try {
-        console.log('Requesting audio stream...');
-        const stream = await getMediaStream({ audio: true, video: mediaState.videoEnabled });
-        console.log('Got audio stream:', stream.getTracks().map(t => t.kind));
-        setLocalStream(stream);
-        setMediaState(prev => ({ ...prev, audioEnabled: true }));
-        if (peerConnection) {
-          console.log('Adding audio stream to peer connection');
-          peerConnection.addStream(stream);
-        }
-        // Set up audio context for the new stream
-        setupAudioContext(stream);
-      } catch (err) {
-        console.error('Error getting audio stream:', err);
-        handleError(err, 'Failed to access microphone');
-      }
-    } else {
-      console.log('Toggling existing audio track');
-      const audioTracks = localStream.getAudioTracks();
-      audioTracks.forEach(track => {
-        track.enabled = !mediaState.audioEnabled;
-        console.log(`Audio track ${track.label} enabled:`, track.enabled);
-      });
-      setMediaState(prev => ({ ...prev, audioEnabled: !prev.audioEnabled }));
-    }
-  };
-
-  // Add volume control handler
-  const handleVolumeChange = (event: Event, newValue: number | number[]) => {
-    const volume = newValue as number;
-    if (audioState.gainNode) {
-      audioState.gainNode.gain.value = volume / 100;
-    }
-    setAudioState(prev => ({ ...prev, volume }));
-  };
-
-  // Add monitoring toggle handler
-  const toggleMonitoring = () => {
-    if (!audioState.monitorNode || !monitorAudioRef.current) return;
-
-    if (!audioState.monitoring) {
-      monitorAudioRef.current.srcObject = audioState.monitorNode.stream;
-      monitorAudioRef.current.play().catch(console.error);
-    } else {
-      monitorAudioRef.current.srcObject = null;
-    }
-    setAudioState(prev => ({ ...prev, monitoring: !prev.monitoring }));
-  };
-
-  // Add cleanup for audio context
-  useEffect(() => {
-    return () => {
-      if (audioState.audioContext) {
-        audioState.audioContext.close();
-      }
-    };
-  }, []);
-
-  // Add audio controls component
-  const renderAudioControls = () => (
-    <Paper sx={{ p: 2, mb: 2 }}>
-      <Typography variant="h6" gutterBottom>
-        Audio Controls
-      </Typography>
-      <Stack spacing={2} direction="row" alignItems="center">
-        <IconButton onClick={() => handleVolumeChange({} as Event, 0)}>
-          {audioState.volume === 0 ? <VolumeMute /> : <VolumeDown />}
-        </IconButton>
-        <Slider
-          value={audioState.volume}
-          onChange={handleVolumeChange}
-          aria-label="Volume"
-          min={0}
-          max={100}
-          valueLabelDisplay="auto"
-          sx={{ mx: 2 }}
-        />
-        <IconButton onClick={() => handleVolumeChange({} as Event, 100)}>
-          <VolumeUp />
-        </IconButton>
-        <Tooltip title={audioState.monitoring ? "Stop Monitoring" : "Monitor Audio"}>
-          <IconButton 
-            onClick={toggleMonitoring}
-            color={audioState.monitoring ? "primary" : "default"}
-          >
-            <Mic />
-          </IconButton>
-        </Tooltip>
-      </Stack>
-      {/* Hidden audio element for monitoring */}
-      <audio ref={monitorAudioRef} hidden />
-    </Paper>
-  );
-
-  // Update video elements when streams change
-  useEffect(() => {
-    if (localStream && localVideoRef.current && mediaState.videoEnabled) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream, mediaState.videoEnabled]);
-
-  // Add audio visualization
-  useEffect(() => {
-    if (!localStream) return;
-
-    const audioContext = new AudioContext();
-    const audioSource = audioContext.createMediaStreamSource(localStream);
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    audioSource.connect(analyser);
-
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    let animationFrame: number;
-
-    const updateAudioLevel = () => {
-      analyser.getByteFrequencyData(dataArray);
-      const level = dataArray.reduce((acc, val) => acc + val, 0) / dataArray.length;
-      setAudioLevel(level);
-      animationFrame = requestAnimationFrame(updateAudioLevel);
-    };
-
-    updateAudioLevel();
-
-    return () => {
-      cancelAnimationFrame(animationFrame);
-      audioContext.close();
-    };
-  }, [localStream]);
-
-  // Add audio indicator component
-  const AudioIndicator = () => (
-    <Box
-      sx={{
-        width: 20,
-        height: 20,
-        borderRadius: '50%',
-        backgroundColor: audioLevel > 10 ? 'green' : 'red',
-        transition: 'background-color 0.2s'
-      }}
-    />
-  );
 
   const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -923,14 +646,14 @@ const SideRoomComponent: React.FC = () => {
 
   const handleDeleteRoom = async () => {
     handleMenuClose();
-    if (!room || !currentUser || !roomId) return;
+    if (!room || !user || !roomId) return;
 
     try {
       setIsDeleting(true);
       const roomRef = doc(db, 'sideRooms', roomId);
       
       // Move room to user's trash
-      const trashRef = doc(db, 'users', currentUser.uid, 'trash', roomId);
+      const trashRef = doc(db, 'users', user.uid, 'trash', roomId);
       await runTransaction(db, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
@@ -983,7 +706,7 @@ const SideRoomComponent: React.FC = () => {
           username: doc.data().username || 'Anonymous',
           avatar: doc.data().avatar || ''
         }))
-        .filter(user => user.id !== currentUser?.uid); // Exclude current user
+        .filter(user => user.id !== auth.currentUser?.uid); // Exclude current user
 
       setSearchResults(users);
     } catch (err) {
@@ -993,21 +716,21 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleInviteSubmit = async () => {
-    if (!room || !roomId || !currentUser || selectedUsers.length === 0) return;
+    if (!room || !roomId || !user || selectedUsers.length === 0) return;
 
     try {
       setIsInviting(true);
       const batch = writeBatch(db);
 
       // Create invitations and notifications for each selected user
-      for (const user of selectedUsers) {
+      for (const selectedUser of selectedUsers) {
         // Create invitation
         const invitationRef = doc(collection(db, 'sideRooms', roomId, 'invitations'));
         batch.set(invitationRef, {
-          userId: user.id,
-          invitedBy: currentUser.uid,
-          inviterName: currentUser.displayName || 'Anonymous',
-          inviterAvatar: currentUser.photoURL || '',
+          userId: selectedUser.id,
+          invitedBy: user.uid,
+          inviterName: user.displayName || 'Anonymous',
+          inviterAvatar: user.photoURL || '',
           roomId,
           roomName: room.name,
           timestamp: serverTimestamp(),
@@ -1015,17 +738,17 @@ const SideRoomComponent: React.FC = () => {
         });
 
         // Create notification
-        const notificationRef = doc(collection(db, 'users', user.id, 'notifications'));
+        const notificationRef = doc(collection(db, 'users', selectedUser.id, 'notifications'));
         batch.set(notificationRef, {
           type: 'room_invitation',
           roomId,
           roomName: room.name,
-          invitedBy: currentUser.uid,
-          inviterName: currentUser.displayName || 'Anonymous',
-          inviterAvatar: currentUser.photoURL || '',
+          invitedBy: user.uid,
+          inviterName: user.displayName || 'Anonymous',
+          inviterAvatar: user.photoURL || '',
           timestamp: serverTimestamp(),
           status: 'unread',
-          message: `${currentUser.displayName || 'Someone'} invited you to join "${room.name}"`
+          message: `${user.displayName || 'Someone'} invited you to join "${room.name}"`
         });
       }
 
@@ -1042,304 +765,8 @@ const SideRoomComponent: React.FC = () => {
     }
   };
 
-  // Monitor peer connection state
-  useEffect(() => {
-    if (peerConnection) {
-      const handleStateChange = () => {
-        setPeerConnectionStatus(peerConnection.pc.connectionState as any);
-        console.log('Peer connection state:', peerConnection.pc.connectionState);
-      };
-
-      peerConnection.pc.onconnectionstatechange = handleStateChange;
-      return () => {
-        peerConnection.pc.onconnectionstatechange = null;
-      };
-    }
-  }, [peerConnection]);
-
-  const toggleVideo = async () => {
-    console.log('Toggling video...');
-    if (!localStream) {
-      try {
-        console.log('Requesting video stream...');
-        const stream = await getMediaStream({ video: true, audio: mediaState.audioEnabled });
-        console.log('Got video stream:', stream.getTracks().map(t => t.kind));
-        setLocalStream(stream);
-        setMediaState(prev => ({ ...prev, videoEnabled: true }));
-        if (localVideoRef.current) {
-          console.log('Setting video element source');
-          localVideoRef.current.srcObject = stream;
-        }
-        if (peerConnection) {
-          console.log('Adding video stream to peer connection');
-          peerConnection.addStream(stream);
-        }
-      } catch (err) {
-        console.error('Error getting video stream:', err);
-        handleError(err, 'Failed to access camera');
-      }
-    } else {
-      console.log('Toggling existing video track');
-      const videoTracks = localStream.getVideoTracks();
-      videoTracks.forEach(track => {
-        track.enabled = !mediaState.videoEnabled;
-        console.log(`Video track ${track.label} enabled:`, track.enabled);
-      });
-      setMediaState(prev => ({ ...prev, videoEnabled: !prev.videoEnabled }));
-    }
-  };
-
-  const ensurePeerConnection = useCallback(() => {
-    if (!peerConnection || peerConnection.pc.connectionState === 'closed' || peerConnection.pc.signalingState === 'closed') {
-      console.log('Creating new peer connection...');
-      if (roomId && currentUser) {
-        const newPc = createPeerConnection(roomId, currentUser.uid);
-        setPeerConnection(newPc);
-        
-        // Set up event handlers for the new connection
-        newPc.pc.onconnectionstatechange = () => {
-          console.log('Connection state changed:', newPc.pc.connectionState);
-          setPeerConnectionStatus(newPc.pc.connectionState as any);
-        };
-
-        newPc.pc.onsignalingstatechange = () => {
-          console.log('Signaling state changed:', newPc.pc.signalingState);
-        };
-
-        // If we have existing streams, add them to the new connection
-        if (localStream) {
-          localStream.getTracks().forEach(track => {
-            try {
-              console.log('Adding existing track to new connection:', track.kind);
-              newPc.pc.addTrack(track, localStream);
-            } catch (err) {
-              console.error('Error adding track to new connection:', err);
-            }
-          });
-        }
-
-        return newPc;
-      }
-      return null;
-    }
-    return peerConnection;
-  }, [roomId, currentUser, peerConnection, localStream]);
-
-  const toggleScreenShare = async () => {
-    console.log('Toggling screen share...');
-    try {
-      if (!mediaState.screenSharing) {
-        console.log('Starting screen share...');
-        
-        setShowScreenShare(true);
-        
-        const screenStream = await getScreenShare();
-        console.log('Got screen stream:', screenStream.getTracks().map(t => ({ kind: t.kind, label: t.label })));
-
-        if (screenShareRef.current) {
-          console.log('Setting screen share video source');
-          screenShareRef.current.srcObject = screenStream;
-          await screenShareRef.current.play().catch(console.error);
-          // Set screen share owner ID when starting share
-          setScreenShareOwnerId(currentUser?.uid || null);
-        }
-
-        const pc = ensurePeerConnection();
-        if (pc && pc.pc.signalingState !== 'closed') {
-          try {
-            screenStream.getTracks().forEach(track => {
-              console.log('Adding track to peer connection:', track.kind, track.label);
-              pc.pc.addTrack(track, screenStream);
-            });
-          } catch (err) {
-            console.warn('Error adding screen tracks to peer connection:', err);
-          }
-        }
-
-        screenStream.getVideoTracks()[0].onended = () => {
-          console.log('Screen sharing ended by user');
-          if (pc && pc.pc.signalingState !== 'closed') {
-            try {
-              const senders = pc.pc.getSenders();
-              senders.forEach(sender => {
-                if (sender.track && (sender.track.kind === 'video' || sender.track.label.includes('screen'))) {
-                  try {
-                    pc.pc.removeTrack(sender);
-                  } catch (err) {
-                    console.warn('Error removing track:', err);
-                  }
-                }
-              });
-            } catch (err) {
-              console.warn('Error cleaning up senders:', err);
-            }
-          }
-          screenStream.getTracks().forEach(track => {
-            track.stop();
-          });
-          if (screenShareRef.current) {
-            screenShareRef.current.srcObject = null;
-          }
-          setMediaState(prev => ({ ...prev, screenSharing: false }));
-          // Clear screen share owner ID when stopping share
-          setScreenShareOwnerId(null);
-        };
-
-        setMediaState(prev => ({ ...prev, screenSharing: true }));
-        setScreenShareError(null);
-
-      } else {
-        console.log('Stopping screen share...');
-        
-        if (screenShareRef.current?.srcObject instanceof MediaStream) {
-          const stream = screenShareRef.current.srcObject;
-          stream.getTracks().forEach(track => {
-            track.stop();
-            console.log('Stopped track:', track.label);
-          });
-          screenShareRef.current.srcObject = null;
-        }
-
-        const pc = peerConnection;
-        if (pc && pc.pc.signalingState !== 'closed') {
-          try {
-            const senders = pc.pc.getSenders();
-            const screenSenders = senders.filter(sender => 
-              sender.track?.kind === 'video' || 
-              sender.track?.label?.includes('screen') || 
-              sender.track?.label?.includes('Screen')
-            );
-            
-            for (const sender of screenSenders) {
-              if (sender.track) {
-                sender.track.stop();
-                try {
-                  pc.pc.removeTrack(sender);
-                } catch (err) {
-                  console.warn('Error removing screen track:', err);
-                }
-              }
-            }
-          } catch (err) {
-            console.warn('Error cleaning up peer connection:', err);
-          }
-        }
-
-        setMediaState(prev => ({ ...prev, screenSharing: false }));
-        setScreenShareError(null);
-        // Clear screen share owner ID when stopping share
-        setScreenShareOwnerId(null);
-      }
-    } catch (err) {
-      console.error('Error with screen share:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to share screen';
-      setScreenShareError(errorMessage);
-      handleError(err, errorMessage);
-      setMediaState(prev => ({ ...prev, screenSharing: false }));
-      setScreenShareOwnerId(null);
-    }
-  };
-
-  // Add presence tracking
-  useEffect(() => {
-    if (!roomId || !currentUser || !db) return;
-
-    const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-    const roomRef = doc(db, 'sideRooms', roomId);
-
-    const setupPresence = async () => {
-      try {
-        // Add user to presence collection
-        await setDoc(userPresenceRef, {
-          userId: currentUser.uid,
-          lastSeen: serverTimestamp(),
-          status: 'online'
-        });
-
-        // Set up cleanup on window unload
-        const handleUnload = () => {
-          // Use a synchronous write to ensure it happens before the page closes
-          try {
-            deleteDoc(userPresenceRef);
-          } catch (error) {
-            console.error('Error cleaning up presence:', error);
-          }
-        };
-
-        window.addEventListener('beforeunload', handleUnload);
-
-        // Set up presence listener
-        const unsubscribePresence = onSnapshot(
-          collection(db, 'sideRooms', roomId, 'presence'),
-          (snapshot) => {
-            // Count only unique online users
-            const activeUsers = new Set(
-              snapshot.docs
-                .filter(doc => doc.data().status === 'online')
-                .map(doc => doc.data().userId)
-            ).size;
-
-            // Update room's active users count
-            updateDoc(roomRef, {
-              activeUsers
-            }).catch(console.error);
-          }
-        );
-
-        // Periodic presence refresh
-        const presenceInterval = setInterval(async () => {
-          try {
-            await updateDoc(userPresenceRef, {
-              lastSeen: serverTimestamp()
-            });
-          } catch (error) {
-            console.error('Error updating presence:', error);
-          }
-        }, 30000); // Update every 30 seconds
-
-        return () => {
-          window.removeEventListener('beforeunload', handleUnload);
-          clearInterval(presenceInterval);
-          unsubscribePresence();
-          // Clean up presence on unmount
-          deleteDoc(userPresenceRef).catch(console.error);
-        };
-      } catch (error) {
-        console.error('Error setting up presence:', error);
-        return () => {};
-      }
-    };
-
-    const cleanup = setupPresence();
-    return () => {
-      cleanup.then(cleanupFn => cleanupFn());
-    };
-  }, [roomId, currentUser, db]);
-
-  const handleScreenShareMenuClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    setScreenShareMenuAnchor(event.currentTarget);
-  };
-
-  const handleScreenShareMenuClose = () => {
-    setScreenShareMenuAnchor(null);
-  };
-
-  const toggleScreenShareVisibility = () => {
-    setShowScreenShare(!showScreenShare);
-    handleScreenShareMenuClose();
-  };
-
-  // Add a function to check if user is room owner
-  const isRoomOwner = currentUser && room?.ownerId === currentUser.uid;
-
-  // Add a function to check if user is a member
-  const isMember = currentUser && room?.members?.some(member => 
-    member.userId === currentUser.uid && (member.role === 'owner' || member.role === 'member')
-  );
-
-  // Add this function after other similar functions
   const handleRemoveMember = async (memberToRemove: RoomMember) => {
-    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) {
+    if (!room || !user || !roomId || user.uid !== room.ownerId) {
       toast.error('Only room owners can remove members');
       return;
     }
@@ -1359,8 +786,8 @@ const SideRoomComponent: React.FC = () => {
         type: 'room_removal',
         roomId,
         roomName: room.name,
-        removedBy: currentUser.uid,
-        removerName: currentUser.displayName || 'Anonymous',
+        removedBy: user.uid,
+        removerName: user.displayName || 'Anonymous',
         timestamp: serverTimestamp(),
         status: 'unread',
         message: `You have been removed from "${room.name}"`
@@ -1392,7 +819,7 @@ const SideRoomComponent: React.FC = () => {
             {room?.name}
           </Typography>
           <Typography variant="subtitle1" color="text.secondary">
-            Created by {owner?.username || 'Anonymous'}
+            Created by {room?.ownerId === user?.uid ? 'You' : 'Anonymous'}
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
             <Group fontSize="small" color="action" />
@@ -1444,7 +871,7 @@ const SideRoomComponent: React.FC = () => {
     </Box>
   );
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
         <CircularProgress />
@@ -1454,9 +881,8 @@ const SideRoomComponent: React.FC = () => {
 
   if (error) {
     return (
-      <Box sx={{ p: 3 }}>
-        <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
-        <Button onClick={() => navigate('/side-rooms')}>Back to Rooms</Button>
+      <Box sx={{ p: 2 }}>
+        <Alert severity="error">{error}</Alert>
       </Box>
     );
   }
@@ -1465,144 +891,19 @@ const SideRoomComponent: React.FC = () => {
     return null;
   }
 
-  const isOwner = room.members?.some(member => member.userId === currentUser?.uid && member.role === 'owner');
+  const isOwner = room.members?.some(member => member.userId === user?.uid && member.role === 'owner');
   const owner = room.members?.find(member => member.role === 'owner');
 
   // Update the live section in the render
   const renderVideoElements = () => {
+    if (!room) return null;
+
     return (
-      <Box sx={{ 
-        display: 'grid',
-        gridTemplateColumns: { 
-          xs: '1fr', 
-          md: (showScreenShare || mediaState.screenSharing) ? '1fr 1fr' : '1fr' 
-        },
-        gap: 2,
-        width: '100%',
-        minHeight: { xs: 'auto', md: '400px' }
-      }}>
-        {/* Only show local video if user is owner or member */}
-        {isRoomOwnerOrMember && room?.isLive && (
-          <Paper sx={{ 
-            p: 2,
-            position: 'relative',
-            aspectRatio: '16/9',
-            bgcolor: 'background.paper',
-            overflow: 'hidden'
-          }}>
-            <Typography variant="h6" sx={{ mb: 1 }}>You</Typography>
-            <Box sx={{ 
-              position: 'relative',
-              width: '100%',
-              height: '100%',
-              borderRadius: 1,
-              overflow: 'hidden',
-              bgcolor: 'black'
-            }}>
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain'
-                }}
-              />
-            </Box>
-          </Paper>
-        )}
-
-        {/* Only show screen share if user is owner/member or if owner/member is sharing */}
-        {room?.isLive && (showScreenShare || mediaState.screenSharing) && (
-          isRoomOwnerOrMember || (screenShareOwnerId && room.members?.some(member => member.userId === screenShareOwnerId))
-        ) && (
-          <Paper sx={{ 
-            p: 2,
-            position: 'relative',
-            aspectRatio: '16/9',
-            bgcolor: 'background.paper',
-            overflow: 'hidden'
-          }}>
-            <Box sx={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center',
-              mb: 1
-            }}>
-              <Typography variant="h6">Screen Share</Typography>
-              {isRoomOwnerOrMember && (
-                <IconButton
-                  size="small"
-                  onClick={handleScreenShareMenuClick}
-                  aria-label="screen share options"
-                >
-                  <MoreVert />
-                </IconButton>
-              )}
-            </Box>
-            <Box sx={{ 
-              position: 'relative',
-              width: '100%',
-              height: '100%',
-              borderRadius: 1,
-              overflow: 'hidden',
-              bgcolor: 'black'
-            }}>
-              <video
-                ref={screenShareRef}
-                autoPlay
-                playsInline
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain'
-                }}
-              />
-            </Box>
-          </Paper>
-        )}
-
-        {/* Show remote videos from room owner and members */}
-        {room?.isLive && Object.entries(remoteStreams).map(([userId, stream]) => {
-          const member = room.members?.find(m => m.userId === userId);
-          // Only show streams from room owner and members
-          if (!member) return null;
-          
-          return (
-            <Paper key={userId} sx={{ 
-              p: 2,
-              position: 'relative',
-              aspectRatio: '16/9',
-              bgcolor: 'background.paper',
-              overflow: 'hidden'
-            }}>
-              <Typography variant="h6" sx={{ mb: 1 }}>
-                {member.username} {member.role === 'owner' && '(Owner)'}
-              </Typography>
-              <Box sx={{ 
-                position: 'relative',
-                width: '100%',
-                height: '100%',
-                borderRadius: 1,
-                overflow: 'hidden',
-                bgcolor: 'black'
-              }}>
-                <video
-                  ref={el => videoRefs.current[userId] = el}
-                  autoPlay
-                  playsInline
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'contain'
-                  }}
-                />
-              </Box>
-            </Paper>
-          );
-        })}
+      <Box sx={{ mb: 3 }}>
+        <MuxStream 
+          isOwner={room.ownerId === user?.uid}
+          roomId={roomId || ''}
+        />
       </Box>
     );
   };
@@ -1878,28 +1179,6 @@ const SideRoomComponent: React.FC = () => {
           flexDirection: 'column',
           gap: 2
         }}>
-          {/* Media Controls - Only visible to owner and members */}
-          {isRoomOwnerOrMember && room?.isLive && (
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              <Tooltip title={mediaState.audioEnabled ? "Mute" : "Unmute"}>
-                <IconButton color={mediaState.audioEnabled ? "primary" : "error"} onClick={toggleAudio}>
-                  {mediaState.audioEnabled ? <Mic /> : <MicOff />}
-                </IconButton>
-              </Tooltip>
-              <AudioIndicator />
-              <Tooltip title={mediaState.videoEnabled ? "Turn off camera" : "Turn on camera"}>
-                <IconButton color={mediaState.videoEnabled ? "primary" : "error"} onClick={toggleVideo}>
-                  {mediaState.videoEnabled ? <Videocam /> : <VideocamOff />}
-                </IconButton>
-              </Tooltip>
-              <Tooltip title={mediaState.screenSharing ? "Stop sharing" : "Share screen"}>
-                <IconButton color={mediaState.screenSharing ? "primary" : "default"} onClick={toggleScreenShare}>
-                  {mediaState.screenSharing ? <StopScreenShare /> : <ScreenShare />}
-                </IconButton>
-              </Tooltip>
-            </Box>
-          )}
-
           {/* Video Elements */}
           {room?.isLive && renderVideoElements()}
         </Box>
@@ -1926,17 +1205,6 @@ const SideRoomComponent: React.FC = () => {
       )}
 
       {renderInviteDialog()}
-
-      {/* Screen Share Menu */}
-      <Menu
-        anchorEl={screenShareMenuAnchor}
-        open={Boolean(screenShareMenuAnchor)}
-        onClose={handleScreenShareMenuClose}
-      >
-        <MenuItem onClick={toggleScreenShareVisibility}>
-          {showScreenShare ? 'Hide Screen Share' : 'Show Screen Share'}
-        </MenuItem>
-      </Menu>
     </Box>
   );
 };

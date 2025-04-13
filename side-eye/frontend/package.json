@@ -11,6 +11,7 @@
     "@mui/icons-material": "^5.15.10",
     "@mui/material": "^5.15.10",
     "@mui/x-date-pickers": "^7.28.3",
+    "@mux/mux-node": "^11.0.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
@@ -41,7 +42,8 @@
     "predeploy": "npm run build",
     "deploy": "npm run build && firebase deploy --only hosting",
     "deploy:functions": "firebase deploy --only functions",
-    "deploy:all": "npm run build && firebase deploy"
+    "deploy:all": "npm run build && firebase deploy",
+    "server": "ts-node server.ts"
   },
   "eslintConfig": {
     "extends": [

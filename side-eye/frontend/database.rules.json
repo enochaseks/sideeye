@@ -2,17 +2,32 @@
   "rules": {
     "signaling": {
       "$roomId": {
-        "offer": {
+        "offers": {
           ".read": "auth != null",
           ".write": "auth != null"
         },
-        "answer": {
+        "answers": {
           ".read": "auth != null",
           ".write": "auth != null"
         },
-        "ice-candidate": {
+        "ice-candidates": {
           ".read": "auth != null",
           ".write": "auth != null"
+        }
+      }
+    },
+    "rooms": {
+      "$roomId": {
+        "presence": {
+          "$userId": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid === $userId",
+            "userId": { ".validate": "newData.val() === auth.uid" },
+            "username": { ".validate": "newData.isString()" },
+            "avatar": { ".validate": "newData.isString()" },
+            "lastSeen": { ".validate": "newData.isNumber()" },
+            "isOnline": { ".validate": "newData.isBoolean()" }
+          }
         }
       }
     },
