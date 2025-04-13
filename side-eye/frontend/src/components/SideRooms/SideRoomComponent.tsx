@@ -168,6 +168,13 @@ const SideRoomComponent: React.FC = () => {
   const monitorAudioRef = useRef<HTMLAudioElement>(null);
   const [showScreenShare, setShowScreenShare] = useState(true);
   const [screenShareMenuAnchor, setScreenShareMenuAnchor] = useState<null | HTMLElement>(null);
+  const [screenShareOwnerId, setScreenShareOwnerId] = useState<string | null>(null);
+
+  // Add this check at the top of the component, right after the state declarations
+  const isRoomOwnerOrMember = currentUser && room && (
+    room.ownerId === currentUser.uid || 
+    room.members?.some(member => member.userId === currentUser.uid)
+  );
 
   // Cleanup on unmount
   useEffect(() => {
@@ -316,43 +323,15 @@ const SideRoomComponent: React.FC = () => {
       setIsProcessing(true);
       const roomRef = doc(db, 'sideRooms', roomId);
 
-      // First get user's profile data
-      const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-      if (!userDoc.exists()) {
-        throw new Error('User profile not found');
-      }
-
-      const userData = userDoc.data();
-      const newMember: RoomMember = {
-        userId: currentUser.uid,
-        username: userData.username || currentUser.displayName || 'Anonymous',
-        avatar: userData.avatar || currentUser.photoURL || '',
-        role: 'member',
-        joinedAt: serverTimestamp()
-      };
-
-      // Update room data with new member
+      // Only track active users, don't add as member
       await updateDoc(roomRef, {
-        members: arrayUnion(newMember),
-        memberCount: increment(1),
+        activeUsers: increment(1),
         lastActive: serverTimestamp()
       });
 
       if (mountedRef.current) {
         toast.success('Joined room successfully');
         setShowPasswordDialog(false);
-        // Update local room state
-        setRoom(prevRoom => {
-          if (!prevRoom) return null;
-          return {
-            ...prevRoom,
-            members: [...(prevRoom.members || []), {
-              ...newMember,
-              joinedAt: new Date()
-            }],
-            memberCount: (prevRoom.memberCount || 0) + 1
-          };
-        });
       }
     } catch (err) {
       console.error('Error joining room:', err);
@@ -369,7 +348,49 @@ const SideRoomComponent: React.FC = () => {
         setIsProcessing(false);
       }
     }
-  }, [room, currentUser, roomId, isProcessing, db, setRoom, setShowPasswordDialog, setIsProcessing]);
+  }, [room, currentUser, roomId, isProcessing, db, setShowPasswordDialog, setIsProcessing]);
+
+  // Add new function for room owners to add members
+  const handleAddMember = async (userId: string) => {
+    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) return;
+
+    try {
+      setIsProcessing(true);
+      const roomRef = doc(db, 'sideRooms', roomId);
+      
+      // Get user's profile data
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (!userDoc.exists()) {
+        throw new Error('User not found');
+      }
+
+      const userData = userDoc.data();
+      const newMember: RoomMember = {
+        userId: userId,
+        username: userData.username || 'Anonymous',
+        avatar: userData.avatar || '',
+        role: 'member',
+        joinedAt: serverTimestamp()
+      };
+
+      // Update room with new member
+      await updateDoc(roomRef, {
+        members: arrayUnion(newMember),
+        memberCount: increment(1)
+      });
+
+      toast.success('Member added successfully');
+    } catch (err) {
+      console.error('Error adding member:', err);
+      if (err instanceof Error) {
+        toast.error(err.message);
+      } else {
+        toast.error('Failed to add member');
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handlePasswordSubmit = useCallback(() => {
     if (!room) {
@@ -437,7 +458,10 @@ const SideRoomComponent: React.FC = () => {
   }, [room, currentUser, roomId, isProcessing, navigate, handleError]);
 
   const handleGoLive = async () => {
-    if (!room || !currentUser || !roomId) return;
+    if (!room || !currentUser || !roomId || !isRoomOwnerOrMember) {
+      toast.error('Only room owners and members can go live');
+      return;
+    }
 
     try {
       setIsProcessing(true);
@@ -445,7 +469,7 @@ const SideRoomComponent: React.FC = () => {
       
       await updateDoc(roomRef, {
         isLive: !room.isLive,
-        lastActivity: new Date()
+        lastActivity: serverTimestamp()
       });
 
       setIsLive(!room.isLive);
@@ -634,50 +658,54 @@ const SideRoomComponent: React.FC = () => {
     }
   }, [peerConnection]);
 
-  // Add useEffect for automatic media setup
+  // Update the media initialization useEffect
   useEffect(() => {
-    if (room?.isLive && currentUser) {
-      // Initialize media streams when joining a live room
-      const setupMedia = async () => {
-        try {
-          const stream = await getMediaStream({ 
-            audio: true,
-            video: true
-          });
-          
-          setLocalStream(stream);
-          
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-          }
-
-          if (peerConnection) {
-            peerConnection.addStream(stream);
-          }
-
-          // Ensure tracks are enabled by default
-          stream.getTracks().forEach(track => {
-            track.enabled = true;
-          });
-
-          console.log('Media setup complete:', {
-            audioTracks: stream.getAudioTracks().length,
-            videoTracks: stream.getVideoTracks().length
-          });
-        } catch (err) {
-          console.error('Error setting up media:', err);
-          if (err instanceof Error) {
-            toast.error(err.message);
-          } else {
-            toast.error('Failed to setup media devices');
-          }
-        }
-      };
-
-      setupMedia();
+    // Only initialize media if user is owner or member
+    if (!room?.isLive || !currentUser || !isRoomOwnerOrMember) {
+      // Clean up any existing streams if user is not owner/member
+      if (localStream) {
+        localStream.getTracks().forEach(track => {
+          track.stop();
+        });
+        setLocalStream(null);
+      }
+      return;
     }
 
-    // Cleanup function
+    const setupMedia = async () => {
+      try {
+        const stream = await getMediaStream({ 
+          audio: true,
+          video: true
+        });
+        
+        setLocalStream(stream);
+        
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+
+        if (peerConnection) {
+          peerConnection.addStream(stream);
+        }
+
+        stream.getTracks().forEach(track => {
+          track.enabled = true;
+        });
+
+        console.log('Media setup complete for owner/member');
+      } catch (err) {
+        console.error('Error setting up media:', err);
+        if (err instanceof Error) {
+          toast.error(err.message);
+        } else {
+          toast.error('Failed to setup media devices');
+        }
+      }
+    };
+
+    setupMedia();
+
     return () => {
       if (localStream) {
         localStream.getTracks().forEach(track => {
@@ -685,7 +713,7 @@ const SideRoomComponent: React.FC = () => {
         });
       }
     };
-  }, [room?.isLive, currentUser]);
+  }, [room?.isLive, currentUser, isRoomOwnerOrMember]);
 
   // Add audio setup function
   const setupAudioContext = useCallback((stream: MediaStream) => {
@@ -1103,25 +1131,22 @@ const SideRoomComponent: React.FC = () => {
       if (!mediaState.screenSharing) {
         console.log('Starting screen share...');
         
-        // Show the screen share panel before starting the share
         setShowScreenShare(true);
         
-        // Get screen share stream
         const screenStream = await getScreenShare();
         console.log('Got screen stream:', screenStream.getTracks().map(t => ({ kind: t.kind, label: t.label })));
 
-        // Set the screen stream for display immediately
         if (screenShareRef.current) {
           console.log('Setting screen share video source');
           screenShareRef.current.srcObject = screenStream;
           await screenShareRef.current.play().catch(console.error);
+          // Set screen share owner ID when starting share
+          setScreenShareOwnerId(currentUser?.uid || null);
         }
 
-        // Set up peer connection after stream is displayed
         const pc = ensurePeerConnection();
         if (pc && pc.pc.signalingState !== 'closed') {
           try {
-            // Add screen share track to peer connection
             screenStream.getTracks().forEach(track => {
               console.log('Adding track to peer connection:', track.kind, track.label);
               pc.pc.addTrack(track, screenStream);
@@ -1131,7 +1156,6 @@ const SideRoomComponent: React.FC = () => {
           }
         }
 
-        // Handle when user stops sharing through browser UI
         screenStream.getVideoTracks()[0].onended = () => {
           console.log('Screen sharing ended by user');
           if (pc && pc.pc.signalingState !== 'closed') {
@@ -1157,6 +1181,8 @@ const SideRoomComponent: React.FC = () => {
             screenShareRef.current.srcObject = null;
           }
           setMediaState(prev => ({ ...prev, screenSharing: false }));
+          // Clear screen share owner ID when stopping share
+          setScreenShareOwnerId(null);
         };
 
         setMediaState(prev => ({ ...prev, screenSharing: true }));
@@ -1165,7 +1191,6 @@ const SideRoomComponent: React.FC = () => {
       } else {
         console.log('Stopping screen share...');
         
-        // Stop screen sharing tracks
         if (screenShareRef.current?.srcObject instanceof MediaStream) {
           const stream = screenShareRef.current.srcObject;
           stream.getTracks().forEach(track => {
@@ -1175,7 +1200,6 @@ const SideRoomComponent: React.FC = () => {
           screenShareRef.current.srcObject = null;
         }
 
-        // Clean up peer connection tracks
         const pc = peerConnection;
         if (pc && pc.pc.signalingState !== 'closed') {
           try {
@@ -1203,6 +1227,8 @@ const SideRoomComponent: React.FC = () => {
 
         setMediaState(prev => ({ ...prev, screenSharing: false }));
         setScreenShareError(null);
+        // Clear screen share owner ID when stopping share
+        setScreenShareOwnerId(null);
       }
     } catch (err) {
       console.error('Error with screen share:', err);
@@ -1210,6 +1236,7 @@ const SideRoomComponent: React.FC = () => {
       setScreenShareError(errorMessage);
       handleError(err, errorMessage);
       setMediaState(prev => ({ ...prev, screenSharing: false }));
+      setScreenShareOwnerId(null);
     }
   };
 
@@ -1302,6 +1329,121 @@ const SideRoomComponent: React.FC = () => {
     handleScreenShareMenuClose();
   };
 
+  // Add a function to check if user is room owner
+  const isRoomOwner = currentUser && room?.ownerId === currentUser.uid;
+
+  // Add a function to check if user is a member
+  const isMember = currentUser && room?.members?.some(member => 
+    member.userId === currentUser.uid && (member.role === 'owner' || member.role === 'member')
+  );
+
+  // Add this function after other similar functions
+  const handleRemoveMember = async (memberToRemove: RoomMember) => {
+    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) {
+      toast.error('Only room owners can remove members');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      const roomRef = doc(db, 'sideRooms', roomId);
+
+      await updateDoc(roomRef, {
+        members: arrayRemove(memberToRemove),
+        memberCount: increment(-1)
+      });
+
+      // Create notification for removed member
+      const notificationRef = doc(collection(db, 'users', memberToRemove.userId, 'notifications'));
+      await setDoc(notificationRef, {
+        type: 'room_removal',
+        roomId,
+        roomName: room.name,
+        removedBy: currentUser.uid,
+        removerName: currentUser.displayName || 'Anonymous',
+        timestamp: serverTimestamp(),
+        status: 'unread',
+        message: `You have been removed from "${room.name}"`
+      });
+
+      toast.success('Member removed successfully');
+    } catch (err) {
+      console.error('Error removing member:', err);
+      if (err instanceof Error) {
+        toast.error(err.message);
+      } else {
+        toast.error('Failed to remove member');
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const renderRoomHeader = () => (
+    <Box sx={{ 
+      p: 2, 
+      borderBottom: 1, 
+      borderColor: 'divider',
+      bgcolor: 'background.paper'
+    }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box>
+          <Typography variant="h4" component="h1">
+            {room?.name}
+          </Typography>
+          <Typography variant="subtitle1" color="text.secondary">
+            Created by {owner?.username || 'Anonymous'}
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+            <Group fontSize="small" color="action" />
+            <Typography variant="body2" color="text.secondary">
+              {room?.activeUsers || 0} {room?.activeUsers === 1 ? 'person' : 'people'} viewing
+            </Typography>
+          </Box>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          {/* Add Member button - only visible to room owner */}
+          {isRoomOwner && (
+            <Button
+              variant="outlined"
+              startIcon={<PersonAdd />}
+              onClick={() => setShowInviteDialog(true)}
+            >
+              Add Member
+            </Button>
+          )}
+          <Tooltip title="Chat">
+            <IconButton onClick={() => setShowChat(!showChat)} color={showChat ? "primary" : "default"}>
+              <Chat />
+            </IconButton>
+          </Tooltip>
+          {/* Only show Go Live button to room owner */}
+          {isRoomOwner && (
+            <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
+              <IconButton 
+                color={room?.isLive ? "error" : "primary"} 
+                onClick={handleGoLive}
+                disabled={isProcessing}
+              >
+                <LocalFireDepartment />
+              </IconButton>
+            </Tooltip>
+          )}
+          <Tooltip title="Members">
+            <IconButton onClick={() => setShowMembers(!showMembers)} color={showMembers ? "primary" : "default"}>
+              <Group />
+            </IconButton>
+          </Tooltip>
+          {(isRoomOwner || isMember) && (
+            <Button variant="outlined" color="error" startIcon={<ExitToApp />} onClick={handleLeaveRoom}>
+              Leave
+            </Button>
+          )}
+        </Box>
+      </Box>
+    </Box>
+  );
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -1323,100 +1465,147 @@ const SideRoomComponent: React.FC = () => {
     return null;
   }
 
-  const isMember = room.members?.some(member => member.userId === currentUser?.uid);
   const isOwner = room.members?.some(member => member.userId === currentUser?.uid && member.role === 'owner');
   const owner = room.members?.find(member => member.role === 'owner');
 
   // Update the live section in the render
-  const renderVideoElements = () => (
-    <Box sx={{ 
-      display: 'grid',
-      gridTemplateColumns: { 
-        xs: '1fr', 
-        md: (showScreenShare || mediaState.screenSharing) ? '1fr 1fr' : '1fr' 
-      },
-      gap: 2,
-      width: '100%',
-      minHeight: { xs: 'auto', md: '400px' }
-    }}>
-      {/* Local Video */}
-      <Paper sx={{ 
-        p: 2,
-        position: 'relative',
-        aspectRatio: '16/9',
-        bgcolor: 'background.paper',
-        overflow: 'hidden'
+  const renderVideoElements = () => {
+    return (
+      <Box sx={{ 
+        display: 'grid',
+        gridTemplateColumns: { 
+          xs: '1fr', 
+          md: (showScreenShare || mediaState.screenSharing) ? '1fr 1fr' : '1fr' 
+        },
+        gap: 2,
+        width: '100%',
+        minHeight: { xs: 'auto', md: '400px' }
       }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>You</Typography>
-        <Box sx={{ 
-          position: 'relative',
-          width: '100%',
-          height: '100%',
-          borderRadius: 1,
-          overflow: 'hidden',
-          bgcolor: 'black'
-        }}>
-          <video
-            ref={localVideoRef}
-            autoPlay
-            playsInline
-            muted
-            style={{
+        {/* Only show local video if user is owner or member */}
+        {isRoomOwnerOrMember && room?.isLive && (
+          <Paper sx={{ 
+            p: 2,
+            position: 'relative',
+            aspectRatio: '16/9',
+            bgcolor: 'background.paper',
+            overflow: 'hidden'
+          }}>
+            <Typography variant="h6" sx={{ mb: 1 }}>You</Typography>
+            <Box sx={{ 
+              position: 'relative',
               width: '100%',
               height: '100%',
-              objectFit: 'contain'
-            }}
-          />
-        </Box>
-      </Paper>
+              borderRadius: 1,
+              overflow: 'hidden',
+              bgcolor: 'black'
+            }}>
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain'
+                }}
+              />
+            </Box>
+          </Paper>
+        )}
 
-      {/* Screen Share */}
-      {(showScreenShare || mediaState.screenSharing) && (
-        <Paper sx={{ 
-          p: 2,
-          position: 'relative',
-          aspectRatio: '16/9',
-          bgcolor: 'background.paper',
-          overflow: 'hidden'
-        }}>
-          <Box sx={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center',
-            mb: 1
-          }}>
-            <Typography variant="h6">Screen Share</Typography>
-            <IconButton
-              size="small"
-              onClick={handleScreenShareMenuClick}
-              aria-label="screen share options"
-            >
-              <MoreVert />
-            </IconButton>
-          </Box>
-          <Box sx={{ 
+        {/* Only show screen share if user is owner/member or if owner/member is sharing */}
+        {room?.isLive && (showScreenShare || mediaState.screenSharing) && (
+          isRoomOwnerOrMember || (screenShareOwnerId && room.members?.some(member => member.userId === screenShareOwnerId))
+        ) && (
+          <Paper sx={{ 
+            p: 2,
             position: 'relative',
-            width: '100%',
-            height: '100%',
-            borderRadius: 1,
-            overflow: 'hidden',
-            bgcolor: 'black'
+            aspectRatio: '16/9',
+            bgcolor: 'background.paper',
+            overflow: 'hidden'
           }}>
-            <video
-              ref={screenShareRef}
-              autoPlay
-              playsInline
-              style={{
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              mb: 1
+            }}>
+              <Typography variant="h6">Screen Share</Typography>
+              {isRoomOwnerOrMember && (
+                <IconButton
+                  size="small"
+                  onClick={handleScreenShareMenuClick}
+                  aria-label="screen share options"
+                >
+                  <MoreVert />
+                </IconButton>
+              )}
+            </Box>
+            <Box sx={{ 
+              position: 'relative',
+              width: '100%',
+              height: '100%',
+              borderRadius: 1,
+              overflow: 'hidden',
+              bgcolor: 'black'
+            }}>
+              <video
+                ref={screenShareRef}
+                autoPlay
+                playsInline
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain'
+                }}
+              />
+            </Box>
+          </Paper>
+        )}
+
+        {/* Show remote videos from room owner and members */}
+        {room?.isLive && Object.entries(remoteStreams).map(([userId, stream]) => {
+          const member = room.members?.find(m => m.userId === userId);
+          // Only show streams from room owner and members
+          if (!member) return null;
+          
+          return (
+            <Paper key={userId} sx={{ 
+              p: 2,
+              position: 'relative',
+              aspectRatio: '16/9',
+              bgcolor: 'background.paper',
+              overflow: 'hidden'
+            }}>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                {member.username} {member.role === 'owner' && '(Owner)'}
+              </Typography>
+              <Box sx={{ 
+                position: 'relative',
                 width: '100%',
                 height: '100%',
-                objectFit: 'contain'
-              }}
-            />
-          </Box>
-        </Paper>
-      )}
-    </Box>
-  );
+                borderRadius: 1,
+                overflow: 'hidden',
+                bgcolor: 'black'
+              }}>
+                <video
+                  ref={el => videoRefs.current[userId] = el}
+                  autoPlay
+                  playsInline
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain'
+                  }}
+                />
+              </Box>
+            </Paper>
+          );
+        })}
+      </Box>
+    );
+  };
 
   // Update the member list display
   const renderMemberList = () => (
@@ -1469,6 +1658,22 @@ const SideRoomComponent: React.FC = () => {
               </Typography>
             }
           />
+          {/* Only show remove button to room owner and don't allow removing the owner */}
+          {isRoomOwner && member.role !== 'owner' && (
+            <IconButton
+              edge="end"
+              aria-label="remove member"
+              onClick={() => {
+                if (window.confirm(`Are you sure you want to remove ${member.username || 'this member'}?`)) {
+                  handleRemoveMember(member);
+                }
+              }}
+              color="error"
+              disabled={isProcessing}
+            >
+              <Delete />
+            </IconButton>
+          )}
         </ListItem>
       ))}
     </List>
@@ -1649,57 +1854,6 @@ const SideRoomComponent: React.FC = () => {
     </Dialog>
   );
 
-  // Update the room header to show accurate view count
-  const renderRoomHeader = () => (
-    <Box sx={{ 
-      p: 2, 
-      borderBottom: 1, 
-      borderColor: 'divider',
-      bgcolor: 'background.paper'
-    }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Box>
-          <Typography variant="h4" component="h1">
-            {room?.name}
-          </Typography>
-          <Typography variant="subtitle1" color="text.secondary">
-            Created by {owner?.username || 'Anonymous'}
-          </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-            <Group fontSize="small" color="action" />
-            <Typography variant="body2" color="text.secondary">
-              {room?.activeUsers || 0} {room?.activeUsers === 1 ? 'person' : 'people'} viewing
-            </Typography>
-          </Box>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Tooltip title="Chat">
-            <IconButton onClick={() => setShowChat(!showChat)} color={showChat ? "primary" : "default"}>
-              <Chat />
-            </IconButton>
-          </Tooltip>
-          {isMember && (
-            <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
-              <IconButton color={room?.isLive ? "error" : "primary"} onClick={handleGoLive} disabled={isProcessing}>
-                <LocalFireDepartment />
-              </IconButton>
-            </Tooltip>
-          )}
-          <Tooltip title="Members">
-            <IconButton onClick={() => setShowMembers(!showMembers)} color={showMembers ? "primary" : "default"}>
-              <Group />
-            </IconButton>
-          </Tooltip>
-          {isMember && (
-            <Button variant="outlined" color="error" startIcon={<ExitToApp />} onClick={handleLeaveRoom}>
-              Leave
-            </Button>
-          )}
-        </Box>
-      </Box>
-    </Box>
-  );
-
   return (
     <Box sx={{ 
       display: 'flex', 
@@ -1724,33 +1878,30 @@ const SideRoomComponent: React.FC = () => {
           flexDirection: 'column',
           gap: 2
         }}>
-          {/* Live Controls and Video Container */}
-          {room?.isLive && (
-            <>
-              {renderAudioControls()}
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                <Tooltip title={mediaState.audioEnabled ? "Mute" : "Unmute"}>
-                  <IconButton color={mediaState.audioEnabled ? "primary" : "error"} onClick={toggleAudio}>
-                    {mediaState.audioEnabled ? <Mic /> : <MicOff />}
-                  </IconButton>
-                </Tooltip>
-                <AudioIndicator />
-                <Tooltip title={mediaState.videoEnabled ? "Turn off camera" : "Turn on camera"}>
-                  <IconButton color={mediaState.videoEnabled ? "primary" : "error"} onClick={toggleVideo}>
-                    {mediaState.videoEnabled ? <Videocam /> : <VideocamOff />}
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title={mediaState.screenSharing ? "Stop sharing" : "Share screen"}>
-                  <IconButton color={mediaState.screenSharing ? "primary" : "default"} onClick={toggleScreenShare}>
-                    {mediaState.screenSharing ? <StopScreenShare /> : <ScreenShare />}
-                  </IconButton>
-                </Tooltip>
-              </Box>
-
-              {/* Video Grid */}
-              {renderVideoElements()}
-            </>
+          {/* Media Controls - Only visible to owner and members */}
+          {isRoomOwnerOrMember && room?.isLive && (
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <Tooltip title={mediaState.audioEnabled ? "Mute" : "Unmute"}>
+                <IconButton color={mediaState.audioEnabled ? "primary" : "error"} onClick={toggleAudio}>
+                  {mediaState.audioEnabled ? <Mic /> : <MicOff />}
+                </IconButton>
+              </Tooltip>
+              <AudioIndicator />
+              <Tooltip title={mediaState.videoEnabled ? "Turn off camera" : "Turn on camera"}>
+                <IconButton color={mediaState.videoEnabled ? "primary" : "error"} onClick={toggleVideo}>
+                  {mediaState.videoEnabled ? <Videocam /> : <VideocamOff />}
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={mediaState.screenSharing ? "Stop sharing" : "Share screen"}>
+                <IconButton color={mediaState.screenSharing ? "primary" : "default"} onClick={toggleScreenShare}>
+                  {mediaState.screenSharing ? <StopScreenShare /> : <ScreenShare />}
+                </IconButton>
+              </Tooltip>
+            </Box>
           )}
+
+          {/* Video Elements */}
+          {room?.isLive && renderVideoElements()}
         </Box>
       </Box>
 

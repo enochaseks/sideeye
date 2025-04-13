@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../services/firebase';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, Firestore, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, Firestore, onSnapshot, increment, serverTimestamp } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
   Box,
@@ -95,26 +95,11 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
 
     try {
       const roomRef = doc(db, 'sideRooms', room.id);
-      const newMember: RoomMember = {
-        userId: currentUser.uid,
-        username: currentUser.displayName || 'Anonymous',
-        avatar: currentUser.photoURL || '',
-        role: 'member',
-        joinedAt: new Date()
-      };
 
+      // Only track active users, don't add as member
       await updateDoc(roomRef, {
-        members: arrayUnion(newMember),
-        memberCount: (room.memberCount || 0) + 1
-      });
-
-      setRoom(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          members: [...(prev.members || []), newMember],
-          memberCount: (prev.memberCount || 0) + 1
-        };
+        activeUsers: increment(1),
+        lastActive: serverTimestamp()
       });
 
       toast.success('Joined room successfully');

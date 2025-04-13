@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, arrayUnion, where, getDocs, addDoc, serverTimestamp, Firestore, Timestamp, runTransaction } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, arrayUnion, where, getDocs, addDoc, serverTimestamp, Firestore, Timestamp, runTransaction, getDoc, FieldValue, increment } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
   Box,
@@ -45,8 +45,8 @@ interface SideRoomMember {
   userId: string;
   username: string;
   avatar: string;
-  role: string;
-  joinedAt: Date;
+  role: 'owner' | 'member';
+  joinedAt: Date | FieldValue;
 }
 
 interface SideRoomData {
@@ -209,42 +209,10 @@ const SideRoomList: React.FC = () => {
         setIsProcessing(true);
         const roomRef = doc(db, 'sideRooms', room.id);
         
-        // Use a transaction to ensure atomic updates
-        await runTransaction(db, async (transaction) => {
-          const roomDoc = await transaction.get(roomRef);
-          if (!roomDoc.exists()) {
-            throw new Error('Room not found');
-          }
-
-          const roomData = roomDoc.data() as SideRoomData;
-          
-          // Check if user is already a member
-          const isMember = roomData.members?.some(member => member.userId === currentUser.uid);
-          if (isMember) {
-            navigate(`/side-room/${room.id}`);
-            return;
-          }
-
-          // Check if room is full
-          if (roomData.memberCount >= roomData.maxMembers) {
-            throw new Error('Room is full');
-          }
-
-          // Create new member data
-          const newMember: SideRoomMember = {
-            userId: currentUser.uid,
-            username: currentUser.displayName || 'Anonymous',
-            avatar: currentUser.photoURL || '',
-            role: 'member',
-            joinedAt: new Date()
-          };
-
-          // Update both members and memberCount atomically
-          transaction.update(roomRef, {
-            members: arrayUnion(newMember),
-            memberCount: (roomData.memberCount || 0) + 1,
-            lastActive: serverTimestamp()
-          });
+        // Only track active users, don't add as member
+        await updateDoc(roomRef, {
+          activeUsers: increment(1),
+          lastActive: serverTimestamp()
         });
 
         toast.success('Joined room successfully');
@@ -269,35 +237,10 @@ const SideRoomList: React.FC = () => {
       try {
         setIsProcessing(true);
         const roomRef = doc(db, 'sideRooms', selectedRoom.id);
-        const newMember = {
-          userId: currentUser.uid,
-          username: currentUser.displayName || 'Anonymous',
-          avatar: currentUser.photoURL || '',
-          role: 'member',
-          joinedAt: new Date()
-        };
-
-        // First check if user is already a member
-        const isMember = selectedRoom.members?.some(member => {
-          console.log('Comparing member ID:', member.userId, 'with current user ID:', currentUser.uid);
-          return member.userId === currentUser.uid;
-        });
         
-        if (isMember) {
-          console.log('User is already a member, navigating to room');
-          navigate(`/side-room/${selectedRoom.id}`);
-          return;
-        }
-
-        // Check if room is full
-        if (selectedRoom.memberCount >= (selectedRoom.maxMembers || 50)) {
-          toast.error('Room is full');
-          return;
-        }
-
+        // Only track active users, don't add as member
         await updateDoc(roomRef, {
-          members: arrayUnion(newMember),
-          memberCount: (selectedRoom.memberCount || 0) + 1,
+          activeUsers: increment(1),
           lastActive: serverTimestamp()
         });
 
