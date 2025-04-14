@@ -27,6 +27,31 @@ export interface Post {
   tags: string[];
 }
 
+export interface RoomStyle {
+  headerColor: string;
+  backgroundColor: string;
+  textColor: string;
+  accentColor: string;
+  font: string;
+  thumbnailUrl: string;
+  bannerUrl: string;
+  customCss: string;
+  headerGradient: boolean;
+  backgroundGradient: boolean;
+  glitterEffect: boolean;
+  headerFontSize: number;
+  stickers: string[];
+}
+
+export interface RecordedStream {
+  id: string;
+  playbackId: string;
+  startedAt: Date;
+  endedAt?: Date;
+  duration?: number;
+  title?: string;
+}
+
 export interface SideRoom {
   id: string;
   name: string;
@@ -49,6 +74,18 @@ export interface SideRoom {
   bannedUsers?: string[];
   lastActive: Date;
   maxMembers: number;
+  style?: RoomStyle;
+  updatedAt?: Date;
+  isRecording?: boolean;
+  recordedStreams?: RecordedStream[];
+  currentRecordingId?: string;
+  currentStreamId?: string;
+  mobileStreamKey?: string;
+  mobilePlaybackId?: string;
+  mobileStreamerId?: string;
+  isMobileStreaming?: boolean;
+  thumbnailUrl?: string;
+  isOwner?: boolean;
 }
 
 export interface RoomMember {
@@ -270,4 +307,14 @@ export interface PeerConnection {
   handleAnswer: (answer: RTCSessionDescriptionInit) => Promise<void>;
   handleIceCandidate: (candidate: RTCIceCandidate) => Promise<void>;
   cleanup: () => void;
+}
+
+// Also add the UserSideRoom interface for profile display
+export interface UserSideRoom extends Pick<SideRoom, 'id' | 'name' | 'description' | 'memberCount' | 'isPrivate' | 'category'> {
+  roomId: string;
+  role: 'owner' | 'member';
+  joinedAt: Date;
+  lastActive: Date;
+  isOwner: boolean;
+  thumbnailUrl: string | null;
 } 
