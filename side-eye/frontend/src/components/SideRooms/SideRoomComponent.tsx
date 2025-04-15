@@ -25,7 +25,9 @@ import {
   increment,
   FieldValue,
   Timestamp,
-  setDoc
+  setDoc,
+  startAfter,
+  QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -93,6 +95,7 @@ import {
 import type { SideRoom, RoomMember } from '../../types/index';
 import MuxStream from '../Stream/MuxStream';
 import RoomForm from './RoomForm';
+import _ from 'lodash';
 
 interface Message {
   id: string;
@@ -251,8 +254,6 @@ const SideRoomComponent: React.FC = () => {
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
   const [isInviting, setIsInviting] = useState(false);
   const [presence, setPresence] = useState<PresenceData[]>([]);
-  const messagesUnsubscribe = useRef<(() => void) | null>(null);
-  const presenceUnsubscribe = useRef<(() => void) | null>(null);
   const [isMobileStreaming, setIsMobileStreaming] = useState(false);
   const [mobileStreamUrl, setMobileStreamUrl] = useState('');
   const [showMobileStreamDialog, setShowMobileStreamDialog] = useState(false);
@@ -274,9 +275,13 @@ const SideRoomComponent: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedStreams, setRecordedStreams] = useState<RecordedStream[]>([]);
   const [showRecordingsDialog, setShowRecordingsDialog] = useState(false);
+  const [lastMessageDoc, setLastMessageDoc] = useState<QueryDocumentSnapshot | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const MESSAGES_PER_PAGE = 25;
 
   const mountedRef = useRef(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const intersectionObserver = useRef<IntersectionObserver | null>(null);
 
   const isRoomOwner = useMemo(() => room?.ownerId === user?.uid, [room?.ownerId, user?.uid]);
   const isMember = useMemo(() => room?.members?.some(member => member.userId === user?.uid) || false, [room?.members, user?.uid]);
@@ -308,32 +313,225 @@ const SideRoomComponent: React.FC = () => {
     if (!user || !roomId || !db) return;
 
     try {
-      const q = query(collection(db, 'sideRooms', roomId, 'messages'), orderBy('timestamp', 'asc'));
+      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+      const q = query(
+        messagesRef, 
+        orderBy('timestamp', 'desc'), 
+        limit(MESSAGES_PER_PAGE)
+      );
+
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const newMessages = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            userId: data.userId,
-            username: data.username || data.displayName || 'Anonymous',
-            avatar: data.photoURL || data.avatar || '',
-            content: data.content,
-            timestamp: data.timestamp,
-            photoURL: data.photoURL || data.avatar || '',
-            displayName: data.displayName || data.username || 'Anonymous'
-          };
+        if (!snapshot.empty) {
+          setLastMessageDoc(snapshot.docs[snapshot.docs.length - 1]);
+        }
+        const newMessages = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          timestamp: doc.data().timestamp?.toDate() || new Date()
+        })).reverse();
+        
+        setMessages(prevMessages => {
+          // Deduplicate messages
+          const messageMap = new Map();
+          [...newMessages, ...prevMessages].forEach(msg => {
+            if (!messageMap.has(msg.id)) {
+              messageMap.set(msg.id, msg);
+            }
+          });
+          return Array.from(messageMap.values());
         });
-        setMessages(newMessages);
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, (error) => {
-        console.error('Error fetching messages:', error);
-        setError('Failed to load messages');
       });
 
       return () => unsubscribe();
-    } catch (error) {
-      console.error('Error setting up message listener:', error);
+    } catch (err) {
+      console.error('Error setting up message listener:', err);
       setError('Failed to set up message listener');
+    }
+  };
+
+  const loadMoreMessages = async () => {
+    if (!lastMessageDoc || isLoadingMore || !roomId || !db) return;
+
+    try {
+      setIsLoadingMore(true);
+      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+      const q = query(
+        messagesRef,
+        orderBy('timestamp', 'desc'),
+        startAfter(lastMessageDoc),
+        limit(MESSAGES_PER_PAGE)
+      );
+
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        setLastMessageDoc(snapshot.docs[snapshot.docs.length - 1]);
+        const moreMessages = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          timestamp: doc.data().timestamp?.toDate() || new Date()
+        })).reverse();
+
+        setMessages(prevMessages => {
+          const messageMap = new Map();
+          [...prevMessages, ...moreMessages].forEach(msg => {
+            if (!messageMap.has(msg.id)) {
+              messageMap.set(msg.id, msg);
+            }
+          });
+          return Array.from(messageMap.values());
+        });
+      }
+    } catch (err) {
+      console.error('Error loading more messages:', err);
+      toast.error('Failed to load more messages');
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  // Add intersection observer for infinite scroll
+  useEffect(() => {
+    if (!messagesEndRef.current) return;
+
+    intersectionObserver.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadMoreMessages();
+        }
+      },
+      { threshold: 0.5 }
+    );
+
+    intersectionObserver.current.observe(messagesEndRef.current);
+
+    return () => {
+      if (intersectionObserver.current) {
+        intersectionObserver.current.disconnect();
+      }
+    };
+  }, [messagesEndRef.current, lastMessageDoc]);
+
+  // Optimize presence updates with debouncing
+  const updatePresence = useCallback(
+    _.debounce(async () => {
+      if (!user || !roomId || !db) return;
+
+      try {
+        const presenceRef = doc(db, 'sideRooms', roomId, 'presence', user.uid);
+        await setDoc(presenceRef, {
+          userId: user.uid,
+          username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+          avatar: user.photoURL || '',
+          lastSeen: serverTimestamp(),
+          isOnline: true
+        }, { merge: true });
+      } catch (err) {
+        console.error('Error updating presence:', err);
+      }
+    }, 1000),
+    [user, roomId]
+  );
+
+  // Add presence cleanup
+  useEffect(() => {
+    if (!user || !roomId || !db) return;
+
+    const presenceRef = doc(db, 'sideRooms', roomId, 'presence', user.uid);
+    const cleanup = async () => {
+      try {
+        await setDoc(presenceRef, {
+          isOnline: false,
+          lastSeen: serverTimestamp()
+        }, { merge: true });
+      } catch (err) {
+        console.error('Error cleaning up presence:', err);
+      }
+    };
+
+    window.addEventListener('beforeunload', cleanup);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        cleanup();
+      } else {
+        updatePresence();
+      }
+    });
+
+    return () => {
+      window.removeEventListener('beforeunload', cleanup);
+      cleanup();
+    };
+  }, [user, roomId]);
+
+  // Add local message cache
+  const [localMessageCache, setLocalMessageCache] = useState<Map<string, Message>>(new Map());
+
+  const addToLocalCache = (message: Message) => {
+    setLocalMessageCache(prev => {
+      const newCache = new Map(prev);
+      newCache.set(message.id, message);
+      // Keep cache size manageable
+      if (newCache.size > 100) {
+        const keys = Array.from(newCache.keys());
+        if (keys.length > 0) {
+          newCache.delete(keys[0]); // Delete oldest message
+        }
+      }
+      return newCache;
+    });
+  };
+
+  // Optimize message sending with optimistic updates
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!roomId || !user || !newMessage.trim()) return;
+
+    const messageContent = newMessage.trim();
+    setNewMessage('');
+
+    const tempId = `temp-${Date.now()}`;
+    const tempMessage: Message = {
+      id: tempId,
+      userId: user.uid,
+      username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+      avatar: user.photoURL || '',
+      content: messageContent,
+      timestamp: new Date(),
+      photoURL: user.photoURL || '',
+      displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous'
+    };
+
+    // Optimistic update
+    setMessages(prev => [...prev, tempMessage]);
+
+    try {
+      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+      const messageData = {
+        userId: user.uid,
+        username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+        avatar: user.photoURL || '',
+        content: messageContent,
+        timestamp: serverTimestamp(),
+        photoURL: user.photoURL || '',
+        displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous'
+      };
+
+      const docRef = await addDoc(messagesRef, messageData);
+      
+      // Update the temporary message with the real ID
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === tempId 
+            ? { ...msg, id: docRef.id } 
+            : msg
+        )
+      );
+
+      addToLocalCache({ ...messageData, id: docRef.id, timestamp: new Date() });
+    } catch (err) {
+      // Revert optimistic update on error
+      setMessages(prev => prev.filter(msg => msg.id !== tempId));
+      handleError(err, 'Failed to send message');
     }
   };
 
@@ -343,30 +541,76 @@ const SideRoomComponent: React.FC = () => {
     try {
       const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
       const userPresenceRef = doc(presenceRef, user.uid);
+      const roomRef = doc(db, 'sideRooms', roomId);
 
       // Set user's presence with proper user data
-      setDoc(userPresenceRef, {
-        userId: user.uid,
-        username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-        avatar: user.photoURL || '',
-        displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-        photoURL: user.photoURL || '',
-        lastSeen: serverTimestamp(),
-        isOnline: true,
-        timestamp: serverTimestamp()
-      }, { merge: true });
+      const setupPresence = async () => {
+        try {
+          // First, get the current presence count
+          const presenceSnapshot = await getDocs(presenceRef);
+          const currentActiveUsers = presenceSnapshot.docs.length;
+
+          await runTransaction(db, async (transaction) => {
+            const roomDoc = await transaction.get(roomRef);
+            if (!roomDoc.exists()) {
+              throw new Error('Room not found');
+            }
+
+            // Set presence document
+            transaction.set(userPresenceRef, {
+              userId: user.uid,
+              username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+              avatar: user.photoURL || '',
+              displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+              photoURL: user.photoURL || '',
+              lastSeen: serverTimestamp(),
+              isOnline: true,
+              timestamp: serverTimestamp()
+            }, { merge: true });
+
+            // Update room's active users count
+            transaction.update(roomRef, {
+              activeUsers: currentActiveUsers + 1,
+              lastActive: serverTimestamp()
+            });
+          });
+        } catch (error) {
+          console.error('Error in presence setup:', error);
+          // Retry on version mismatch
+          if (error instanceof FirestoreError && error.code === 'failed-precondition') {
+            await setupPresence();
+          }
+        }
+      };
+
+      setupPresence();
 
       // Set up cleanup on unmount or disconnect
       const cleanup = async () => {
         try {
-          await deleteDoc(userPresenceRef);
-          const roomRef = doc(db, 'sideRooms', roomId);
-          await updateDoc(roomRef, {
-            activeUsers: increment(-1),
-            lastActive: serverTimestamp()
+          // First, get the current presence count
+          const presenceSnapshot = await getDocs(presenceRef);
+          const currentActiveUsers = presenceSnapshot.docs.length;
+
+          await runTransaction(db, async (transaction) => {
+            const roomDoc = await transaction.get(roomRef);
+            if (!roomDoc.exists()) return;
+
+            // Delete presence document
+            transaction.delete(userPresenceRef);
+
+            // Update room's active users count
+            transaction.update(roomRef, {
+              activeUsers: Math.max(0, currentActiveUsers - 1),
+              lastActive: serverTimestamp()
+            });
           });
         } catch (error) {
           console.error('Error in presence cleanup:', error);
+          // Retry on version mismatch
+          if (error instanceof FirestoreError && error.code === 'failed-precondition') {
+            await cleanup();
+          }
         }
       };
 
@@ -374,27 +618,18 @@ const SideRoomComponent: React.FC = () => {
       window.addEventListener('beforeunload', cleanup);
 
       // Handle visibility change
-      const handleVisibilityChange = () => {
+      const handleVisibilityChange = async () => {
         if (document.visibilityState === 'hidden') {
-          cleanup();
+          await cleanup();
         } else {
-          setDoc(userPresenceRef, {
-            userId: user.uid,
-            username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-            avatar: user.photoURL || '',
-            displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-            photoURL: user.photoURL || '',
-            lastSeen: serverTimestamp(),
-            isOnline: true,
-            timestamp: serverTimestamp()
-          }, { merge: true });
+          await setupPresence();
         }
       };
 
       document.addEventListener('visibilitychange', handleVisibilityChange);
 
       // Set up presence listener
-      const unsubscribe = onSnapshot(presenceRef, (snapshot) => {
+      const unsubscribe = onSnapshot(presenceRef, async (snapshot) => {
         const presenceData = snapshot.docs.map(doc => ({
           userId: doc.id,
           username: doc.data().displayName || doc.data().username || 'Anonymous',
@@ -404,12 +639,14 @@ const SideRoomComponent: React.FC = () => {
         }));
         setPresence(presenceData);
 
-        // Update room's active users count based on actual presence documents
-        const roomRef = doc(db, 'sideRooms', roomId);
-        updateDoc(roomRef, {
-          activeUsers: presenceData.length,
-          lastActive: serverTimestamp()
-        });
+        try {
+          await updateDoc(roomRef, {
+            activeUsers: presenceData.length,
+            lastActive: serverTimestamp()
+          });
+        } catch (error) {
+          console.error('Error updating room active users:', error);
+        }
       });
 
       return () => {
@@ -825,30 +1062,6 @@ const SideRoomComponent: React.FC = () => {
       handleError(err, 'Failed to update live status');
     } finally {
       setIsProcessing(false);
-    }
-  };
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!roomId || !user || !newMessage.trim()) return;
-
-    try {
-      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-      const messageData = {
-        userId: user.uid,
-        username: user.displayName || user.email?.split('@')[0] || 'Anonymous', // Fallback to email username
-        avatar: user.photoURL || '',
-        content: newMessage.trim(),
-        timestamp: serverTimestamp(),
-        photoURL: user.photoURL || '',
-        displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous' // Consistent fallback
-      };
-
-      await addDoc(messagesRef, messageData);
-      setNewMessage('');
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } catch (err) {
-      handleError(err, 'Failed to send message');
     }
   };
 
@@ -1427,31 +1640,35 @@ const SideRoomComponent: React.FC = () => {
   const renderRoomHeader = () => (
     <Box sx={{ 
       position: 'relative',
-      p: 2, 
+      p: { xs: 1.5, sm: 2 }, // Adjust padding for mobile
       borderBottom: 1, 
       borderColor: 'divider',
       background: roomStyle.headerGradient ? roomStyle.headerColor : roomStyle.headerColor,
-      minHeight: 'auto',
+      minHeight: { xs: '56px', sm: 'auto' }, // Fixed height on mobile
       display: 'flex',
-      flexDirection: 'column'
+      flexDirection: { xs: 'column', sm: 'row' }, // Stack on mobile
+      gap: { xs: 1, sm: 2 }
     }}>
       <Box sx={{ 
         position: 'relative',
         zIndex: 2,
         display: 'flex', 
+        flexDirection: { xs: 'column', sm: 'row' }, // Stack on mobile
         justifyContent: 'space-between', 
-        alignItems: 'center',
+        alignItems: { xs: 'flex-start', sm: 'center' },
+        width: '100%',
+        gap: { xs: 1, sm: 2 },
         color: roomStyle.textColor
       }}>
         {/* Room info */}
-        <Box>
+        <Box sx={{ width: { xs: '100%', sm: 'auto' } }}>
           <Typography 
             variant="h4" 
             component="h1" 
             sx={{ 
               fontFamily: roomStyle.font,
               textShadow: '2px 2px 4px rgba(0,0,0,0.3)',
-              fontSize: `${roomStyle.headerFontSize}px`
+              fontSize: { xs: '1.5rem', sm: `${roomStyle.headerFontSize}px` } // Smaller on mobile
             }}
           >
             {room?.name}
@@ -1460,36 +1677,33 @@ const SideRoomComponent: React.FC = () => {
             variant="subtitle1" 
             sx={{ 
               fontFamily: roomStyle.font,
-              textShadow: '1px 1px 2px rgba(0,0,0,0.3)'
+              textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
+              fontSize: { xs: '0.875rem', sm: '1rem' } // Smaller on mobile
             }}
           >
             Created by {room?.ownerId === user?.uid ? 'You' : 'Anonymous'}
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-            <Group fontSize="small" sx={{ color: roomStyle.accentColor }} />
-            <Typography 
-              variant="body2" 
-              sx={{ 
-                fontFamily: roomStyle.font,
-                textShadow: '1px 1px 2px rgba(0,0,0,0.3)'
-              }}
-            >
-              {room?.activeUsers || 0} {room?.activeUsers === 1 ? 'person' : 'people'} viewing
-            </Typography>
-          </Box>
         </Box>
 
         {/* Controls */}
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          {/* Room owner and member controls */}
+        <Box sx={{ 
+          display: 'flex', 
+          gap: { xs: 0.5, sm: 1 },
+          flexWrap: 'wrap',
+          justifyContent: { xs: 'flex-start', sm: 'flex-end' },
+          width: { xs: '100%', sm: 'auto' }
+        }}>
+          {/* Keep existing controls but adjust their sizes */}
           {(isRoomOwner || isMember) && (
             <>
-              {/* Room owner controls */}
               {isRoomOwner && (
                 <>
                   <IconButton 
                     onClick={handleMenuClick}
-                    sx={{ color: roomStyle.accentColor }}
+                    sx={{ 
+                      color: roomStyle.accentColor,
+                      padding: { xs: 1, sm: 1.5 } // Smaller on mobile
+                    }}
                   >
                     <MoreVert />
                   </IconButton>
@@ -1497,6 +1711,11 @@ const SideRoomComponent: React.FC = () => {
                     variant="outlined"
                     startIcon={<PersonAdd />}
                     onClick={() => setShowInviteDialog(true)}
+                    size="small" // Smaller on mobile
+                    sx={{ 
+                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                      padding: { xs: '4px 8px', sm: '6px 16px' }
+                    }}
                   >
                     Add Member
                   </Button>
@@ -2038,6 +2257,7 @@ const SideRoomComponent: React.FC = () => {
       display: 'flex', 
       height: '100vh',
       overflow: 'hidden',
+      flexDirection: { xs: 'column', sm: 'row' }, // Stack on mobile, row on desktop
       ...(room?.style ? {
         bgcolor: room.style.backgroundColor,
         background: room.style.backgroundGradient ? room.style.backgroundColor : undefined,
@@ -2065,7 +2285,7 @@ const SideRoomComponent: React.FC = () => {
         flex: 1, 
         display: 'flex', 
         flexDirection: 'column',
-        height: '100%',
+        height: { xs: 'calc(100vh - 56px)', sm: '100%' }, // Adjust height for mobile
         overflow: 'hidden'
       }}>
         {renderRoomHeader()}
@@ -2073,7 +2293,7 @@ const SideRoomComponent: React.FC = () => {
         <Box sx={{ 
           flex: 1, 
           overflow: 'auto',
-          p: 2,
+          p: { xs: 1, sm: 2 }, // Smaller padding on mobile
           display: 'flex',
           flexDirection: 'column',
           gap: 2
@@ -2087,42 +2307,51 @@ const SideRoomComponent: React.FC = () => {
       {(showMembers || showChat) && (
         <Box sx={{ 
           width: { xs: '100%', sm: 300 },
-          height: '100%',
+          height: { xs: 'calc(100vh - 56px)', sm: '100%' }, // Adjust height for mobile
           position: { xs: 'fixed', sm: 'relative' },
           right: 0,
-          top: 0,
+          top: { xs: '56px', sm: 0 }, // Account for header on mobile
           bgcolor: 'background.paper',
-          borderLeft: 1,
+          borderLeft: { xs: 0, sm: 1 }, // Remove left border on mobile
+          borderTop: { xs: 1, sm: 0 }, // Add top border on mobile
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
           zIndex: 1200
         }}>
-          {/* Add mobile exit button */}
+          {/* Panel Header */}
           <Box 
             sx={{ 
-              display: { xs: 'flex', sm: 'none' },
+              display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              p: 2,
+              p: { xs: 1.5, sm: 2 }, // Adjust padding for mobile
               borderBottom: 1,
               borderColor: 'divider',
               bgcolor: 'primary.main',
               color: 'primary.contrastText'
             }}
           >
-            <Typography variant="h6">
+            <Typography variant="h6" sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
               {showChat ? 'Chat' : 'Members'}
             </Typography>
             <IconButton 
               onClick={() => showChat ? setShowChat(false) : setShowMembers(false)}
-              sx={{ color: 'inherit' }}
+              sx={{ 
+                color: 'inherit',
+                padding: { xs: 1, sm: 1.5 }, // Smaller padding on mobile
+                '&:hover': {
+                  bgcolor: 'rgba(255, 255, 255, 0.1)'
+                }
+              }}
             >
               <Close />
             </IconButton>
           </Box>
-          {showMembers && renderMemberList()}
-          {showChat && renderChat()}
+          <Box sx={{ flex: 1, overflow: 'auto' }}>
+            {showMembers && renderMemberList()}
+            {showChat && renderChat()}
+          </Box>
         </Box>
       )}
 

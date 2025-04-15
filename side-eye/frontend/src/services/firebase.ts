@@ -1,8 +1,15 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
-import { initializeFirestore, CACHE_SIZE_UNLIMITED } from 'firebase/firestore';
+import { 
+  getFirestore, 
+  enableMultiTabIndexedDbPersistence,
+  enableIndexedDbPersistence,
+  initializeFirestore,
+  CACHE_SIZE_UNLIMITED
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getDatabase } from 'firebase/database';
+import { getPerformance } from 'firebase/performance';
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -19,13 +26,38 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 console.log('Initializing Firebase app');
 
-// Initialize services
-const auth = getAuth(app);
+// Initialize Performance Monitoring
+const perf = getPerformance(app);
+
+// Initialize Firestore with settings for better performance
 const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-  cacheSizeBytes: CACHE_SIZE_UNLIMITED
+  cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+  experimentalAutoDetectLongPolling: true,
 });
+
+// Enable offline persistence
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code == 'failed-precondition') {
+    // Multiple tabs open, persistence can only be enabled in one tab at a time
+    console.warn('Firebase persistence failed - multiple tabs open');
+  } else if (err.code == 'unimplemented') {
+    // The current browser doesn't support persistence
+    console.warn('Firebase persistence not supported');
+  }
+});
+
+// Enable multi-tab persistence where supported
+enableMultiTabIndexedDbPersistence(db).catch((err) => {
+  console.warn('Multi-tab persistence not supported:', err);
+});
+
+// Initialize Auth
+const auth = getAuth(app);
+
+// Initialize Storage
 const storage = getStorage(app);
+
+// Initialize Realtime Database
 const rtdb = getDatabase(app);
 
 // Add auth state change listener for debugging
@@ -34,7 +66,7 @@ onAuthStateChanged(auth, (user) => {
 });
 
 // Export initialized services
-export { auth, db, storage, rtdb };
+export { app, auth, db, storage, perf, rtdb };
 
 // Add configuration check function
 export const checkFirebaseConfig = () => {
@@ -43,6 +75,7 @@ export const checkFirebaseConfig = () => {
     console.log('Firebase App:', app.name);
     console.log('Firebase Auth:', auth.app.name);
     console.log('Firestore:', db.app.name);
+    console.log('Realtime Database:', rtdb.app.name);
     
     // Check if we're using the correct project
     const projectId = app.options.projectId;
