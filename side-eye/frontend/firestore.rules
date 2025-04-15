@@ -241,27 +241,30 @@ service cloud.firestore {
       
       // Allow updates if:
       // 1. User is the owner OR
-      // 2. User is a member updating allowed fields OR
-      // 3. User is joining the room (not at max capacity)
+      // 2. User is adding themselves as a viewer OR
+      // 3. User is removing themselves from members/viewers
       allow update: if isAuthenticated() && (
         // Owner can update any field
         resource.data.ownerId == request.auth.uid ||
         
-        // Members can update specific fields
-        (resource.data.members.hasAny([request.auth.uid]) &&
-         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['members', 'memberCount', 'activeUsers', 'lastActive', 'messages', 'presence'])) ||
+        // Allow any authenticated user to add themselves as a viewer
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['viewers', 'viewerCount', 'activeUsers', 'lastActive']) ||
         
-        // New members can join if not at capacity
-        (!resource.data.members.hasAny([request.auth.uid]) &&
-         (!('maxMembers' in resource.data) || resource.data.memberCount < resource.data.maxMembers) &&
-         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['members', 'memberCount', 'activeUsers', 'lastActive']))
-      ) && (
-        // Ensure atomic updates for activeUsers
-        !('activeUsers' in request.resource.data) ||
-        request.resource.data.activeUsers == resource.data.activeUsers + 1 ||
-        request.resource.data.activeUsers == resource.data.activeUsers - 1
+        // Allow users to remove themselves from members/viewers
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members', 'memberCount', 'viewers', 'viewerCount', 'activeUsers', 'lastActive']) &&
+        (
+          // Check if they're removing themselves from members
+          (resource.data.members is list && 
+           resource.data.members.hasAny([request.auth.uid]) &&
+           !request.resource.data.members.hasAny([request.auth.uid])) ||
+          
+          // Check if they're removing themselves from viewers
+          (resource.data.viewers is list && 
+           resource.data.viewers.hasAny([request.auth.uid]) &&
+           !request.resource.data.viewers.hasAny([request.auth.uid]))
+        )
       );
       
       // Allow delete if owner
@@ -269,16 +272,35 @@ service cloud.firestore {
 
       // Messages subcollection
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && isDocumentMember(get(/databases/$(database)/documents/sideRooms/$(roomId)));
-        allow create: if isAuthenticated() && isDocumentMember(get(/databases/$(database)/documents/sideRooms/$(roomId)));
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && (
+          resource.data.ownerId == request.auth.uid ||
+          resource.data.members.hasAny([request.auth.uid])
+        );
         allow update, delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
       }
 
       // Presence subcollection
       match /presence/{userId} {
-        allow read: if isAuthenticated() && isDocumentMember(get(/databases/$(database)/documents/sideRooms/$(roomId)));
+        allow read: if isAuthenticated();
         allow create, update: if isAuthenticated() && request.auth.uid == userId;
         allow delete: if isAuthenticated() && request.auth.uid == userId;
+      }
+
+      // Members subcollection
+      match /members/{userId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+        allow update, delete: if isAuthenticated() && (
+          resource.data.ownerId == request.auth.uid ||
+          request.auth.uid == userId
+        );
+      }
+
+      // Viewers subcollection
+      match /viewers/{userId} {
+        allow read: if isAuthenticated();
+        allow create, update, delete: if isAuthenticated() && request.auth.uid == userId;
       }
     }
 

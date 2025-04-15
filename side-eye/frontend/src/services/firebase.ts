@@ -9,7 +9,6 @@ import {
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getDatabase } from 'firebase/database';
-import { getPerformance } from 'firebase/performance';
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -18,49 +17,21 @@ const firebaseConfig = {
   storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.REACT_APP_FIREBASE_APP_ID,
-  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
   databaseURL: process.env.REACT_APP_FIREBASE_DATABASE_URL
 };
 
-// Initialize Firebase
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Initialize Firebase with performance monitoring disabled
+const app = getApps().length === 0 ? initializeApp(firebaseConfig, {
+  automaticDataCollectionEnabled: false
+}) : getApp();
+
 console.log('Initializing Firebase app');
 
-// Initialize Performance Monitoring with MUI component tracking disabled
-const perf = getPerformance(app);
-perf.instrumentationEnabled = false;
-
-// Initialize Firestore with settings for better performance
+// Initialize Firestore with optimized settings
 const db = initializeFirestore(app, {
   cacheSizeBytes: CACHE_SIZE_UNLIMITED,
   experimentalForceLongPolling: true
 });
-
-// Enable offline persistence with better error handling
-const initializePersistence = async () => {
-  try {
-    await enableIndexedDbPersistence(db);
-    console.log('Firebase persistence enabled successfully');
-  } catch (err: any) {
-    if (err.code === 'failed-precondition') {
-      console.warn('Firebase persistence failed - multiple tabs open');
-      // Try enabling multi-tab persistence instead
-      try {
-        await enableMultiTabIndexedDbPersistence(db);
-        console.log('Multi-tab persistence enabled successfully');
-      } catch (multiTabErr) {
-        console.warn('Multi-tab persistence also failed:', multiTabErr);
-      }
-    } else if (err.code === 'unimplemented') {
-      console.warn('Firebase persistence not supported in this browser');
-    } else {
-      console.error('Error enabling Firebase persistence:', err);
-    }
-  }
-};
-
-// Call the initialization function
-initializePersistence().catch(console.error);
 
 // Initialize Auth
 const auth = getAuth(app);
@@ -77,7 +48,7 @@ onAuthStateChanged(auth, (user) => {
 });
 
 // Export initialized services
-export { app, auth, db, storage, perf, rtdb };
+export { app, auth, db, storage, rtdb };
 
 // Add configuration check function
 export const checkFirebaseConfig = () => {

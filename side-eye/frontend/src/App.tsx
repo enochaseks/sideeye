@@ -52,6 +52,7 @@ import CookieConsent from './components/CookieConsent';
 import BottomNav from './components/BottomNav';
 import Vibits from './pages/Vibits';
 import './App.css';
+import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
 
 const BottomNavWrapper: React.FC = () => {
   const { currentUser } = useAuth();
@@ -143,7 +144,7 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <ThemeContextProvider>
+        <CustomThemeProvider>
           <CssBaseline />
           <LocalizationProvider dateAdapter={AdapterDateFns}>
             <AuthProvider>
@@ -156,7 +157,7 @@ const App: React.FC = () => {
               </FirestoreProvider>
             </AuthProvider>
           </LocalizationProvider>
-        </ThemeContextProvider>
+        </CustomThemeProvider>
       </Router>
     </ErrorBoundary>
   );

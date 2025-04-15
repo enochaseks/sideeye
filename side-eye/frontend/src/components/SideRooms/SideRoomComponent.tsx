@@ -90,12 +90,14 @@ import {
   Delete as DeleteIcon,
   FiberManualRecord,
   Stop,
-  ContentCopy
+  ContentCopy,
+  Visibility
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember } from '../../types/index';
 import MuxStream from '../Stream/MuxStream';
 import RoomForm from './RoomForm';
 import _ from 'lodash';
+import ViewerPanel from './ViewerPanel';
 
 interface Message {
   id: string;
@@ -227,6 +229,7 @@ declare module '../../types/index' {
     mobilePlaybackId?: string;
     mobileStreamerId?: string;
     isMobileStreaming?: boolean;
+    viewers?: RoomMember[];
   }
 }
 
@@ -285,9 +288,10 @@ const SideRoomComponent: React.FC = () => {
 
   const isRoomOwner = useMemo(() => room?.ownerId === user?.uid, [room?.ownerId, user?.uid]);
   const isMember = useMemo(() => room?.members?.some(member => member.userId === user?.uid) || false, [room?.members, user?.uid]);
+  const isViewer = useMemo(() => room?.viewers?.some(viewer => viewer.userId === user?.uid) || false, [room?.viewers, user?.uid]);
 
-  // Combine owner and member check
-  const isRoomOwnerOrMember = isRoomOwner || isMember;
+  // Combine owner, member, and viewer checks
+  const hasRoomAccess = isRoomOwner || isMember || isViewer;
 
   // Cleanup on unmount
   useEffect(() => {
@@ -423,13 +427,14 @@ const SideRoomComponent: React.FC = () => {
           username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
           avatar: user.photoURL || '',
           lastSeen: serverTimestamp(),
-          isOnline: true
+          isOnline: true,
+          role: isRoomOwner ? 'owner' : isMember ? 'member' : 'viewer'
         }, { merge: true });
       } catch (err) {
         console.error('Error updating presence:', err);
       }
     }, 1000),
-    [user, roomId]
+    [user, roomId, isRoomOwner, isMember]
   );
 
   // Add presence cleanup
@@ -662,61 +667,6 @@ const SideRoomComponent: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!user || !roomId) return;
-
-    const setupRoomListener = async () => {
-      try {
-        if (!roomId || !db) return;
-        
-        // Verify we have user information
-        console.log('Current user:', user);
-        console.log('Display name:', user.displayName);
-        console.log('Photo URL:', user.photoURL);
-
-        const roomRef = doc(db, 'sideRooms', roomId);
-        const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-        const q = query(messagesRef, orderBy('timestamp', 'asc'));
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-          const newMessages = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              userId: data.userId,
-              username: data.username || data.displayName || 'Anonymous',
-              avatar: data.photoURL || data.avatar || '',
-              content: data.content,
-              timestamp: data.timestamp,
-              photoURL: data.photoURL || data.avatar || '',
-              displayName: data.displayName || data.username || 'Anonymous'
-            };
-          });
-          console.log('Messages:', newMessages); // Debug messages
-          setMessages(newMessages);
-          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-
-          // Get room reference for updating active users
-          const roomRef = doc(db, 'sideRooms', roomId);
-          
-          // Update room's active users count based on actual online users
-          const onlineUsers = presence.filter(user => user.isOnline).length;
-          updateDoc(roomRef, {
-            activeUsers: onlineUsers,
-            lastActive: serverTimestamp()
-          });
-        });
-
-        return () => unsubscribe();
-      } catch (err) {
-        console.error('Error setting up room listener:', err);
-        setError('Failed to setup room listener');
-      }
-    };
-
-    setupRoomListener();
-  }, [user, roomId, presence]);
-
-  useEffect(() => {
     if (authLoading) {
       return;
     }
@@ -742,21 +692,22 @@ const SideRoomComponent: React.FC = () => {
               setRoom(roomData);
               setLoading(false);
 
-              // Check if user is a member
+              // Check if user is a member, viewer, or owner
               const isMember = roomData.members?.some(member => member.userId === user.uid);
+              const isViewer = roomData.viewers?.some(viewer => viewer.userId === user.uid);
               const isOwner = roomData.ownerId === user.uid;
 
-              if (isMember || isOwner) {
-                // If user is a member or owner, set up listeners
+              if (isMember || isViewer || isOwner) {
+                // If user has access, set up listeners
                 setupMessagesListener();
                 setupPresenceListener();
               } else {
-                // If not a member, unsubscribe from any existing listeners
+                // If not a member or viewer, unsubscribe from any existing listeners
                 if (messagesUnsubscribe) messagesUnsubscribe();
                 if (presenceUnsubscribe) presenceUnsubscribe();
                 messagesUnsubscribe = undefined;
                 presenceUnsubscribe = undefined;
-                setError('You need to be a member of this room to view messages and presence');
+                setError('You need to be a member or viewer of this room to access its content');
               }
             } else {
               setError('Room not found');
@@ -781,24 +732,30 @@ const SideRoomComponent: React.FC = () => {
         if (!roomId || !db) return;
         
         const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-        const q = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
+        const q = query(messagesRef, orderBy('timestamp', 'asc'));
         
-        messagesUnsubscribe = onSnapshot(q,
-          (snapshot) => {
-            const messages = snapshot.docs.map(doc => ({
+        messagesUnsubscribe = onSnapshot(q, (snapshot) => {
+          const newMessages = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
               id: doc.id,
-              ...doc.data(),
-              timestamp: doc.data().timestamp?.toDate() || new Date()
-            })) as Message[];
-            setMessages(messages.reverse());
-          },
-          (error) => {
-            console.error('Error listening to messages:', error);
-            if (error instanceof FirestoreError && error.code === 'permission-denied') {
-              setError('You need to be a member of this room to view messages');
-            }
+              userId: data.userId,
+              username: data.username || data.displayName || 'Anonymous',
+              avatar: data.photoURL || data.avatar || '',
+              content: data.content,
+              timestamp: data.timestamp,
+              photoURL: data.photoURL || data.avatar || '',
+              displayName: data.displayName || data.username || 'Anonymous'
+            };
+          });
+          setMessages(newMessages);
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, (error) => {
+          console.error('Error listening to messages:', error);
+          if (error instanceof FirestoreError && error.code === 'permission-denied') {
+            setError('You need to be a member or viewer of this room to view messages');
           }
-        );
+        });
       } catch (err) {
         console.error('Error setting up messages listener:', err);
       }
@@ -830,7 +787,7 @@ const SideRoomComponent: React.FC = () => {
           (error) => {
             console.error('Error listening to presence:', error);
             if (error instanceof FirestoreError && error.code === 'permission-denied') {
-              setError('You need to be a member of this room to view presence');
+              setError('You need to be a member or viewer of this room to view presence');
             }
           }
         );
@@ -846,7 +803,7 @@ const SideRoomComponent: React.FC = () => {
       if (messagesUnsubscribe) messagesUnsubscribe();
       if (presenceUnsubscribe) presenceUnsubscribe();
     };
-  }, [user, authLoading, roomId, navigate, presence]);
+  }, [user, authLoading, roomId, navigate]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -867,37 +824,45 @@ const SideRoomComponent: React.FC = () => {
 
         const roomData = roomDoc.data();
         
-        // Check if user is already a member
+        // Check if user is already a member or viewer
         const isMember = roomData.members?.some((member: RoomMember) => member.userId === user.uid);
-        if (isMember) {
-          throw new Error('You are already a member of this room');
+        const isViewer = roomData.viewers?.some((viewer: RoomMember) => viewer.userId === user.uid);
+        
+        if (isMember || isViewer) {
+          throw new Error('You are already a member or viewer of this room');
         }
 
-        // Check max members limit
-        if (roomData.maxMembers && roomData.memberCount >= roomData.maxMembers) {
-          throw new Error('Room has reached maximum capacity');
-        }
-
-        // Create new member object
-        const newMember: RoomMember = {
+        // Add as viewer by default
+        const newViewer: RoomMember = {
           userId: user.uid,
           username: user.displayName || 'Anonymous',
           avatar: user.photoURL || '',
-          role: 'member',
+          role: 'viewer' as const,
           joinedAt: serverTimestamp()
         };
 
-        // Update room data
+        // Update room with new viewer
         transaction.update(roomRef, {
-          members: arrayUnion(newMember),
-          memberCount: increment(1),
+          viewers: arrayUnion(newViewer),
+          viewerCount: increment(1),
           activeUsers: increment(1),
           lastActive: serverTimestamp()
+        });
+
+        // Create notification for the user
+        const notificationRef = doc(collection(db, 'users', user.uid, 'notifications'));
+        await setDoc(notificationRef, {
+          type: 'room_join',
+          roomId,
+          roomName: room.name,
+          timestamp: serverTimestamp(),
+          status: 'unread',
+          message: `You have joined "${room.name}" as a viewer`
         });
       });
 
       if (mountedRef.current) {
-        toast.success('Joined room successfully');
+        toast.success('Joined room successfully as a viewer');
         setShowPasswordDialog(false);
       }
     } catch (err) {
@@ -932,18 +897,54 @@ const SideRoomComponent: React.FC = () => {
       }
 
       const userData = userDoc.data();
+      
+      // Check if user is already a member or viewer
+      const isMember = room.members?.some(member => member.userId === userId);
+      const isViewer = room.viewers?.some(viewer => viewer.userId === userId);
+      
+      if (isMember) {
+        throw new Error('User is already a member');
+      }
+
+      // Remove from viewers if they are one
+      if (isViewer) {
+        const viewerToRemove = room.viewers?.find(viewer => viewer.userId === userId);
+        if (viewerToRemove) {
+          await updateDoc(roomRef, {
+            viewers: arrayRemove(viewerToRemove),
+            viewerCount: increment(-1)
+          });
+        }
+      }
+
+      // Add as member
       const newMember: RoomMember = {
         userId: userId,
         username: userData.username || 'Anonymous',
         avatar: userData.avatar || '',
-        role: 'member',
+        role: 'member' as const,
         joinedAt: serverTimestamp()
       };
 
       // Update room with new member
       await updateDoc(roomRef, {
         members: arrayUnion(newMember),
-        memberCount: increment(1)
+        memberCount: increment(1),
+        activeUsers: increment(1),
+        lastActive: serverTimestamp()
+      });
+
+      // Create notification for new member
+      const notificationRef = doc(collection(db, 'users', userId, 'notifications'));
+      await setDoc(notificationRef, {
+        type: 'room_invite',
+        roomId,
+        roomName: room.name,
+        invitedBy: user.uid,
+        inviterName: user.displayName || 'Anonymous',
+        timestamp: serverTimestamp(),
+        status: 'unread',
+        message: `You have been added as a member to "${room.name}"`
       });
 
       toast.success('Member added successfully');
@@ -977,76 +978,34 @@ const SideRoomComponent: React.FC = () => {
     }
   }, [room, password, handleJoinRoom]);
 
-  const handleLeaveRoom = useCallback(async () => {
-    if (!room || !user || !roomId || isProcessing) return;
+  const handleLeaveRoom = async () => {
+    if (!db || !user || !roomId) return;
 
     try {
       setIsProcessing(true);
       const roomRef = doc(db, 'sideRooms', roomId);
-      const userRoomRef = doc(db, 'users', user.uid, 'sideRooms', roomId);
-
-      // First, get the current room data
-      const roomDoc = await getDoc(roomRef);
-      if (!roomDoc.exists()) {
-        throw new Error('Room not found');
-      }
-
-      const roomData = roomDoc.data() as SideRoom;
       
-      // Find the exact member object to remove
-      const memberToRemove = roomData.members?.find(member => member.userId === user.uid);
-      if (!memberToRemove) {
-        throw new Error('You are not a member of this room');
-      }
-
-      // Use a transaction for atomic operations
-      await runTransaction(db, async (transaction) => {
-        // Get the current room data within the transaction
-        const currentRoomDoc = await transaction.get(roomRef);
-        if (!currentRoomDoc.exists()) {
-          throw new Error('Room not found');
-        }
-
-        const currentRoomData = currentRoomDoc.data() as SideRoom;
-        
-        // Verify the member still exists
-        const currentMember = currentRoomData.members?.find(member => member.userId === user.uid);
-        if (!currentMember) {
-          throw new Error('You are not a member of this room');
-        }
-
-        // Update room members and count
-        transaction.update(roomRef, {
-          members: arrayRemove(currentMember),
-          memberCount: Math.max(0, (currentRoomData.memberCount || 0) - 1),
-          lastActive: serverTimestamp()
-        });
-
-        // Remove room from user's sideRooms collection
-        transaction.delete(userRoomRef);
+      // Remove user from viewers list
+      await updateDoc(roomRef, {
+        viewers: arrayRemove(user.uid),
+        viewerCount: increment(-1),
+        activeUsers: arrayRemove(user.uid),
+        lastActive: serverTimestamp()
       });
 
-      if (mountedRef.current) {
-        toast.success('Left room successfully');
-        setTimeout(() => {
-          if (mountedRef.current) {
-            navigate('/side-rooms');
-          }
-        }, 100);
-      }
-    } catch (err) {
-      console.error('Error leaving room:', err);
-      if (err instanceof Error) {
-        toast.error(err.message);
-      } else {
-        toast.error('Failed to leave room');
-      }
+      // Delete user's presence document
+      const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', user.uid);
+      await deleteDoc(userPresenceRef);
+
+      toast.success('Left room successfully');
+      navigate('/side-rooms'); // Navigate to side rooms homepage
+    } catch (error) {
+      console.error('Error leaving room:', error);
+      toast.error('Failed to leave room');
     } finally {
-      if (mountedRef.current) {
-        setIsProcessing(false);
-      }
+      setIsProcessing(false);
     }
-  }, [room, user, roomId, isProcessing, navigate]);
+  };
 
   const handleGoLive = async () => {
     if (!room || !user || !roomId) return;
@@ -1643,20 +1602,20 @@ const SideRoomComponent: React.FC = () => {
   const renderRoomHeader = () => (
     <Box sx={{ 
       position: 'relative',
-      p: { xs: 1.5, sm: 2 }, // Adjust padding for mobile
+      p: { xs: 1.5, sm: 2 },
       borderBottom: 1, 
       borderColor: 'divider',
       background: roomStyle.headerGradient ? roomStyle.headerColor : roomStyle.headerColor,
-      minHeight: { xs: '56px', sm: 'auto' }, // Fixed height on mobile
+      minHeight: { xs: '56px', sm: 'auto' },
       display: 'flex',
-      flexDirection: { xs: 'column', sm: 'row' }, // Stack on mobile
+      flexDirection: { xs: 'column', sm: 'row' },
       gap: { xs: 1, sm: 2 }
     }}>
       <Box sx={{ 
         position: 'relative',
         zIndex: 2,
         display: 'flex', 
-        flexDirection: { xs: 'column', sm: 'row' }, // Stack on mobile
+        flexDirection: { xs: 'column', sm: 'row' },
         justifyContent: 'space-between', 
         alignItems: { xs: 'flex-start', sm: 'center' },
         width: '100%',
@@ -1671,7 +1630,7 @@ const SideRoomComponent: React.FC = () => {
             sx={{ 
               fontFamily: roomStyle.font,
               textShadow: '2px 2px 4px rgba(0,0,0,0.3)',
-              fontSize: { xs: '1.5rem', sm: `${roomStyle.headerFontSize}px` } // Smaller on mobile
+              fontSize: { xs: '1.5rem', sm: `${roomStyle.headerFontSize}px` }
             }}
           >
             {room?.name}
@@ -1681,7 +1640,7 @@ const SideRoomComponent: React.FC = () => {
             sx={{ 
               fontFamily: roomStyle.font,
               textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
-              fontSize: { xs: '0.875rem', sm: '1rem' } // Smaller on mobile
+              fontSize: { xs: '0.875rem', sm: '1rem' }
             }}
           >
             Created by {room?.ownerId === user?.uid ? 'You' : 'Anonymous'}
@@ -1696,101 +1655,117 @@ const SideRoomComponent: React.FC = () => {
           justifyContent: { xs: 'flex-start', sm: 'flex-end' },
           width: { xs: '100%', sm: 'auto' }
         }}>
-          {/* Keep existing controls but adjust their sizes */}
-          {(isRoomOwner || isMember) && (
+          {/* Owner controls */}
+          {isRoomOwner && (
             <>
-              {isRoomOwner && (
-                <>
-                  <IconButton 
-                    onClick={handleMenuClick}
-                    sx={{ 
-                      color: roomStyle.accentColor,
-                      padding: { xs: 1, sm: 1.5 } // Smaller on mobile
-                    }}
-                  >
-                    <MoreVert />
-                  </IconButton>
-                  <Button
-                    variant="outlined"
-                    startIcon={<PersonAdd />}
-                    onClick={() => setShowInviteDialog(true)}
-                    size="small" // Smaller on mobile
-                    sx={{ 
-                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                      padding: { xs: '4px 8px', sm: '6px 16px' }
-                    }}
-                  >
-                    Add Member
-                  </Button>
-                  <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
-                    <IconButton 
-                      color={room?.isLive ? "error" : "primary"} 
-                      onClick={handleGoLive}
-                      disabled={isProcessing}
-                    >
-                      <LocalFireDepartment />
-                    </IconButton>
-                  </Tooltip>
-                  {room?.isLive && (
-                    <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
-                      <IconButton
-                        onClick={isRecording ? handleStopRecording : handleStartRecording}
-                        color={isRecording ? "error" : "primary"}
-                        disabled={isProcessing}
-                      >
-                        {isRecording ? <Stop /> : <FiberManualRecord />}
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                  {/* Mobile streaming button - ONLY for room owner */}
-                  <Button
-                    variant="contained"
-                    color={isMobileStreaming ? "error" : "primary"}
-                    startIcon={isMobileStreaming ? <VideocamOff /> : <Videocam />}
-                    onClick={isMobileStreaming ? handleStopMobileStream : handleStartMobileStream}
+              <IconButton 
+                onClick={handleMenuClick}
+                sx={{ 
+                  color: roomStyle.accentColor,
+                  padding: { xs: 1, sm: 1.5 }
+                }}
+              >
+                <MoreVert />
+              </IconButton>
+              <Button
+                variant="outlined"
+                startIcon={<PersonAdd />}
+                onClick={() => setShowInviteDialog(true)}
+                size="small"
+                sx={{ 
+                  fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                  padding: { xs: '4px 8px', sm: '6px 16px' }
+                }}
+              >
+                Add Member
+              </Button>
+              <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
+                <IconButton 
+                  color={room?.isLive ? "error" : "primary"} 
+                  onClick={handleGoLive}
+                  disabled={isProcessing}
+                >
+                  <LocalFireDepartment />
+                </IconButton>
+              </Tooltip>
+              {room?.isLive && (
+                <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
+                  <IconButton
+                    onClick={isRecording ? handleStopRecording : handleStartRecording}
+                    color={isRecording ? "error" : "primary"}
                     disabled={isProcessing}
-                    sx={{ mr: 1 }}
                   >
-                    {isMobileStreaming ? "Stop Mobile Stream" : "Start Mobile Stream"}
-                  </Button>
-                </>
+                    {isRecording ? <Stop /> : <FiberManualRecord />}
+                  </IconButton>
+                </Tooltip>
               )}
+              <Button
+                variant="contained"
+                color={isMobileStreaming ? "error" : "primary"}
+                startIcon={isMobileStreaming ? <VideocamOff /> : <Videocam />}
+                onClick={isMobileStreaming ? handleStopMobileStream : handleStartMobileStream}
+                disabled={isProcessing}
+                sx={{ mr: 1 }}
+              >
+                {isMobileStreaming ? "Stop Mobile Stream" : "Start Mobile Stream"}
+              </Button>
             </>
           )}
 
-          {/* Chat and Members buttons - visible to all */}
-          <Tooltip title="Chat">
-            <IconButton 
-              onClick={() => setShowChat(!showChat)} 
-              color={showChat ? "primary" : "default"}
-              sx={{ 
-                color: 'inherit'
-              }}
-            >
-              <Chat />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Members">
-            <IconButton 
-              onClick={() => setShowMembers(!showMembers)} 
-              color={showMembers ? "primary" : "default"}
-              sx={{ 
-                color: 'inherit'
-              }}
-            >
-              <Group />
-            </IconButton>
-          </Tooltip>
+          {/* Member controls */}
+          {isMember && !isRoomOwner && (
+            <>
+              <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
+                <IconButton 
+                  color={room?.isLive ? "error" : "primary"} 
+                  onClick={handleGoLive}
+                  disabled={isProcessing}
+                >
+                  <LocalFireDepartment />
+                </IconButton>
+              </Tooltip>
+            </>
+          )}
+
+          {/* Chat and Members buttons - visible to all with access */}
+          {hasRoomAccess && (
+            <>
+              <Tooltip title="Chat">
+                <IconButton 
+                  onClick={() => setShowChat(!showChat)} 
+                  color={showChat ? "primary" : "default"}
+                  sx={{ color: 'inherit' }}
+                >
+                  <Chat />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Members">
+                <IconButton 
+                  onClick={() => setShowMembers(!showMembers)} 
+                  color={showMembers ? "primary" : "default"}
+                  sx={{ color: 'inherit' }}
+                >
+                  <Group />
+                </IconButton>
+              </Tooltip>
+            </>
+          )}
 
           {/* Join/Leave button for non-owners */}
           {!isRoomOwner && (
             <Button
-              variant={isMember ? "outlined" : "contained"}
-              color={isMember ? "error" : "primary"}
-              onClick={isMember ? handleLeaveRoom : handleJoinRoom}
+              variant="contained"
+              color={isViewer ? "error" : "primary"}
+              startIcon={isViewer ? <ExitToApp /> : <Visibility />}
+              onClick={isViewer ? handleLeaveRoom : handleJoinRoom}
               disabled={isProcessing}
+              sx={{ 
+                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                padding: { xs: '4px 8px', sm: '6px 16px' }
+              }}
             >
-              {isProcessing ? 'Processing...' : isMember ? 'Leave Room' : 'Join Room'}
+              {isProcessing ? 'Processing...' : 
+               isViewer ? 'Leave Room' : 'View Room'}
             </Button>
           )}
         </Box>
@@ -2310,50 +2285,73 @@ const SideRoomComponent: React.FC = () => {
       {(showMembers || showChat) && (
         <Box sx={{ 
           width: { xs: '100%', sm: 300 },
-          height: { xs: 'calc(100vh - 56px)', sm: '100%' }, // Adjust height for mobile
+          height: { xs: 'calc(100vh - 56px)', sm: '100%' },
           position: { xs: 'fixed', sm: 'relative' },
           right: 0,
-          top: { xs: '56px', sm: 0 }, // Account for header on mobile
+          top: { xs: '56px', sm: 0 },
           bgcolor: 'background.paper',
-          borderLeft: { xs: 0, sm: 1 }, // Remove left border on mobile
-          borderTop: { xs: 1, sm: 0 }, // Add top border on mobile
+          borderLeft: { xs: 0, sm: 1 },
+          borderTop: { xs: 1, sm: 0 },
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
           zIndex: 1200
         }}>
           {/* Panel Header */}
-          <Box 
-            sx={{ 
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              p: { xs: 1.5, sm: 2 }, // Adjust padding for mobile
-              borderBottom: 1,
-              borderColor: 'divider',
-              bgcolor: 'primary.main',
-              color: 'primary.contrastText'
-            }}
-          >
-            <Typography variant="h6" sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
-              {showChat ? 'Chat' : 'Members'}
+          <Box sx={{ 
+            p: 2, 
+            borderBottom: 1, 
+            borderColor: 'divider',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <Typography variant="h6">
+              {showChat ? 'Chat' : 'Room Info'}
             </Typography>
-            <IconButton 
-              onClick={() => showChat ? setShowChat(false) : setShowMembers(false)}
-              sx={{ 
-                color: 'inherit',
-                padding: { xs: 1, sm: 1.5 }, // Smaller padding on mobile
-                '&:hover': {
-                  bgcolor: 'rgba(255, 255, 255, 0.1)'
-                }
-              }}
-            >
+            <IconButton onClick={() => {
+              setShowChat(false);
+              setShowMembers(false);
+            }}>
               <Close />
             </IconButton>
           </Box>
-          <Box sx={{ flex: 1, overflow: 'auto' }}>
-            {showMembers && renderMemberList()}
-            {showChat && renderChat()}
+
+          {/* Panel Content */}
+          <Box sx={{ 
+            flex: 1, 
+            overflow: 'auto',
+            p: 2
+          }}>
+            {showChat ? (
+              <Box>
+                {renderChat()}
+              </Box>
+            ) : (
+              <Box>
+                <Typography variant="h6" sx={{ mb: 2 }}>Viewers</Typography>
+                <List>
+                  {room?.viewers?.map((viewer) => (
+                    <ListItem key={viewer.userId}>
+                      <ListItemAvatar>
+                        <Avatar src={viewer.avatar}>{viewer.username[0]}</Avatar>
+                      </ListItemAvatar>
+                      <ListItemText
+                        primary={viewer.username}
+                        secondary={`Joined ${viewer.joinedAt instanceof Timestamp 
+                          ? viewer.joinedAt.toDate().toLocaleDateString()
+                          : (viewer.joinedAt as Date).toLocaleDateString()}`}
+                      />
+                    </ListItem>
+                  ))}
+                  {(!room?.viewers || room.viewers.length === 0) && (
+                    <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+                      No viewers in the room
+                    </Typography>
+                  )}
+                </List>
+              </Box>
+            )}
           </Box>
         </Box>
       )}

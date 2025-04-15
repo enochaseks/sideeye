@@ -92,7 +92,7 @@ export interface RoomMember {
   userId: string;
   username: string;
   avatar: string;
-  role: 'owner' | 'admin' | 'moderator' | 'member';
+  role: 'owner' | 'admin' | 'moderator' | 'member' | 'viewer';
   joinedAt: Date | FieldValue;
 }
 

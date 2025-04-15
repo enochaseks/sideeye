@@ -45,7 +45,7 @@ interface SideRoomMember {
   userId: string;
   username: string;
   avatar: string;
-  role: 'owner' | 'member';
+  role: 'owner' | 'member' | 'viewer';
   joinedAt: Date | FieldValue;
 }
 
@@ -63,6 +63,8 @@ interface SideRoomData {
   genre?: string;
   tags?: string[];
   category?: string;
+  viewers?: SideRoomMember[];
+  viewerCount?: number;
 }
 
 const GENRES = [
@@ -126,7 +128,9 @@ const SideRoomList: React.FC = () => {
               password: data.password,
               genre: data.genre,
               tags: data.tags as string[] | undefined,
-              category: data.category
+              category: data.category,
+              viewers: data.viewers as SideRoomMember[] | undefined,
+              viewerCount: data.viewerCount || 0
             } as SideRoomData;
           });
           
@@ -211,7 +215,7 @@ const SideRoomList: React.FC = () => {
         setIsProcessing(true);
         const roomRef = doc(db, 'sideRooms', room.id);
         
-        // Add user as a member and track active users
+        // Add user as a viewer first
         await runTransaction(db, async (transaction) => {
           const roomDoc = await transaction.get(roomRef);
           if (!roomDoc.exists()) {
@@ -219,22 +223,24 @@ const SideRoomList: React.FC = () => {
           }
 
           const roomData = roomDoc.data();
-          const members = roomData.members || [];
+          const viewers = roomData.viewers || [];
           
-          // Check if user is already a member
-          const isMember = members.some((member: any) => member.userId === currentUser.uid);
+          // Check if user is already a viewer
+          const isViewer = viewers.some((viewer: any) => viewer.userId === currentUser.uid);
           
-          if (!isMember) {
-            // Add user as a member
+          if (!isViewer) {
+            // Add user as a viewer
+            const viewerData = {
+              userId: currentUser.uid,
+              username: currentUser.displayName || 'Anonymous',
+              avatar: currentUser.photoURL || '',
+              role: 'viewer',
+              joinedAt: new Date()
+            };
+
             transaction.update(roomRef, {
-              members: arrayUnion({
-                userId: currentUser.uid,
-                username: currentUser.displayName || 'Anonymous',
-                avatar: currentUser.photoURL || '',
-                role: 'member',
-                joinedAt: new Date()
-              }),
-              memberCount: increment(1),
+              viewers: arrayUnion(viewerData),
+              viewerCount: increment(1),
               activeUsers: increment(1),
               lastActive: serverTimestamp()
             });
