@@ -166,72 +166,154 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
 
     try {
+      // Validate email format before attempting login
+      const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+      if (!emailRegex.test(email)) {
+        throw new Error('auth/invalid-email');
+      }
+
       console.log('Starting login process for:', email);
       
       await setPersistence(auth, browserLocalPersistence);
       console.log('Persistence set to LOCAL');
       
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-      
-      console.log('Login successful, checking verification status...');
-      
-      const isVerified = await forceCheckEmailVerification(user);
-      console.log('Email verification status after login:', isVerified);
-      
-      if (!isVerified) {
-        console.log('Email not verified, redirecting to verification page...');
-        setError('Please verify your email before logging in.');
-        setCurrentUser(null);
-        setUser(null);
-        setUserProfile(null);
-        await firebaseSignOut(auth);
-        setLoading(false);
-        navigate('/verify-email', { replace: true });
-        return;
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        console.log('Firebase Auth login successful for user:', user.uid);
+        
+        const isVerified = await forceCheckEmailVerification(user);
+        console.log('Email verification status:', isVerified);
+        
+        if (!isVerified) {
+          console.log('Email not verified, redirecting to verification page...');
+          setError('Please verify your email before logging in.');
+          setCurrentUser(null);
+          setUser(null);
+          setUserProfile(null);
+          await firebaseSignOut(auth);
+          setLoading(false);
+          navigate('/verify-email', { replace: true });
+          return;
+        }
+        
+        // Get user profile from Firestore
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (!userDoc.exists()) {
+          console.log('User profile not found, creating default profile...');
+          // Create a default profile if it doesn't exist
+          const defaultProfile = {
+            name: user.displayName || '',
+            username: user.displayName || '',
+            email: user.email || '',
+            profilePic: user.photoURL || '',
+            bio: '',
+            location: '',
+            website: '',
+            followers: [],
+            following: [],
+            connections: [],
+            isVerified: false,
+            sourceCodeHash: null,
+            sourceCodeSetupComplete: false,
+            createdAt: Timestamp.fromDate(new Date()),
+            lastLogin: Timestamp.fromDate(new Date()),
+            dateOfBirth: Timestamp.fromDate(new Date(2000, 0, 1)), // Default date
+            settings: {
+              theme: 'light',
+              notifications: true,
+              privacy: 'public',
+            },
+            preferences: {
+              theme: 'light',
+              language: 'en',
+              notifications: true,
+              emailNotifications: true,
+              pushNotifications: true,
+            }
+          };
+          
+          await setDoc(doc(db, 'users', user.uid), defaultProfile);
+          console.log('Created default user profile');
+          
+          // Get the newly created profile
+          const newUserDoc = await getDoc(doc(db, 'users', user.uid));
+          const profileData = newUserDoc.data() as UserProfile;
+          
+          // Check if source code setup is complete
+          if (!profileData.sourceCodeSetupComplete) {
+            console.log('Source code setup not complete, redirecting to setup...');
+            setTempUserForSourceCode(user);
+            setLoading(false);
+            navigate('/setup-source-code', { replace: true });
+            return;
+          }
+          
+          // Set user states and complete login
+          setCurrentUser(user);
+          setUser({
+            ...user,
+            ...profileData,
+            uid: user.uid
+          });
+          setUserProfile(profileData);
+          setLoading(false);
+          
+          // Navigate to feed after successful login
+          console.log('Login complete, redirecting to feed...');
+          navigate('/', { replace: true });
+        } else {
+          const profileData = userDoc.data() as UserProfile;
+          console.log('Retrieved user profile:', profileData);
+          
+          // Check if source code setup is complete
+          if (!profileData.sourceCodeSetupComplete) {
+            console.log('Source code setup not complete, redirecting to setup...');
+            setTempUserForSourceCode(user);
+            setLoading(false);
+            navigate('/setup-source-code', { replace: true });
+            return;
+          }
+          
+          // Set user states and complete login
+          setCurrentUser(user);
+          setUser({
+            ...user,
+            ...profileData,
+            uid: user.uid
+          });
+          setUserProfile(profileData);
+          setLoading(false);
+          
+          // Navigate to feed after successful login
+          console.log('Login complete, redirecting to feed...');
+          navigate('/', { replace: true });
+        }
+      } catch (firebaseError: any) {
+        console.error('Firebase Auth error:', firebaseError);
+        if (firebaseError.code === 'auth/invalid-credential') {
+          throw new Error('Invalid email or password. Please check your credentials and try again.');
+        }
+        throw firebaseError;
       }
-      
-      // Get user profile from Firestore
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      if (!userDoc.exists()) {
-        throw new Error('User profile not found');
-      }
-      
-      const profileData = userDoc.data() as UserProfile;
-      
-      // Check if source code setup is complete
-      if (!profileData.sourceCodeSetupComplete) {
-        console.log('Source code setup not complete, redirecting to setup...');
-        setTempUserForSourceCode(user);
-        setLoading(false);
-        navigate('/setup-source-code', { replace: true });
-        return;
-      }
-      
-      // Set user states and complete login
-      setCurrentUser(user);
-      setUser(user);
-      setUserProfile(profileData);
-      setLoading(false);
-      
-      // Navigate to feed after successful login
-      console.log('Login complete, redirecting to feed...');
-      navigate('/', { replace: true });
-      
     } catch (error: any) {
       console.error("Login function error:", error);
       let errorMessage = 'An error occurred during login.';
       
-      if (error.code === 'auth/invalid-credential') {
-        errorMessage = 'Invalid email or password.';
-      } else if (error.code === 'auth/user-not-found') {
+      if (error.code === 'auth/invalid-credential' || error.message === 'auth/invalid-credential') {
+        errorMessage = 'Invalid email or password. Please check your credentials and try again.';
+      } else if (error.code === 'auth/user-not-found' || error.message === 'auth/user-not-found') {
         errorMessage = 'No account found with this email.';
-      } else if (error.code === 'auth/wrong-password') {
+      } else if (error.code === 'auth/wrong-password' || error.message === 'auth/wrong-password') {
         errorMessage = 'Incorrect password.';
-      } else if (error.code === 'auth/too-many-requests') {
+      } else if (error.code === 'auth/too-many-requests' || error.message === 'auth/too-many-requests') {
         errorMessage = 'Too many failed attempts. Please try again later.';
-      } else if (error.code === 'auth/network-request-failed') {
+      } else if (error.code === 'auth/network-request-failed' || error.message === 'auth/network-request-failed') {
         errorMessage = 'Network error. Please check your connection.';
+      } else if (error.code === 'auth/invalid-email' || error.message === 'auth/invalid-email') {
+        errorMessage = 'Invalid email address. Please check the format.';
+      } else if (error.message === 'User profile not found') {
+        errorMessage = 'User profile not found. Please contact support.';
       }
       
       setError(errorMessage);
@@ -316,46 +398,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log("Verification email sent to:", user.email);
 
       // 4. Create a basic user profile in Firestore with sourceCodeSetupComplete=false
-      try {
-        if (db) {
-          const defaultPreferences = {
+      if (db) {
+        const defaultPreferences = {
+          theme: 'light',
+          language: 'en',
+          notifications: true,
+          emailNotifications: true,
+          pushNotifications: true,
+        };
+
+        const newProfileData = {
+          name: username,
+          username: username,
+          email: email || '',
+          profilePic: user.photoURL || '',
+          bio: '',
+          location: '',
+          website: '',
+          followers: [],
+          following: [],
+          connections: [],
+          isVerified: false,
+          sourceCodeHash: null,
+          sourceCodeSetupComplete: false,
+          createdAt: Timestamp.fromDate(new Date()),
+          lastLogin: Timestamp.fromDate(new Date()),
+          dateOfBirth: dateOfBirth,
+          settings: {
             theme: 'light',
-            language: 'en',
             notifications: true,
-            emailNotifications: true,
-            pushNotifications: true,
-          };
-  
-          const newProfileData = {
-            name: username,
-            username: username,
-            email: email || '',
-            profilePic: user.photoURL || '',
-            bio: '',
-            location: '',
-            website: '',
-            followers: [],
-            following: [],
-            connections: [],
-            isVerified: false,
-            sourceCodeHash: null,
-            sourceCodeSetupComplete: false,
-            createdAt: Timestamp.fromDate(new Date()),
-            lastLogin: Timestamp.fromDate(new Date()),
-            dateOfBirth: dateOfBirth,
-            settings: {
-              theme: 'light',
-              notifications: true,
-              privacy: 'public',
-            },
-            preferences: defaultPreferences
-          };
-          
-          await setDoc(doc(db, 'users', user.uid), newProfileData);
-          console.log("Basic user profile created in Firestore");
-        }
-      } catch (firestoreError) {
-        console.error("Error creating user profile in Firestore:", firestoreError);
+            privacy: 'public',
+          },
+          preferences: defaultPreferences
+        };
+        
+        await setDoc(doc(db, 'users', user.uid), newProfileData);
+        console.log("Basic user profile created in Firestore");
       }
 
       // Set the user state to trigger onAuthStateChanged

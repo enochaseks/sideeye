@@ -235,76 +235,50 @@ service cloud.firestore {
       // Allow read access to all authenticated users
       allow read: if isAuthenticated();
       
-      // Allow updates if:
-      // 1. User is authenticated AND
-      // 2. Only updating allowed fields (members, memberCount, activeUsers, lastActive)
-      allow update: if isAuthenticated() &&
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['members', 'memberCount', 'activeUsers', 'lastActive']);
-      
-      // Allow create if authenticated
+      // Allow create if authenticated and setting themselves as owner
       allow create: if isAuthenticated() && 
         request.resource.data.ownerId == request.auth.uid;
       
-      // Allow update/delete if owner
-      allow update, delete: if isAuthenticated() && isOwner(resource.data.ownerId);
+      // Allow updates if:
+      // 1. User is the owner OR
+      // 2. User is a member updating allowed fields OR
+      // 3. User is joining the room (not at max capacity)
+      allow update: if isAuthenticated() && (
+        // Owner can update any field
+        resource.data.ownerId == request.auth.uid ||
+        
+        // Members can update specific fields
+        (resource.data.members.hasAny([request.auth.uid]) &&
+         request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members', 'memberCount', 'activeUsers', 'lastActive', 'messages', 'presence'])) ||
+        
+        // New members can join if not at capacity
+        (!resource.data.members.hasAny([request.auth.uid]) &&
+         (!('maxMembers' in resource.data) || resource.data.memberCount < resource.data.maxMembers) &&
+         request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members', 'memberCount', 'activeUsers', 'lastActive']))
+      ) && (
+        // Ensure atomic updates for activeUsers
+        !('activeUsers' in request.resource.data) ||
+        request.resource.data.activeUsers == resource.data.activeUsers + 1 ||
+        request.resource.data.activeUsers == resource.data.activeUsers - 1
+      );
       
-      // Messages subcollection - allow read for all authenticated users
+      // Allow delete if owner
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      // Messages subcollection
       match /messages/{messageId} {
-        allow read: if isAuthenticated();
-        // Only allow members to write messages
-        allow create, update, delete: if isAuthenticated() && 
-          exists(/databases/$(database)/documents/sideRooms/$(roomId)/members/$(request.auth.uid));
+        allow read: if isAuthenticated() && isDocumentMember(get(/databases/$(database)/documents/sideRooms/$(roomId)));
+        allow create: if isAuthenticated() && isDocumentMember(get(/databases/$(database)/documents/sideRooms/$(roomId)));
+        allow update, delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
       }
-      
-      // Members subcollection
-      match /members/{userId} {
-        allow read: if isAuthenticated();
-        allow write: if isAuthenticated() && request.auth.uid == userId;
-      }
-      
-      // Presence subcollection - allow read for all authenticated users
+
+      // Presence subcollection
       match /presence/{userId} {
-        allow read: if isAuthenticated();
-        // Only allow users to update their own presence
-        allow write: if isAuthenticated() && request.auth.uid == userId;
-      }
-      
-      // Banned users subcollection
-      match /bannedUsers/{userId} {
-        allow read: if isAuthenticated() && (isRoomMember(roomId) || isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId));
-        allow create, update, delete: if isAuthenticated() && 
-          isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId);
-      }
-
-      // Live sessions subcollection
-      match /liveSessions/{sessionId} {
-        allow read: if isAuthenticated() && (isRoomMember(roomId) || isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId));
-        allow create, update: if isAuthenticated() && (isRoomMember(roomId) || isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId));
-        allow delete: if isAuthenticated() && isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId);
-      }
-
-      // Stream status subcollection
-      match /streamStatus/{statusId} {
-        allow read: if true;
-        allow write: if isAuthenticated();
-      }
-
-      // Invitations subcollection
-      match /invitations/{invitationId} {
-        allow read: if isAuthenticated() && (
-          request.auth.uid == resource.data.userId ||
-          isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId)
-        );
-        allow create: if isAuthenticated() && (isRoomMember(roomId) || isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId));
-        allow update: if isAuthenticated() && (
-          request.auth.uid == resource.data.userId ||
-          isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId)
-        );
-        allow delete: if isAuthenticated() && (
-          request.auth.uid == resource.data.userId ||
-          isOwner(get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId)
-        );
+        allow read: if isAuthenticated() && isDocumentMember(get(/databases/$(database)/documents/sideRooms/$(roomId)));
+        allow create, update: if isAuthenticated() && request.auth.uid == userId;
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
       }
     }
 

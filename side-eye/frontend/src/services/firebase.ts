@@ -26,30 +26,41 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 console.log('Initializing Firebase app');
 
-// Initialize Performance Monitoring
+// Initialize Performance Monitoring with MUI component tracking disabled
 const perf = getPerformance(app);
+perf.instrumentationEnabled = false;
 
 // Initialize Firestore with settings for better performance
 const db = initializeFirestore(app, {
   cacheSizeBytes: CACHE_SIZE_UNLIMITED,
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true
 });
 
-// Enable offline persistence
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code == 'failed-precondition') {
-    // Multiple tabs open, persistence can only be enabled in one tab at a time
-    console.warn('Firebase persistence failed - multiple tabs open');
-  } else if (err.code == 'unimplemented') {
-    // The current browser doesn't support persistence
-    console.warn('Firebase persistence not supported');
+// Enable offline persistence with better error handling
+const initializePersistence = async () => {
+  try {
+    await enableIndexedDbPersistence(db);
+    console.log('Firebase persistence enabled successfully');
+  } catch (err: any) {
+    if (err.code === 'failed-precondition') {
+      console.warn('Firebase persistence failed - multiple tabs open');
+      // Try enabling multi-tab persistence instead
+      try {
+        await enableMultiTabIndexedDbPersistence(db);
+        console.log('Multi-tab persistence enabled successfully');
+      } catch (multiTabErr) {
+        console.warn('Multi-tab persistence also failed:', multiTabErr);
+      }
+    } else if (err.code === 'unimplemented') {
+      console.warn('Firebase persistence not supported in this browser');
+    } else {
+      console.error('Error enabling Firebase persistence:', err);
+    }
   }
-});
+};
 
-// Enable multi-tab persistence where supported
-enableMultiTabIndexedDbPersistence(db).catch((err) => {
-  console.warn('Multi-tab persistence not supported:', err);
-});
+// Call the initialization function
+initializePersistence().catch(console.error);
 
 // Initialize Auth
 const auth = getAuth(app);

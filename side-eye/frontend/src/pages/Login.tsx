@@ -45,6 +45,14 @@ const Login: React.FC = () => {
       setStatusMessage({type: 'error', message: 'Email is required'});
       return;
     }
+    
+    // Email format validation
+    const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+    if (!emailRegex.test(email.trim())) {
+      setStatusMessage({type: 'error', message: 'Please enter a valid email address'});
+      return;
+    }
+    
     if (!password) {
       setStatusMessage({type: 'error', message: 'Password is required'});
       return;
@@ -54,29 +62,33 @@ const Login: React.FC = () => {
       setLocalLoading(true);
       setStatusMessage({type: 'info', message: 'Logging in...'});
       
-      await login(email, password);
+      await login(email.trim(), password);
       
       // Login success message - though this might not show if redirected quickly
       setStatusMessage({type: 'success', message: 'Login successful! Redirecting...'});
       
-      // Note: No need to navigate here - onAuthStateChanged will handle that
     } catch (err: any) {
       console.error('Login component caught error:', err);
       // Display user-friendly error message
-      if (err.code === 'auth/too-many-requests') {
+      if (err.code === 'auth/too-many-requests' || err.message === 'auth/too-many-requests') {
         setStatusMessage({
           type: 'error', 
           message: 'Too many failed login attempts. Please try again later or reset your password.'
         });
-      } else if (err.code === 'auth/invalid-credential') {
+      } else if (err.code === 'auth/invalid-credential' || err.message === 'auth/invalid-credential') {
         setStatusMessage({
           type: 'error', 
           message: 'Invalid email or password. Please try again.'
         });
+      } else if (err.code === 'auth/invalid-email' || err.message === 'auth/invalid-email') {
+        setStatusMessage({
+          type: 'error',
+          message: 'Invalid email address. Please check the format.'
+        });
       } else {
         setStatusMessage({
           type: 'error',
-          message: 'Login failed. Please try again.'
+          message: err.message || 'Login failed. Please try again.'
         });
       }
     } finally {
@@ -89,7 +101,12 @@ const Login: React.FC = () => {
   return (
     <Container maxWidth="xs">
       <Paper elevation={0} sx={{ mt: 8, p: 4 }}>
-        <Typography component="h1" variant="h5" align="center" gutterBottom>
+        <Typography 
+          component="h1" 
+          variant="h5" 
+          align="center" 
+          sx={{ mb: 2 }}
+        >
           Login to Side Eye
         </Typography>
         <Box component="form" onSubmit={handleLogin} noValidate sx={{ mt: 1 }}>

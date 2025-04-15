@@ -858,9 +858,7 @@ const SideRoomComponent: React.FC = () => {
     try {
       setIsProcessing(true);
       const roomRef = doc(db, 'sideRooms', roomId);
-      const userRoomsRef = collection(db, 'users', user.uid, 'sideRooms');
 
-      // Add user as a member and track active users
       await runTransaction(db, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (!roomDoc.exists()) {
@@ -868,48 +866,34 @@ const SideRoomComponent: React.FC = () => {
         }
 
         const roomData = roomDoc.data();
-        const members = roomData.members || [];
         
         // Check if user is already a member
-        const isMember = members.some((member: any) => member.userId === user.uid);
-        
-        if (!isMember) {
-          // Add user as a member
-          transaction.update(roomRef, {
-            members: arrayUnion({
-              userId: user.uid,
-              username: user.displayName || 'Anonymous',
-              avatar: user.photoURL || '',
-              role: 'member',
-              joinedAt: serverTimestamp()
-            }),
-            memberCount: increment(1),
-            activeUsers: increment(1),
-            lastActive: serverTimestamp()
-          });
-
-          // Add room to user's sideRooms collection
-          const userRoomRef = doc(userRoomsRef, roomId);
-          transaction.set(userRoomRef, {
-            roomId: roomId,
-            name: roomData.name,
-            description: roomData.description,
-            role: 'member',
-            joinedAt: serverTimestamp(),
-            lastActive: serverTimestamp(),
-            memberCount: roomData.memberCount,
-            isPrivate: roomData.isPrivate,
-            isOwner: false,
-            thumbnailUrl: roomData.style?.thumbnailUrl || null,
-            category: roomData.category || 'General'
-          });
-        } else {
-          // Just update active users count
-          transaction.update(roomRef, {
-            activeUsers: increment(1),
-            lastActive: serverTimestamp()
-          });
+        const isMember = roomData.members?.some((member: RoomMember) => member.userId === user.uid);
+        if (isMember) {
+          throw new Error('You are already a member of this room');
         }
+
+        // Check max members limit
+        if (roomData.maxMembers && roomData.memberCount >= roomData.maxMembers) {
+          throw new Error('Room has reached maximum capacity');
+        }
+
+        // Create new member object
+        const newMember: RoomMember = {
+          userId: user.uid,
+          username: user.displayName || 'Anonymous',
+          avatar: user.photoURL || '',
+          role: 'member',
+          joinedAt: serverTimestamp()
+        };
+
+        // Update room data
+        transaction.update(roomRef, {
+          members: arrayUnion(newMember),
+          memberCount: increment(1),
+          activeUsers: increment(1),
+          lastActive: serverTimestamp()
+        });
       });
 
       if (mountedRef.current) {
@@ -1001,26 +985,40 @@ const SideRoomComponent: React.FC = () => {
       const roomRef = doc(db, 'sideRooms', roomId);
       const userRoomRef = doc(db, 'users', user.uid, 'sideRooms', roomId);
 
+      // First, get the current room data
+      const roomDoc = await getDoc(roomRef);
+      if (!roomDoc.exists()) {
+        throw new Error('Room not found');
+      }
+
+      const roomData = roomDoc.data() as SideRoom;
+      
+      // Find the exact member object to remove
+      const memberToRemove = roomData.members?.find(member => member.userId === user.uid);
+      if (!memberToRemove) {
+        throw new Error('You are not a member of this room');
+      }
+
+      // Use a transaction for atomic operations
       await runTransaction(db, async (transaction) => {
-        const roomDoc = await transaction.get(roomRef);
-        if (!roomDoc.exists()) {
+        // Get the current room data within the transaction
+        const currentRoomDoc = await transaction.get(roomRef);
+        if (!currentRoomDoc.exists()) {
           throw new Error('Room not found');
         }
 
-        const roomData = roomDoc.data() as SideRoom;
-        const memberToRemove: RoomMember = {
-          userId: user.uid,
-          username: user.displayName || 'Anonymous',
-          avatar: user.photoURL || '',
-          role: 'member',
-          joinedAt: new Date()
-        };
+        const currentRoomData = currentRoomDoc.data() as SideRoom;
+        
+        // Verify the member still exists
+        const currentMember = currentRoomData.members?.find(member => member.userId === user.uid);
+        if (!currentMember) {
+          throw new Error('You are not a member of this room');
+        }
 
-        // Update both members and memberCount atomically while preserving styles
+        // Update room members and count
         transaction.update(roomRef, {
-          members: arrayRemove(memberToRemove),
-          memberCount: Math.max(0, (roomData.memberCount || 0) - 1),
-          style: roomData.style || roomStyle, // Preserve existing styles
+          members: arrayRemove(currentMember),
+          memberCount: Math.max(0, (currentRoomData.memberCount || 0) - 1),
           lastActive: serverTimestamp()
         });
 
@@ -1037,13 +1035,18 @@ const SideRoomComponent: React.FC = () => {
         }, 100);
       }
     } catch (err) {
-      handleError(err, 'Failed to leave room');
+      console.error('Error leaving room:', err);
+      if (err instanceof Error) {
+        toast.error(err.message);
+      } else {
+        toast.error('Failed to leave room');
+      }
     } finally {
       if (mountedRef.current) {
         setIsProcessing(false);
       }
     }
-  }, [room, user, roomId, isProcessing, navigate, handleError, roomStyle]);
+  }, [room, user, roomId, isProcessing, navigate]);
 
   const handleGoLive = async () => {
     if (!room || !user || !roomId) return;

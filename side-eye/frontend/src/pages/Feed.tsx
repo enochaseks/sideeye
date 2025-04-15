@@ -708,7 +708,7 @@ const Feed: React.FC = () => {
                       <Typography variant="subtitle2" component="span">
                         {comment.authorName}
                       </Typography>
-                      <Typography variant="body2" sx={{ ml: 1 }}>
+                      <Typography variant="body2" component="span" sx={{ ml: 1 }}>
                         {comment.content}
                       </Typography>
                     </Box>
@@ -729,7 +729,7 @@ const Feed: React.FC = () => {
                   )}
                 </Box>
               )}
-              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+              <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
                 <IconButton 
                   edge="end" 
                   aria-label="likes"
@@ -739,7 +739,7 @@ const Feed: React.FC = () => {
                   }}
                 >
                   <FavoriteIcon color={post.likedBy?.includes(currentUser?.uid || '') ? "error" : "inherit"} />
-                  <Typography variant="body2" sx={{ ml: 1 }}>
+                  <Typography variant="body2" component="span" sx={{ ml: 1 }}>
                     {post.likes || 0}
                   </Typography>
                 </IconButton>
@@ -752,7 +752,7 @@ const Feed: React.FC = () => {
                   }}
                 >
                   <RepeatIcon color={post.isRepost && post.repostedById === currentUser?.uid ? "primary" : "inherit"} />
-                  <Typography variant="body2" sx={{ ml: 1 }}>
+                  <Typography variant="body2" component="span" sx={{ ml: 1 }}>
                     {post.reposts || 0}
                   </Typography>
                 </IconButton>
@@ -766,7 +766,7 @@ const Feed: React.FC = () => {
                   }}
                 >
                   <CommentIcon />
-                  <Typography variant="body2" sx={{ ml: 1 }}>
+                  <Typography variant="body2" component="span" sx={{ ml: 1 }}>
                     {post.comments?.length || 0}
                   </Typography>
                 </IconButton>

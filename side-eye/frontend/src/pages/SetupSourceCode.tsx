@@ -11,7 +11,7 @@ import {
   Paper
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, arrayUnion, getDoc } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
 import { db } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
@@ -108,12 +108,20 @@ const SetupSourceCode: React.FC = () => {
         throw new Error('Invalid device ID');
       }
 
-      await updateDoc(doc(db, 'users', activeUser.uid), {
+      // Update the user document with source code and device info
+      const userRef = doc(db, 'users', activeUser.uid);
+      await updateDoc(userRef, {
         sourceCodeHash: hashedCode,
         sourceCodeSetupComplete: true,
         registeredDevices: arrayUnion(deviceId),
         lastUpdated: serverTimestamp()
       });
+
+      // Verify the update was successful
+      const updatedDoc = await getDoc(userRef);
+      if (!updatedDoc.exists() || !updatedDoc.data().sourceCodeSetupComplete) {
+        throw new Error('Failed to update source code settings');
+      }
 
       // Also store in local storage to confirm it persisted
       localStorage.setItem('deviceId', deviceId);
