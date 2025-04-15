@@ -278,12 +278,8 @@ const SideRoomComponent: React.FC = () => {
   const mountedRef = useRef(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const isRoomOwner = useMemo(() => {
-    return room?.ownerId === user?.uid;
-  }, [room?.ownerId, user?.uid]);
-
-  // Add a function to check if user is a member
-  const isMember = user && room?.members?.some(member => member.userId === user.uid);
+  const isRoomOwner = useMemo(() => room?.ownerId === user?.uid, [room?.ownerId, user?.uid]);
+  const isMember = useMemo(() => room?.members?.some(member => member.userId === user?.uid) || false, [room?.members, user?.uid]);
 
   // Combine owner and member check
   const isRoomOwnerOrMember = isRoomOwner || isMember;
@@ -309,138 +305,123 @@ const SideRoomComponent: React.FC = () => {
   }, []);
 
   const setupMessagesListener = () => {
-    if (!user || !roomId) return;
+    if (!user || !roomId || !db) return;
 
-    const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-    const q = query(messagesRef, orderBy('timestamp', 'asc'));
-
-    messagesUnsubscribe.current = onSnapshot(q, (snapshot) => {
-      const newMessages = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          userId: data.userId,
-          username: data.username,
-          avatar: data.avatar,
-          content: data.content,
-          timestamp: data.timestamp,
-          profilePicture: data.profilePicture || data.avatar || '',
-          displayName: data.displayName || data.username || ''
-        };
+    try {
+      const q = query(collection(db, 'sideRooms', roomId, 'messages'), orderBy('timestamp', 'asc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const newMessages = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            userId: data.userId,
+            username: data.username || data.displayName || 'Anonymous',
+            avatar: data.photoURL || data.avatar || '',
+            content: data.content,
+            timestamp: data.timestamp,
+            photoURL: data.photoURL || data.avatar || '',
+            displayName: data.displayName || data.username || 'Anonymous'
+          };
+        });
+        setMessages(newMessages);
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, (error) => {
+        console.error('Error fetching messages:', error);
+        setError('Failed to load messages');
       });
-      setMessages(newMessages);
-      // Scroll to bottom when new messages arrive
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
 
-      // Get room reference for updating active users
-      const roomRef = doc(db, 'sideRooms', roomId);
-      
-      // Update room's active users count based on actual online users
-      const onlineUsers = presence.filter(user => user.isOnline).length;
-      updateDoc(roomRef, {
-        activeUsers: onlineUsers,
-        lastActive: serverTimestamp()
-      });
-    });
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('Error setting up message listener:', error);
+      setError('Failed to set up message listener');
+    }
   };
 
   const setupPresenceListener = () => {
-    if (!user || !roomId) return;
+    if (!user || !roomId || !db) return;
 
-    const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-    const userPresenceRef = doc(presenceRef, user.uid);
-    const roomRef = doc(db, 'sideRooms', roomId);
+    try {
+      const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
+      const userPresenceRef = doc(presenceRef, user.uid);
 
-    // Set user's presence
-    setDoc(userPresenceRef, {
-      userId: user.uid,
-      username: user.displayName || 'Anonymous',
-      avatar: user.photoURL || '',
-      lastSeen: serverTimestamp(),
-      isOnline: true
-    }, { merge: true });
+      // Set user's presence with proper user data
+      setDoc(userPresenceRef, {
+        userId: user.uid,
+        username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+        avatar: user.photoURL || '',
+        displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+        photoURL: user.photoURL || '',
+        lastSeen: serverTimestamp(),
+        isOnline: true,
+        timestamp: serverTimestamp()
+      }, { merge: true });
 
-    // Update room's active users count
-    updateDoc(roomRef, {
-      activeUsers: increment(1),
-      lastActive: serverTimestamp()
-    });
+      // Set up cleanup on unmount or disconnect
+      const cleanup = async () => {
+        try {
+          await deleteDoc(userPresenceRef);
+          const roomRef = doc(db, 'sideRooms', roomId);
+          await updateDoc(roomRef, {
+            activeUsers: increment(-1),
+            lastActive: serverTimestamp()
+          });
+        } catch (error) {
+          console.error('Error in presence cleanup:', error);
+        }
+      };
 
-    // Set up cleanup on unmount or disconnect
-    const cleanup = async () => {
-      try {
-        // Update user's presence status
-        await updateDoc(userPresenceRef, {
-          isOnline: false,
-          lastSeen: serverTimestamp()
-        });
+      // Handle page unload
+      window.addEventListener('beforeunload', cleanup);
 
-        // Decrement active users count
-        await updateDoc(roomRef, {
-          activeUsers: increment(-1),
-          lastActive: serverTimestamp()
-        });
-      } catch (error) {
-        console.error('Error in presence cleanup:', error);
-      }
-    };
+      // Handle visibility change
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          cleanup();
+        } else {
+          setDoc(userPresenceRef, {
+            userId: user.uid,
+            username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+            avatar: user.photoURL || '',
+            displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+            photoURL: user.photoURL || '',
+            lastSeen: serverTimestamp(),
+            isOnline: true,
+            timestamp: serverTimestamp()
+          }, { merge: true });
+        }
+      };
 
-    // Handle page unload
-    window.addEventListener('beforeunload', cleanup);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Handle visibility change
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        cleanup();
-      } else {
-        setDoc(userPresenceRef, {
-          isOnline: true,
-          lastSeen: serverTimestamp()
-        }, { merge: true });
+      // Set up presence listener
+      const unsubscribe = onSnapshot(presenceRef, (snapshot) => {
+        const presenceData = snapshot.docs.map(doc => ({
+          userId: doc.id,
+          username: doc.data().displayName || doc.data().username || 'Anonymous',
+          avatar: doc.data().photoURL || doc.data().avatar || '',
+          lastSeen: doc.data().lastSeen?.toDate() || new Date(),
+          isOnline: true
+        }));
+        setPresence(presenceData);
+
+        // Update room's active users count based on actual presence documents
+        const roomRef = doc(db, 'sideRooms', roomId);
         updateDoc(roomRef, {
-          activeUsers: increment(1),
+          activeUsers: presenceData.length,
           lastActive: serverTimestamp()
         });
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    presenceUnsubscribe.current = onSnapshot(presenceRef, (snapshot) => {
-      const presenceData = snapshot.docs.map(doc => ({
-        userId: doc.id,
-        username: doc.data().username || '',
-        avatar: doc.data().avatar || '',
-        lastSeen: doc.data().lastSeen?.toDate() || new Date(),
-        isOnline: doc.data().isOnline || false
-      })) as PresenceData[];
-      setPresence(presenceData);
-
-      // Get room reference for updating active users
-      const roomRef = doc(db, 'sideRooms', roomId);
-      
-      // Update room's active users count based on actual online users
-      const onlineUsers = presenceData.filter(user => user.isOnline).length;
-      updateDoc(roomRef, {
-        activeUsers: onlineUsers,
-        lastActive: serverTimestamp()
       });
-    }, (error) => {
-      console.error('Error listening to presence:', error);
-      if (error.code === 'permission-denied') {
-        setError('You need to be a member of this room to view presence');
-      }
-    });
 
-    // Return cleanup function
-    return () => {
-      window.removeEventListener('beforeunload', cleanup);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      cleanup();
-      if (presenceUnsubscribe.current) {
-        presenceUnsubscribe.current();
-      }
-    };
+      return () => {
+        window.removeEventListener('beforeunload', cleanup);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        cleanup();
+        unsubscribe();
+      };
+    } catch (error) {
+      console.error('Error setting up presence listener:', error);
+      setError('Failed to set up presence listener');
+    }
   };
 
   useEffect(() => {
@@ -465,8 +446,8 @@ const SideRoomComponent: React.FC = () => {
             return {
               id: doc.id,
               userId: data.userId,
-              username: data.username,
-              avatar: data.avatar,
+              username: data.username || data.displayName || 'Anonymous',
+              avatar: data.photoURL || data.avatar || '',
               content: data.content,
               timestamp: data.timestamp,
               photoURL: data.photoURL || data.avatar || '',
@@ -855,12 +836,12 @@ const SideRoomComponent: React.FC = () => {
       const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
       const messageData = {
         userId: user.uid,
-        username: user.displayName || 'Anonymous',
+        username: user.displayName || user.email?.split('@')[0] || 'Anonymous', // Fallback to email username
         avatar: user.photoURL || '',
         content: newMessage.trim(),
         timestamp: serverTimestamp(),
         photoURL: user.photoURL || '',
-        displayName: user.displayName || 'Anonymous'
+        displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous' // Consistent fallback
       };
 
       await addDoc(messagesRef, messageData);
@@ -1154,14 +1135,39 @@ const SideRoomComponent: React.FC = () => {
   const handleStartMobileStream = async () => {
     if (!db || !user || !roomId) return;
 
+    // Add access control check
+    if (!isRoomOwner && !room?.members?.some(member => member.userId === user.uid)) {
+      toast.error('Only room owners and members can start mobile streaming');
+      return;
+    }
+
     try {
       setIsProcessing(true);
       
-      // Create a new Mux live stream through your backend
+      // First, check if there's already an active stream
+      const roomRef = doc(db, 'sideRooms', roomId);
+      const roomDoc = await getDoc(roomRef);
+      const roomData = roomDoc.data();
+
+      if (roomData?.isMobileStreaming && roomData?.mobileStreamerId !== user.uid) {
+        toast.error('Another user is already streaming');
+        setIsProcessing(false);
+        return;
+      }
+
+      // For mobile devices, show the streaming form directly
+      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobileDevice) {
+        setShowMobileStreamDialog(true);
+        setIsProcessing(false);
+        return;
+      }
+
+      // Create a new Mux live stream
       const response = await fetch('http://localhost:3001/api/mux/create-stream', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           roomId,
@@ -1176,8 +1182,7 @@ const SideRoomComponent: React.FC = () => {
 
       const { streamKey, playbackId, streamId } = await response.json();
 
-      // Update room with mobile streaming status
-      const roomRef = doc(db, 'sideRooms', roomId);
+      // Update room with streaming status
       await updateDoc(roomRef, {
         isMobileStreaming: true,
         mobileStreamKey: streamKey,
@@ -1186,15 +1191,16 @@ const SideRoomComponent: React.FC = () => {
         lastActive: serverTimestamp()
       });
 
-      // Show QR code/instructions dialog
+      // Set local state
       setMobileStreamUrl(`https://stream.mux.com/${playbackId}`);
       setStreamKey(streamKey);
       setIsMobileStreaming(true);
       setShowMobileStreamDialog(true);
-      toast.success('Mobile streaming ready');
+
+      toast.success('Mobile streaming setup complete');
     } catch (error) {
       console.error('Error starting mobile stream:', error);
-      toast.error('Failed to start mobile stream');
+      toast.error('Failed to start mobile stream. Please check your connection and try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -1202,6 +1208,18 @@ const SideRoomComponent: React.FC = () => {
 
   const handleStopMobileStream = async () => {
     if (!db || !user || !roomId) return;
+
+    // Add access control check
+    if (!isRoomOwner && !room?.members?.some(member => member.userId === user.uid)) {
+      toast.error('Only room owners and members can stop mobile streaming');
+      return;
+    }
+
+    // Add check to ensure only the streamer can stop their own stream
+    if (room?.mobileStreamerId && room.mobileStreamerId !== user.uid) {
+      toast.error('Only the current streamer can stop the stream');
+      return;
+    }
 
     try {
       setIsProcessing(true);
@@ -1415,21 +1433,7 @@ const SideRoomComponent: React.FC = () => {
       background: roomStyle.headerGradient ? roomStyle.headerColor : roomStyle.headerColor,
       minHeight: 'auto',
       display: 'flex',
-      flexDirection: 'column',
-      ...(roomStyle.glitterEffect && {
-        '&::before': {
-          content: '""',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\' viewBox=\'0 0 100 100\'%3E%3Cg fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.2\'%3E%3Cpath d=\'M11 0h2v2h-2zM13 2h2v2h-2zM15 4h2v2h-2zM17 6h2v2h-2zM19 8h2v2h-2zM21 10h2v2h-2zM23 12h2v2h-2zM25 14h2v2h-2zM27 16h2v2h-2zM29 18h2v2h-2zM31 20h2v2h-2zM33 22h2v2h-2zM35 24h2v2h-2zM37 26h2v2h-2zM39 28h2v2h-2zM41 30h2v2h-2zM43 32h2v2h-2zM45 34h2v2h-2zM47 36h2v2h-2zM49 38h2v2h-2zM51 40h2v2h-2zM53 42h2v2h-2zM55 44h2v2h-2zM57 46h2v2h-2zM59 48h2v2h-2zM61 50h2v2h-2zM63 52h2v2h-2zM65 54h2v2h-2zM67 56h2v2h-2zM69 58h2v2h-2zM71 60h2v2h-2zM73 62h2v2h-2zM75 64h2v2h-2zM77 66h2v2h-2zM79 68h2v2h-2zM81 70h2v2h-2zM83 72h2v2h-2zM85 74h2v2h-2zM87 76h2v2h-2zM89 78h2v2h-2zM91 80h2v2h-2zM93 82h2v2h-2zM95 84h2v2h-2zM97 86h2v2h-2zM99 88h2v2h-2zM101 90h2v2h-2zM103 92h2v2h-2zM105 94h2v2h-2zM107 96h2v2h-2zM109 98h2v2h-2z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")',
-          opacity: 0.5,
-          zIndex: 1,
-          pointerEvents: 'none'
-        }
-      })
+      flexDirection: 'column'
     }}>
       <Box sx={{ 
         position: 'relative',
@@ -1439,6 +1443,7 @@ const SideRoomComponent: React.FC = () => {
         alignItems: 'center',
         color: roomStyle.textColor
       }}>
+        {/* Room info */}
         <Box>
           <Typography 
             variant="h4" 
@@ -1473,71 +1478,99 @@ const SideRoomComponent: React.FC = () => {
             </Typography>
           </Box>
         </Box>
+
+        {/* Controls */}
         <Box sx={{ display: 'flex', gap: 1 }}>
-          {isRoomOwner && (
-            <IconButton 
-              onClick={handleMenuClick}
-              sx={{ color: roomStyle.accentColor }}
-            >
-              <MoreVert />
-            </IconButton>
-          )}
-          {/* Add Member button - only visible to room owner */}
-          {isRoomOwner && (
-            <Button
-              variant="outlined"
-              startIcon={<PersonAdd />}
-              onClick={() => setShowInviteDialog(true)}
-            >
-              Add Member
-            </Button>
-          )}
-          {/* Mobile Streaming button - visible to all members */}
+          {/* Room owner and member controls */}
           {(isRoomOwner || isMember) && (
-            <Button
-              variant="contained"
-              color={isMobileStreaming ? "error" : "primary"}
-              startIcon={isMobileStreaming ? <VideocamOff /> : <Videocam />}
-              onClick={isMobileStreaming ? handleStopMobileStream : handleStartMobileStream}
-              disabled={isProcessing}
-              sx={{ mr: 1 }}
-            >
-              {isMobileStreaming ? "Stop Mobile Stream" : "Start Mobile Stream"}
-            </Button>
+            <>
+              {/* Room owner controls */}
+              {isRoomOwner && (
+                <>
+                  <IconButton 
+                    onClick={handleMenuClick}
+                    sx={{ color: roomStyle.accentColor }}
+                  >
+                    <MoreVert />
+                  </IconButton>
+                  <Button
+                    variant="outlined"
+                    startIcon={<PersonAdd />}
+                    onClick={() => setShowInviteDialog(true)}
+                  >
+                    Add Member
+                  </Button>
+                  <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
+                    <IconButton 
+                      color={room?.isLive ? "error" : "primary"} 
+                      onClick={handleGoLive}
+                      disabled={isProcessing}
+                    >
+                      <LocalFireDepartment />
+                    </IconButton>
+                  </Tooltip>
+                  {room?.isLive && (
+                    <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
+                      <IconButton
+                        onClick={isRecording ? handleStopRecording : handleStartRecording}
+                        color={isRecording ? "error" : "primary"}
+                        disabled={isProcessing}
+                      >
+                        {isRecording ? <Stop /> : <FiberManualRecord />}
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {/* Mobile streaming button - ONLY for room owner */}
+                  <Button
+                    variant="contained"
+                    color={isMobileStreaming ? "error" : "primary"}
+                    startIcon={isMobileStreaming ? <VideocamOff /> : <Videocam />}
+                    onClick={isMobileStreaming ? handleStopMobileStream : handleStartMobileStream}
+                    disabled={isProcessing}
+                    sx={{ mr: 1 }}
+                  >
+                    {isMobileStreaming ? "Stop Mobile Stream" : "Start Mobile Stream"}
+                  </Button>
+                </>
+              )}
+            </>
           )}
+
+          {/* Chat and Members buttons - visible to all */}
           <Tooltip title="Chat">
-            <IconButton onClick={() => setShowChat(!showChat)} color={showChat ? "primary" : "default"}>
+            <IconButton 
+              onClick={() => setShowChat(!showChat)} 
+              color={showChat ? "primary" : "default"}
+              sx={{ 
+                color: 'inherit'
+              }}
+            >
               <Chat />
             </IconButton>
           </Tooltip>
-          {/* Only show Go Live button to room owner */}
-          {isRoomOwner && (
-            <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
-              <IconButton 
-                color={room?.isLive ? "error" : "primary"} 
-                onClick={handleGoLive}
-                disabled={isProcessing}
-              >
-                <LocalFireDepartment />
-              </IconButton>
-            </Tooltip>
-          )}
-          {isRoomOwner && room?.isLive && (
-            <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
-              <IconButton
-                onClick={isRecording ? handleStopRecording : handleStartRecording}
-                color={isRecording ? "error" : "primary"}
-                disabled={isProcessing}
-              >
-                {isRecording ? <Stop /> : <FiberManualRecord />}
-              </IconButton>
-            </Tooltip>
-          )}
           <Tooltip title="Members">
-            <IconButton onClick={() => setShowMembers(!showMembers)} color={showMembers ? "primary" : "default"}>
+            <IconButton 
+              onClick={() => setShowMembers(!showMembers)} 
+              color={showMembers ? "primary" : "default"}
+              sx={{ 
+                color: 'inherit'
+              }}
+            >
               <Group />
             </IconButton>
           </Tooltip>
+
+          {/* Join/Leave button for non-owners */}
+          {!isRoomOwner && (
+            <Button
+              variant={isMember ? "outlined" : "contained"}
+              color={isMember ? "error" : "primary"}
+              onClick={isMember ? handleLeaveRoom : handleJoinRoom}
+              disabled={isProcessing}
+            >
+              {isProcessing ? 'Processing...' : isMember ? 'Leave Room' : 'Join Room'}
+            </Button>
+          )}
         </Box>
       </Box>
     </Box>
@@ -1652,6 +1685,7 @@ const SideRoomComponent: React.FC = () => {
     </List>
   );
 
+  // Update the renderChat function to remove its header since we now have a mobile header
   const renderChat = () => (
     <Box sx={{ 
       display: 'flex',
@@ -1659,14 +1693,7 @@ const SideRoomComponent: React.FC = () => {
       height: '100%',
       overflow: 'hidden'
     }}>
-      <Box sx={{ 
-        p: 2,
-        borderBottom: 1,
-        borderColor: 'divider'
-      }}>
-        <Typography variant="h6">Chat</Typography>
-      </Box>
-      
+      {/* Remove the old header since we now have the mobile header */}
       <Box sx={{ 
         flex: 1,
         overflow: 'auto',
@@ -1685,19 +1712,21 @@ const SideRoomComponent: React.FC = () => {
               bgcolor: message.userId === user?.uid ? 'primary.light' : 'background.paper',
               p: 2,
               borderRadius: 2,
-              boxShadow: 1
+              boxShadow: 1,
+              alignSelf: message.userId === user?.uid ? 'flex-end' : 'flex-start',
+              maxWidth: '80%'
             }}
           >
             <Avatar 
-              src={message.avatar || message.photoURL} 
-              alt={message.username || message.displayName}
+              src={message.photoURL || message.avatar} 
+              alt={message.displayName || message.username}
               sx={{ 
                 width: 40, 
                 height: 40,
                 border: theme => message.userId === user?.uid ? `2px solid ${theme.palette.primary.main}` : 'none'
               }}
             >
-              {(!message.avatar && !message.photoURL) && (message.username || message.displayName || 'A').charAt(0).toUpperCase()}
+              {(!message.photoURL && !message.avatar) && (message.displayName || message.username || 'A').charAt(0).toUpperCase()}
             </Avatar>
             <Box sx={{ flex: 1 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1743,23 +1772,32 @@ const SideRoomComponent: React.FC = () => {
         }}
       >
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <InputBase
+          <TextField
             fullWidth
             placeholder="Type a message..."
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             sx={{ 
-              px: 2,
-              py: 1,
-              bgcolor: 'action.hover',
-              borderRadius: 2
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 2
+              }
             }}
           />
           <IconButton 
             type="submit" 
             color="primary" 
             disabled={!newMessage.trim()}
-            sx={{ flexShrink: 0 }}
+            sx={{ 
+              bgcolor: 'primary.main',
+              color: 'white',
+              '&:hover': {
+                bgcolor: 'primary.dark'
+              },
+              '&.Mui-disabled': {
+                bgcolor: 'action.disabledBackground',
+                color: 'action.disabled'
+              }
+            }}
           >
             <Send />
           </IconButton>
@@ -1890,6 +1928,111 @@ const SideRoomComponent: React.FC = () => {
     </Dialog>
   );
 
+  // Update the mobile streaming dialog to show different content based on device type
+  const renderMobileStreamDialog = () => {
+    const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+    return (
+      <Dialog
+        open={showMobileStreamDialog}
+        onClose={() => setShowMobileStreamDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Mobile Streaming Setup</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            {isMobileDevice ? (
+              <>
+                <Typography variant="body1" gutterBottom>
+                  Click the button below to start streaming:
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  fullWidth
+                  onClick={() => window.open(`https://broadcast.mux.com/?streamKey=${streamKey}`, '_blank')}
+                  sx={{ mt: 2 }}
+                >
+                  Start Broadcasting
+                </Button>
+              </>
+            ) : (
+              <>
+                <Typography variant="body1" gutterBottom>
+                  To stream from your mobile device:
+                </Typography>
+                <Typography variant="body2" color="text.secondary" paragraph>
+                  1. Open your mobile browser and go to: <Link href="https://broadcast.mux.com" target="_blank" rel="noopener noreferrer">broadcast.mux.com</Link>
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Stream Key"
+                    value={streamKey}
+                    InputProps={{
+                      readOnly: true,
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton onClick={() => {
+                            navigator.clipboard.writeText(streamKey);
+                            toast.success('Stream key copied to clipboard');
+                          }}>
+                            <ContentCopy />
+                          </IconButton>
+                        </InputAdornment>
+                      )
+                    }}
+                    variant="outlined"
+                  />
+                </Box>
+                <Typography variant="body2" color="text.secondary">
+                  2. Enter the stream key shown above
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  3. Allow camera and microphone access when prompted
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  4. Click "Start Broadcasting"
+                </Typography>
+              </>
+            )}
+
+            {mobileStreamUrl && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Stream URL (for viewers):
+                </Typography>
+                <TextField
+                  fullWidth
+                  value={mobileStreamUrl}
+                  InputProps={{
+                    readOnly: true,
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton onClick={() => {
+                          navigator.clipboard.writeText(mobileStreamUrl);
+                          toast.success('Stream URL copied to clipboard');
+                        }}>
+                          <ContentCopy />
+                        </IconButton>
+                      </InputAdornment>
+                    )
+                  }}
+                  variant="outlined"
+                  size="small"
+                />
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowMobileStreamDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+    );
+  };
+
   return (
     <Box sx={{ 
       display: 'flex', 
@@ -1955,6 +2098,29 @@ const SideRoomComponent: React.FC = () => {
           flexDirection: 'column',
           zIndex: 1200
         }}>
+          {/* Add mobile exit button */}
+          <Box 
+            sx={{ 
+              display: { xs: 'flex', sm: 'none' },
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              p: 2,
+              borderBottom: 1,
+              borderColor: 'divider',
+              bgcolor: 'primary.main',
+              color: 'primary.contrastText'
+            }}
+          >
+            <Typography variant="h6">
+              {showChat ? 'Chat' : 'Members'}
+            </Typography>
+            <IconButton 
+              onClick={() => showChat ? setShowChat(false) : setShowMembers(false)}
+              sx={{ color: 'inherit' }}
+            >
+              <Close />
+            </IconButton>
+          </Box>
           {showMembers && renderMemberList()}
           {showChat && renderChat()}
         </Box>
@@ -1962,89 +2128,7 @@ const SideRoomComponent: React.FC = () => {
 
       {renderInviteDialog()}
 
-      {/* Mobile Streaming Dialog */}
-      <Dialog
-        open={showMobileStreamDialog}
-        onClose={() => setShowMobileStreamDialog(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Mobile Streaming Setup</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="body1" gutterBottom>
-              To stream from your mobile device:
-            </Typography>
-            <Typography variant="body2" color="text.secondary" paragraph>
-              1. Open your mobile browser and go to: <Link href="https://broadcast.mux.com" target="_blank" rel="noopener noreferrer">broadcast.mux.com</Link>
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <TextField
-                fullWidth
-                label="Stream Key"
-                value={streamKey}
-                InputProps={{
-                  readOnly: true,
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton onClick={() => {
-                        navigator.clipboard.writeText(streamKey);
-                        toast.success('Stream key copied to clipboard');
-                      }}>
-                        <ContentCopy />
-                      </IconButton>
-                    </InputAdornment>
-                  )
-                }}
-                variant="outlined"
-              />
-            </Box>
-            <Typography variant="body2" color="text.secondary">
-              2. Enter the stream key shown above
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              3. Allow camera and microphone access when prompted
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              4. Click "Start Broadcasting"
-            </Typography>
-            {mobileStreamUrl && (
-              <Box sx={{ mt: 2 }}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Stream URL (for viewers):
-                </Typography>
-                <TextField
-                  fullWidth
-                  value={mobileStreamUrl}
-                  InputProps={{
-                    readOnly: true,
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton onClick={() => {
-                          navigator.clipboard.writeText(mobileStreamUrl);
-                          toast.success('Stream URL copied to clipboard');
-                        }}>
-                          <ContentCopy />
-                        </IconButton>
-                      </InputAdornment>
-                    )
-                  }}
-                  variant="outlined"
-                  size="small"
-                />
-              </Box>
-            )}
-            <Box sx={{ mt: 2 }}>
-              <Typography variant="caption" color="text.secondary">
-                Note: Make sure your mobile device has a stable internet connection for the best streaming experience.
-              </Typography>
-            </Box>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowMobileStreamDialog(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
+      {renderMobileStreamDialog()}
 
       {/* Add Style Dialog */}
       <Dialog 
