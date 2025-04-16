@@ -99,6 +99,7 @@ import MuxStream from '../Stream/MuxStream';
 import RoomForm from './RoomForm';
 import _ from 'lodash';
 import ViewerPanel from './ViewerPanel';
+import { createLiveStream, deleteLiveStream, fetchWithCORS } from '../../api/mux';
 
 interface Message {
   id: string;
@@ -1249,57 +1250,30 @@ const SideRoomComponent: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      
-      // First, check if there's already an active stream
-      const roomRef = doc(db, 'sideRooms', roomId);
-      const roomDoc = await getDoc(roomRef);
-      const roomData = roomDoc.data();
-
-      if (roomData?.isMobileStreaming && roomData?.mobileStreamerId !== currentUser.uid) {
-        toast.error('Another user is already streaming');
-        setIsProcessing(false);
-        return;
-      }
-
-      // For mobile devices, show the streaming form directly
-      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      if (isMobileDevice) {
-        setShowMobileStreamDialog(true);
-        setIsProcessing(false);
-        return;
-      }
 
       // Create a new Mux live stream
-      const response = await fetch(`${API_URL}/api/mux/create-stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          roomId,
-          userId: currentUser.uid
-        })
-      });
+      const data = await createLiveStream(roomId, currentUser.uid);
+      console.log('Stream created successfully:', data);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create stream');
+      if (!data.stream_key || !data.playback_ids?.[0]?.id) {
+        throw new Error('Invalid stream data received from server');
       }
 
-      const { streamKey, playbackId, streamId } = await response.json();
+      // Get room reference
+      const roomRef = doc(db, 'sideRooms', roomId);
 
       // Update room with streaming status
       await updateDoc(roomRef, {
         isMobileStreaming: true,
-        mobileStreamKey: streamKey,
-        mobilePlaybackId: playbackId,
+        mobileStreamKey: data.stream_key,
+        mobilePlaybackId: data.playback_ids[0].id,
         mobileStreamerId: currentUser.uid,
         lastActive: serverTimestamp()
       });
 
       // Set local state
-      setMobileStreamUrl(`https://stream.mux.com/${playbackId}`);
-      setStreamKey(streamKey);
+      setMobileStreamUrl(`https://stream.mux.com/${data.playback_ids[0].id}`);
+      setStreamKey(data.stream_key);
       setIsMobileStreaming(true);
       setShowMobileStreamDialog(true);
 
@@ -1318,25 +1292,22 @@ const SideRoomComponent: React.FC = () => {
     try {
       setIsProcessing(true);
 
-      // Delete the Mux live stream through your backend
-      const response = await fetch(`${API_URL}/api/mux/delete-stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          roomId,
-          userId: currentUser.uid
-        })
-      });
+      // Get room reference
+      const roomRef = doc(db, 'sideRooms', roomId);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to stop stream');
+      // Get the current stream ID from the room
+      const roomDoc = await getDoc(roomRef);
+      const roomData = roomDoc.data() as SideRoom;
+      const streamId = roomData?.mobilePlaybackId;
+
+      if (!streamId) {
+        throw new Error('No active stream found');
       }
 
+      // Delete the Mux live stream
+      await deleteLiveStream(streamId);
+
       // Update room status
-      const roomRef = doc(db, 'sideRooms', roomId);
       await updateDoc(roomRef, {
         isMobileStreaming: false,
         mobileStreamKey: null,

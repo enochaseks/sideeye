@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Button, Typography, Alert, CircularProgress } from '@mui/material';
 import '@mux/mux-player';
+import { createLiveStream, deleteLiveStream, fetchWithCORS } from '../../api/mux';
 
 declare global {
   namespace JSX {
@@ -51,15 +52,13 @@ const MuxStream: React.FC<MuxStreamProps> = ({ isOwner, roomId }) => {
 
   const checkStreamStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/streams/${roomId}/status`);
+      const response = await fetchWithCORS(`${API_URL}/api/streams/${roomId}/status`);
       if (response.status === 404) {
         if (isOwner) {
-          // Only owners should create new streams
           console.log('No stream found, creating new stream...');
           await initializeStream();
           return;
         } else {
-          // For viewers, just show that stream is not available
           console.log('No stream found for this room');
           setError('Stream is not available. Please wait for the owner to start streaming.');
           return;
@@ -76,7 +75,6 @@ const MuxStream: React.FC<MuxStreamProps> = ({ isOwner, roomId }) => {
       if (data.streamId) {
         setStreamId(data.streamId);
       }
-      // Clear any previous errors if the check was successful
       setError(null);
     } catch (err) {
       console.error('Error checking stream status:', err);
@@ -95,34 +93,19 @@ const MuxStream: React.FC<MuxStreamProps> = ({ isOwner, roomId }) => {
       }
 
       console.log('Creating stream for room:', roomId);
-      const response = await fetch(`${API_URL}/api/create-stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ roomId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Server error:', errorData);
-        throw new Error(errorData.details || errorData.error || `Server error: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await createLiveStream(roomId, 'owner');
       console.log('Stream created successfully:', data);
 
-      if (!data.streamKey || !data.playbackId) {
+      if (!data.stream_key || !data.playback_ids?.[0]?.id) {
         console.error('Invalid stream data:', data);
         throw new Error('Invalid stream data received from server');
       }
 
-      setStreamId(data.streamId);
-      setStreamKey(data.streamKey);
-      setPlaybackId(data.playbackId);
-      setIsStreamActive(false); // Start as inactive until streaming begins
+      setStreamId(data.id);
+      setStreamKey(data.stream_key);
+      setPlaybackId(data.playback_ids[0].id);
+      setIsStreamActive(false);
 
-      // Start checking stream status periodically
       if (checkStreamInterval.current) {
         clearInterval(checkStreamInterval.current);
       }
@@ -159,8 +142,12 @@ const MuxStream: React.FC<MuxStreamProps> = ({ isOwner, roomId }) => {
       if (!streamId) {
         throw new Error('No stream ID available');
       }
-      // In a real application, you would stop the stream
+      
+      await deleteLiveStream(streamId);
       setIsStreamActive(false);
+      setStreamId('');
+      setStreamKey('');
+      setPlaybackId('');
     } catch (err) {
       console.error('Error stopping stream:', err);
       setError('Failed to stop streaming. Please try again.');
