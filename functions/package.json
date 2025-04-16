@@ -3,7 +3,10 @@
   "description": "Cloud Functions for Firebase",
   "scripts": {
     "lint": "eslint .",
+<<<<<<< HEAD
     "serve": "firebase emulators:start --only functions",
+=======
+>>>>>>> 29b1d30 (Pushed to the wrong repo)
     "shell": "firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
