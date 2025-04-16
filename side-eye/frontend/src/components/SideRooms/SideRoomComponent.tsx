@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { db, auth } from '../../services/firebase';
 import { 
@@ -61,7 +61,7 @@ import {
   Slider,
   Stack,
   InputAdornment,
-  Link,
+  Link as MuiLink,
   Select,
   FormControl,
   InputLabel,
@@ -91,7 +91,8 @@ import {
   FiberManualRecord,
   Stop,
   ContentCopy,
-  Visibility
+  Visibility,
+  Share as ShareIcon
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember } from '../../types/index';
 import MuxStream from '../Stream/MuxStream';
@@ -235,7 +236,7 @@ declare module '../../types/index' {
 
 const SideRoomComponent: React.FC = () => {
   const { roomId } = useParams();
-  const { user, loading: authLoading } = useAuth();
+  const { currentUser, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [room, setRoom] = useState<SideRoom | null>(null);
   const [loading, setLoading] = useState(true);
@@ -282,16 +283,22 @@ const SideRoomComponent: React.FC = () => {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const MESSAGES_PER_PAGE = 25;
 
+  // Add new viewer-specific state
+  const [showViewerControls, setShowViewerControls] = useState(false);
+  const [viewerMode, setViewerMode] = useState<'chat' | 'stream' | 'info'>('stream');
+
+  // Add state for share dialog
+  const [showShareDialog, setShowShareDialog] = useState(false);
+
   const mountedRef = useRef(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const intersectionObserver = useRef<IntersectionObserver | null>(null);
 
-  const isRoomOwner = useMemo(() => room?.ownerId === user?.uid, [room?.ownerId, user?.uid]);
-  const isMember = useMemo(() => room?.members?.some(member => member.userId === user?.uid) || false, [room?.members, user?.uid]);
-  const isViewer = useMemo(() => room?.viewers?.some(viewer => viewer.userId === user?.uid) || false, [room?.viewers, user?.uid]);
+  const isRoomOwner = useMemo(() => room?.ownerId === currentUser?.uid, [room?.ownerId, currentUser?.uid]);
+  const isViewer = useMemo(() => room?.viewers?.some(viewer => viewer.userId === currentUser?.uid) || false, [room?.viewers, currentUser?.uid]);
 
-  // Combine owner, member, and viewer checks
-  const hasRoomAccess = isRoomOwner || isMember || isViewer;
+  // Combine owner and viewer checks
+  const hasRoomAccess = isRoomOwner || isViewer;
 
   // Cleanup on unmount
   useEffect(() => {
@@ -314,7 +321,7 @@ const SideRoomComponent: React.FC = () => {
   }, []);
 
   const setupMessagesListener = () => {
-    if (!user || !roomId || !db) return;
+    if (!currentUser || !roomId || !db) return;
 
     try {
       const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
@@ -418,30 +425,34 @@ const SideRoomComponent: React.FC = () => {
   // Optimize presence updates with debouncing
   const updatePresence = useCallback(
     _.debounce(async () => {
-      if (!user || !roomId || !db) return;
-
+      if (!currentUser?.uid || !roomId) {
+        console.error('Presence update aborted: currentUser.uid or roomId is missing', { currentUser, roomId });
+        return;
+      }
       try {
-        const presenceRef = doc(db, 'sideRooms', roomId, 'presence', user.uid);
-        await setDoc(presenceRef, {
-          userId: user.uid,
-          username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-          avatar: user.photoURL || '',
+        const presenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
+        const presenceData = {
+          userId: currentUser.uid,
+          username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+          avatar: currentUser.photoURL || '',
           lastSeen: serverTimestamp(),
           isOnline: true,
-          role: isRoomOwner ? 'owner' : isMember ? 'member' : 'viewer'
-        }, { merge: true });
+          role: isRoomOwner ? 'owner' : 'viewer'
+        };
+        console.log('Writing presence (debounced):', { path: presenceRef.path, data: presenceData });
+        await setDoc(presenceRef, presenceData, { merge: true });
       } catch (err) {
-        console.error('Error updating presence:', err);
+        console.error('Presence Firestore write failed (debounced):', err, { currentUser, roomId });
       }
     }, 1000),
-    [user, roomId, isRoomOwner, isMember]
+    [currentUser, roomId, isRoomOwner]
   );
 
   // Add presence cleanup
   useEffect(() => {
-    if (!user || !roomId || !db) return;
+    if (!currentUser || !roomId || !db) return;
 
-    const presenceRef = doc(db, 'sideRooms', roomId, 'presence', user.uid);
+    const presenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
     const cleanup = async () => {
       try {
         await setDoc(presenceRef, {
@@ -466,7 +477,7 @@ const SideRoomComponent: React.FC = () => {
       window.removeEventListener('beforeunload', cleanup);
       cleanup();
     };
-  }, [user, roomId]);
+  }, [currentUser, roomId]);
 
   // Add local message cache
   const [localMessageCache, setLocalMessageCache] = useState<Map<string, Message>>(new Map());
@@ -489,7 +500,7 @@ const SideRoomComponent: React.FC = () => {
   // Optimize message sending with optimistic updates
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomId || !user || !newMessage.trim()) return;
+    if (!roomId || !currentUser || !newMessage.trim()) return;
 
     const messageContent = newMessage.trim();
     setNewMessage('');
@@ -497,13 +508,13 @@ const SideRoomComponent: React.FC = () => {
     const tempId = `temp-${Date.now()}`;
     const tempMessage: Message = {
       id: tempId,
-      userId: user.uid,
-      username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-      avatar: user.photoURL || '',
+      userId: currentUser.uid,
+      username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+      avatar: currentUser.photoURL || '',
       content: messageContent,
       timestamp: new Date(),
-      photoURL: user.photoURL || '',
-      displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous'
+      photoURL: currentUser.photoURL || '',
+      displayName: currentUser.displayName || currentUser.email?.split('@')[0] || ''
     };
 
     // Optimistic update
@@ -512,13 +523,16 @@ const SideRoomComponent: React.FC = () => {
     try {
       const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
       const messageData = {
-        userId: user.uid,
-        username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-        avatar: user.photoURL || '',
+        userId: currentUser.uid,
+        username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+        avatar: currentUser.photoURL || '',
         content: messageContent,
         timestamp: serverTimestamp(),
-        photoURL: user.photoURL || '',
-        displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous'
+        photoURL: currentUser.photoURL || '',
+        displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+        // Add required fields for security rules
+        ownerId: room?.ownerId,
+        viewers: room?.viewers?.map(v => v.userId) || []
       };
 
       const docRef = await addDoc(messagesRef, messageData);
@@ -541,100 +555,93 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const setupPresenceListener = () => {
-    if (!user || !roomId || !db) return;
+    if (!currentUser || !roomId || !db) return;
 
     try {
       const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-      const userPresenceRef = doc(presenceRef, user.uid);
+      const userPresenceRef = doc(presenceRef, currentUser.uid);
       const roomRef = doc(db, 'sideRooms', roomId);
 
-      // Set user's presence with proper user data
-      const setupPresence = async () => {
+      // Single source of truth for presence updates
+      let isUpdating = false;
+      let lastUpdateTime = 0;
+      const UPDATE_INTERVAL = 5000; // 5 seconds between updates
+
+      const updatePresence = async () => {
+        if (!currentUser?.uid || !roomId) {
+          console.error('Presence update aborted: currentUser.uid or roomId is missing', { currentUser, roomId });
+          return;
+        }
+        if (isUpdating) return;
+        const now = Date.now();
+        if (now - lastUpdateTime < UPDATE_INTERVAL) return;
+        isUpdating = true;
+        lastUpdateTime = now;
         try {
-          // First, get the current presence count
+          // Use updateDoc instead of transaction to avoid version conflicts
           const presenceSnapshot = await getDocs(presenceRef);
           const currentActiveUsers = presenceSnapshot.docs.length;
-
-          await runTransaction(db, async (transaction) => {
-            const roomDoc = await transaction.get(roomRef);
-            if (!roomDoc.exists()) {
-              throw new Error('Room not found');
-            }
-
-            // Set presence document
-            transaction.set(userPresenceRef, {
-              userId: user.uid,
-              username: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-              avatar: user.photoURL || '',
-              displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-              photoURL: user.photoURL || '',
+          // Update user's presence
+          const presenceData = {
+              userId: currentUser.uid,
+              username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+              avatar: currentUser.photoURL || '',
+              displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+              photoURL: currentUser.photoURL || '',
               lastSeen: serverTimestamp(),
-              isOnline: true,
-              timestamp: serverTimestamp()
-            }, { merge: true });
-
+            isOnline: true
+          };
+          // console.log('Writing presence (updateDoc):', { path: userPresenceRef.path, data: presenceData });
+          await setDoc(userPresenceRef, presenceData, { merge: true });
             // Update room's active users count
-            transaction.update(roomRef, {
-              activeUsers: currentActiveUsers + 1,
+          await updateDoc(roomRef, {
+            activeUsers: currentActiveUsers,
               lastActive: serverTimestamp()
-            });
           });
         } catch (error) {
-          console.error('Error in presence setup:', error);
-          // Retry on version mismatch
-          if (error instanceof FirestoreError && error.code === 'failed-precondition') {
-            await setupPresence();
-          }
+          console.error('Presence Firestore write failed (updateDoc):', error, { currentUser, roomId });
+        } finally {
+          isUpdating = false;
         }
       };
 
-      setupPresence();
-
-      // Set up cleanup on unmount or disconnect
+      // Set up cleanup
       const cleanup = async () => {
         try {
-          // First, get the current presence count
+          // Remove user's presence
+          await deleteDoc(userPresenceRef);
+          // Update room's active users count
           const presenceSnapshot = await getDocs(presenceRef);
           const currentActiveUsers = presenceSnapshot.docs.length;
-
-          await runTransaction(db, async (transaction) => {
-            const roomDoc = await transaction.get(roomRef);
-            if (!roomDoc.exists()) return;
-
-            // Delete presence document
-            transaction.delete(userPresenceRef);
-
-            // Update room's active users count
-            transaction.update(roomRef, {
+          await updateDoc(roomRef, {
               activeUsers: Math.max(0, currentActiveUsers - 1),
               lastActive: serverTimestamp()
-            });
           });
         } catch (error) {
-          console.error('Error in presence cleanup:', error);
-          // Retry on version mismatch
-          if (error instanceof FirestoreError && error.code === 'failed-precondition') {
-            await cleanup();
-          }
+          console.error('Error in cleanup:', error);
         }
       };
 
-      // Handle page unload
-      window.addEventListener('beforeunload', cleanup);
+      // Set up periodic presence updates
+      const updateInterval = setInterval(updatePresence, UPDATE_INTERVAL);
 
-      // Handle visibility change
-      const handleVisibilityChange = async () => {
+      // Handle page visibility changes
+      const handleVisibilityChange = () => {
         if (document.visibilityState === 'hidden') {
-          await cleanup();
+          cleanup();
         } else {
-          await setupPresence();
+          updatePresence();
         }
       };
 
       document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('beforeunload', cleanup);
+
+      // Initial presence setup
+      updatePresence();
 
       // Set up presence listener
-      const unsubscribe = onSnapshot(presenceRef, async (snapshot) => {
+      const unsubscribe = onSnapshot(presenceRef, (snapshot) => {
         const presenceData = snapshot.docs.map(doc => ({
           userId: doc.id,
           username: doc.data().displayName || doc.data().username || 'Anonymous',
@@ -643,20 +650,12 @@ const SideRoomComponent: React.FC = () => {
           isOnline: true
         }));
         setPresence(presenceData);
-
-        try {
-          await updateDoc(roomRef, {
-            activeUsers: presenceData.length,
-            lastActive: serverTimestamp()
-          });
-        } catch (error) {
-          console.error('Error updating room active users:', error);
-        }
       });
 
       return () => {
-        window.removeEventListener('beforeunload', cleanup);
+        clearInterval(updateInterval);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('beforeunload', cleanup);
         cleanup();
         unsubscribe();
       };
@@ -671,7 +670,7 @@ const SideRoomComponent: React.FC = () => {
       return;
     }
 
-    if (!user) {
+    if (!currentUser) {
       navigate('/login');
       return;
     }
@@ -692,22 +691,21 @@ const SideRoomComponent: React.FC = () => {
               setRoom(roomData);
               setLoading(false);
 
-              // Check if user is a member, viewer, or owner
-              const isMember = roomData.members?.some(member => member.userId === user.uid);
-              const isViewer = roomData.viewers?.some(viewer => viewer.userId === user.uid);
-              const isOwner = roomData.ownerId === user.uid;
+              // Check if user is a viewer or owner
+              const isViewer = roomData.viewers?.some(viewer => viewer.userId === currentUser.uid);
+              const isOwner = roomData.ownerId === currentUser.uid;
 
-              if (isMember || isViewer || isOwner) {
+              if (isViewer || isOwner) {
                 // If user has access, set up listeners
                 setupMessagesListener();
                 setupPresenceListener();
               } else {
-                // If not a member or viewer, unsubscribe from any existing listeners
+                // If not a viewer, unsubscribe from any existing listeners
                 if (messagesUnsubscribe) messagesUnsubscribe();
                 if (presenceUnsubscribe) presenceUnsubscribe();
                 messagesUnsubscribe = undefined;
                 presenceUnsubscribe = undefined;
-                setError('You need to be a member or viewer of this room to access its content');
+                setError('You need to be a viewer of this room to access its content');
               }
             } else {
               setError('Room not found');
@@ -720,79 +718,10 @@ const SideRoomComponent: React.FC = () => {
             setLoading(false);
           }
         );
-      } catch (err) {
-        console.error('Error setting up room listener:', err);
-        setError('Failed to setup room listener');
+      } catch (error) {
+        console.error('Error setting up room listener:', error);
+        setError('Failed to load room');
         setLoading(false);
-      }
-    };
-
-    const setupMessagesListener = () => {
-      try {
-        if (!roomId || !db) return;
-        
-        const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-        const q = query(messagesRef, orderBy('timestamp', 'asc'));
-        
-        messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-          const newMessages = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              userId: data.userId,
-              username: data.username || data.displayName || 'Anonymous',
-              avatar: data.photoURL || data.avatar || '',
-              content: data.content,
-              timestamp: data.timestamp,
-              photoURL: data.photoURL || data.avatar || '',
-              displayName: data.displayName || data.username || 'Anonymous'
-            };
-          });
-          setMessages(newMessages);
-          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        }, (error) => {
-          console.error('Error listening to messages:', error);
-          if (error instanceof FirestoreError && error.code === 'permission-denied') {
-            setError('You need to be a member or viewer of this room to view messages');
-          }
-        });
-      } catch (err) {
-        console.error('Error setting up messages listener:', err);
-      }
-    };
-
-    const setupPresenceListener = () => {
-      try {
-        if (!roomId || !db) return;
-        
-        const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-        presenceUnsubscribe = onSnapshot(presenceRef,
-          (snapshot) => {
-            const presenceData = snapshot.docs.map(doc => ({
-              ...doc.data(),
-              lastSeen: doc.data().lastSeen?.toDate() || new Date()
-            })) as PresenceData[];
-            setPresence(presenceData);
-
-            // Get room reference for updating active users
-            const roomRef = doc(db, 'sideRooms', roomId);
-            
-            // Update room's active users count based on actual online users
-            const onlineUsers = presenceData.filter(user => user.isOnline).length;
-            updateDoc(roomRef, {
-              activeUsers: onlineUsers,
-              lastActive: serverTimestamp()
-            });
-          },
-          (error) => {
-            console.error('Error listening to presence:', error);
-            if (error instanceof FirestoreError && error.code === 'permission-denied') {
-              setError('You need to be a member or viewer of this room to view presence');
-            }
-          }
-        );
-      } catch (err) {
-        console.error('Error setting up presence listener:', err);
       }
     };
 
@@ -803,14 +732,14 @@ const SideRoomComponent: React.FC = () => {
       if (messagesUnsubscribe) messagesUnsubscribe();
       if (presenceUnsubscribe) presenceUnsubscribe();
     };
-  }, [user, authLoading, roomId, navigate]);
+  }, [authLoading, currentUser, roomId, db, navigate]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleJoinRoom = useCallback(async () => {
-    if (!room || !user || !roomId || isProcessing) return;
+    if (!room || !currentUser || !roomId || isProcessing) return;
 
     try {
       setIsProcessing(true);
@@ -825,8 +754,8 @@ const SideRoomComponent: React.FC = () => {
         const roomData = roomDoc.data();
         
         // Check if user is already a member or viewer
-        const isMember = roomData.members?.some((member: RoomMember) => member.userId === user.uid);
-        const isViewer = roomData.viewers?.some((viewer: RoomMember) => viewer.userId === user.uid);
+        const isMember = roomData.members?.some((member: RoomMember) => member.userId === currentUser.uid);
+        const isViewer = roomData.viewers?.some((viewer: RoomMember) => viewer.userId === currentUser.uid);
         
         if (isMember || isViewer) {
           throw new Error('You are already a member or viewer of this room');
@@ -834,9 +763,9 @@ const SideRoomComponent: React.FC = () => {
 
         // Add as viewer by default
         const newViewer: RoomMember = {
-          userId: user.uid,
-          username: user.displayName || 'Anonymous',
-          avatar: user.photoURL || '',
+          userId: currentUser.uid,
+          username: currentUser.displayName || 'Anonymous',
+          avatar: currentUser.photoURL || '',
           role: 'viewer' as const,
           joinedAt: serverTimestamp()
         };
@@ -850,7 +779,7 @@ const SideRoomComponent: React.FC = () => {
         });
 
         // Create notification for the user
-        const notificationRef = doc(collection(db, 'users', user.uid, 'notifications'));
+        const notificationRef = doc(collection(db, 'users', currentUser.uid, 'notifications'));
         await setDoc(notificationRef, {
           type: 'room_join',
           roomId,
@@ -880,11 +809,11 @@ const SideRoomComponent: React.FC = () => {
         setIsProcessing(false);
       }
     }
-  }, [room, user, roomId, isProcessing, db, setShowPasswordDialog, setIsProcessing]);
+  }, [room, currentUser, roomId, isProcessing, db, setShowPasswordDialog, setIsProcessing]);
 
   // Add new function for room owners to add members
   const handleAddMember = async (userId: string) => {
-    if (!room || !user || !roomId || user.uid !== room.ownerId) return;
+    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) return;
 
     try {
       setIsProcessing(true);
@@ -940,8 +869,8 @@ const SideRoomComponent: React.FC = () => {
         type: 'room_invite',
         roomId,
         roomName: room.name,
-        invitedBy: user.uid,
-        inviterName: user.displayName || 'Anonymous',
+        invitedBy: currentUser.uid,
+        inviterName: currentUser.displayName || 'Anonymous',
         timestamp: serverTimestamp(),
         status: 'unread',
         message: `You have been added as a member to "${room.name}"`
@@ -979,26 +908,32 @@ const SideRoomComponent: React.FC = () => {
   }, [room, password, handleJoinRoom]);
 
   const handleLeaveRoom = async () => {
-    if (!db || !user || !roomId) return;
+    if (!db || !currentUser || !roomId || !room) return;
 
     try {
       setIsProcessing(true);
       const roomRef = doc(db, 'sideRooms', roomId);
       
-      // Remove user from viewers list
-      await updateDoc(roomRef, {
-        viewers: arrayRemove(user.uid),
-        viewerCount: increment(-1),
-        activeUsers: arrayRemove(user.uid),
-        lastActive: serverTimestamp()
-      });
+      // Only handle presence cleanup for logged in users
+      if (currentUser) {
+        // Clean up presence
+        const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
+        await deleteDoc(userPresenceRef);
 
-      // Delete user's presence document
-      const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', user.uid);
-      await deleteDoc(userPresenceRef);
+        // Create notification for the user
+        const notificationRef = doc(collection(db, 'users', currentUser.uid, 'notifications'));
+        await setDoc(notificationRef, {
+          type: 'room_leave',
+          roomId,
+          roomName: room.name,
+          timestamp: serverTimestamp(),
+          status: 'unread',
+          message: `You have left "${room.name}"`
+        });
+      }
 
       toast.success('Left room successfully');
-      navigate('/side-rooms'); // Navigate to side rooms homepage
+      navigate('/side-rooms');
     } catch (error) {
       console.error('Error leaving room:', error);
       toast.error('Failed to leave room');
@@ -1008,7 +943,7 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleGoLive = async () => {
-    if (!room || !user || !roomId) return;
+    if (!room || !currentUser || !roomId) return;
 
     try {
       setIsProcessing(true);
@@ -1041,7 +976,7 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleEditSubmit = async (roomData: Partial<SideRoom>) => {
-    if (!room || !roomId || !user || user.uid !== room.ownerId) {
+    if (!room || !roomId || !currentUser || currentUser.uid !== room.ownerId) {
       toast.error('You do not have permission to edit this room');
       return;
     }
@@ -1049,7 +984,7 @@ const SideRoomComponent: React.FC = () => {
     try {
       setIsProcessing(true);
       const roomRef = doc(db, 'sideRooms', roomId);
-      const userRoomRef = doc(db, 'users', user.uid, 'sideRooms', roomId);
+      const userRoomRef = doc(db, 'users', currentUser.uid, 'sideRooms', roomId);
 
       // Create a type for the update data
       type UpdateData = Partial<Omit<SideRoom, 'lastActive' | 'updatedAt'>> & {
@@ -1123,7 +1058,7 @@ const SideRoomComponent: React.FC = () => {
 
   const handleDeleteRoom = async () => {
     handleMenuClose();
-    if (!room || !user || !roomId || user.uid !== room.ownerId) {
+    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) {
       toast.error('You do not have permission to delete this room');
       return;
     }
@@ -1143,7 +1078,7 @@ const SideRoomComponent: React.FC = () => {
       const batch = writeBatch(db);
 
       // Add room to user's trash
-      const trashRef = doc(db, 'users', user.uid, 'trash', roomId);
+      const trashRef = doc(db, 'users', currentUser.uid, 'trash', roomId);
       const roomSnapshot = await getDoc(roomRef);
       
       if (roomSnapshot.exists()) {
@@ -1217,7 +1152,7 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleInviteSubmit = async () => {
-    if (!room || !roomId || !user || selectedUsers.length === 0) return;
+    if (!room || !roomId || !currentUser || selectedUsers.length === 0) return;
 
     try {
       setIsInviting(true);
@@ -1229,9 +1164,9 @@ const SideRoomComponent: React.FC = () => {
         const invitationRef = doc(collection(db, 'sideRooms', roomId, 'invitations'));
         batch.set(invitationRef, {
           userId: selectedUser.id,
-          invitedBy: user.uid,
-          inviterName: user.displayName || 'Anonymous',
-          inviterAvatar: user.photoURL || '',
+          invitedBy: currentUser.uid,
+          inviterName: currentUser.displayName || 'Anonymous',
+          inviterAvatar: currentUser.photoURL || '',
           roomId,
           roomName: room.name,
           timestamp: serverTimestamp(),
@@ -1244,12 +1179,12 @@ const SideRoomComponent: React.FC = () => {
           type: 'room_invitation',
           roomId,
           roomName: room.name,
-          invitedBy: user.uid,
-          inviterName: user.displayName || 'Anonymous',
-          inviterAvatar: user.photoURL || '',
+          invitedBy: currentUser.uid,
+          inviterName: currentUser.displayName || 'Anonymous',
+          inviterAvatar: currentUser.photoURL || '',
           timestamp: serverTimestamp(),
           status: 'unread',
-          message: `${user.displayName || 'Someone'} invited you to join "${room.name}"`
+          message: `${currentUser.displayName || 'Someone'} invited you to join "${room.name}"`
         });
       }
 
@@ -1267,7 +1202,7 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleRemoveMember = async (memberToRemove: RoomMember) => {
-    if (!room || !user || !roomId || user.uid !== room.ownerId) {
+    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) {
       toast.error('Only room owners can remove members');
       return;
     }
@@ -1287,8 +1222,8 @@ const SideRoomComponent: React.FC = () => {
         type: 'room_removal',
         roomId,
         roomName: room.name,
-        removedBy: user.uid,
-        removerName: user.displayName || 'Anonymous',
+        removedBy: currentUser.uid,
+        removerName: currentUser.displayName || 'Anonymous',
         timestamp: serverTimestamp(),
         status: 'unread',
         message: `You have been removed from "${room.name}"`
@@ -1308,10 +1243,10 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleStartMobileStream = async () => {
-    if (!db || !user || !roomId) return;
+    if (!db || !currentUser || !roomId) return;
 
     // Add access control check
-    if (!isRoomOwner && !room?.members?.some(member => member.userId === user.uid)) {
+    if (!isRoomOwner && !room?.members?.some(member => member.userId === currentUser.uid)) {
       toast.error('Only room owners and members can start mobile streaming');
       return;
     }
@@ -1324,7 +1259,7 @@ const SideRoomComponent: React.FC = () => {
       const roomDoc = await getDoc(roomRef);
       const roomData = roomDoc.data();
 
-      if (roomData?.isMobileStreaming && roomData?.mobileStreamerId !== user.uid) {
+      if (roomData?.isMobileStreaming && roomData?.mobileStreamerId !== currentUser.uid) {
         toast.error('Another user is already streaming');
         setIsProcessing(false);
         return;
@@ -1346,7 +1281,7 @@ const SideRoomComponent: React.FC = () => {
         },
         body: JSON.stringify({
           roomId,
-          userId: user.uid
+          userId: currentUser.uid
         })
       });
 
@@ -1362,7 +1297,7 @@ const SideRoomComponent: React.FC = () => {
         isMobileStreaming: true,
         mobileStreamKey: streamKey,
         mobilePlaybackId: playbackId,
-        mobileStreamerId: user.uid,
+        mobileStreamerId: currentUser.uid,
         lastActive: serverTimestamp()
       });
 
@@ -1382,16 +1317,16 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleStopMobileStream = async () => {
-    if (!db || !user || !roomId) return;
+    if (!db || !currentUser || !roomId) return;
 
     // Add access control check
-    if (!isRoomOwner && !room?.members?.some(member => member.userId === user.uid)) {
+    if (!isRoomOwner && !room?.members?.some(member => member.userId === currentUser.uid)) {
       toast.error('Only room owners and members can stop mobile streaming');
       return;
     }
 
     // Add check to ensure only the streamer can stop their own stream
-    if (room?.mobileStreamerId && room.mobileStreamerId !== user.uid) {
+    if (room?.mobileStreamerId && room.mobileStreamerId !== currentUser.uid) {
       toast.error('Only the current streamer can stop the stream');
       return;
     }
@@ -1407,7 +1342,7 @@ const SideRoomComponent: React.FC = () => {
         },
         body: JSON.stringify({
           roomId,
-          userId: user.uid
+          userId: currentUser.uid
         })
       });
 
@@ -1505,7 +1440,7 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleStartRecording = async () => {
-    if (!room || !user || !roomId || !room.isLive) {
+    if (!room || !currentUser || !roomId || !room.isLive) {
       toast.error('Room must be live to start recording');
       return;
     }
@@ -1528,7 +1463,7 @@ const SideRoomComponent: React.FC = () => {
         },
         body: JSON.stringify({
           roomId,
-          userId: user.uid,
+          userId: currentUser.uid,
           streamId: activeStreamId
         })
       });
@@ -1559,7 +1494,7 @@ const SideRoomComponent: React.FC = () => {
   };
 
   const handleStopRecording = async () => {
-    if (!room || !user || !roomId) return;
+    if (!room || !currentUser || !roomId) return;
 
     try {
       setIsProcessing(true);
@@ -1572,7 +1507,7 @@ const SideRoomComponent: React.FC = () => {
         },
         body: JSON.stringify({
           roomId,
-          userId: user.uid,
+          userId: currentUser.uid,
           recordingId: room.currentRecordingId
         })
       });
@@ -1599,174 +1534,185 @@ const SideRoomComponent: React.FC = () => {
     }
   };
 
+  // Move owner and follow state to main component scope
+  const owner = room?.members?.find(member => member.role === 'owner');
+  const isViewerOnly = isViewer && !isRoomOwner;
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+
+  // Check if the current user is following the owner
+  useEffect(() => {
+    const checkFollowing = async () => {
+      if (!currentUser?.uid || !owner?.userId || currentUser.uid === owner.userId) return;
+      const followerRef = doc(db, 'users', owner.userId, 'followers', currentUser.uid);
+      const followerSnap = await getDoc(followerRef);
+      setIsFollowing(followerSnap.exists());
+    };
+    checkFollowing();
+  }, [currentUser?.uid, owner?.userId]);
+
+  // Handle follow
+  const handleFollow = async () => {
+    if (!currentUser?.uid || !owner?.userId) return;
+    setFollowLoading(true);
+    try {
+      const followerRef = doc(db, 'users', owner.userId, 'followers', currentUser.uid);
+      await setDoc(followerRef, {
+        userId: currentUser.uid,
+        username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+        avatar: currentUser.photoURL || '',
+        followedAt: serverTimestamp()
+      });
+      setIsFollowing(true);
+      toast.success('You are now following the room owner!');
+    } catch (err) {
+      toast.error('Failed to follow the owner');
+    } finally {
+      setFollowLoading(false);
+    }
+  };
+
+  // Add the handler for the share icon
+  const handleShareRoom = () => {
+    setShowShareDialog(true);
+  };
+
+  // Add the handler for sharing to feed
+  const handleShareToFeed = async () => {
+    if (!currentUser || !room) return;
+    try {
+      // Create a new post in the 'posts' collection
+      const ownerMember = room.members?.find((m: any) => m.role === 'owner');
+      const postData = {
+        authorId: currentUser.uid,
+        authorUsername: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+        authorAvatar: currentUser.photoURL || '',
+        createdAt: serverTimestamp(),
+        content: `Check out this live room: ${room.name}`,
+        roomId: roomId,
+        roomName: room.name,
+        roomDescription: room.description,
+        roomOwner: ownerMember?.username || '',
+        roomThumbnail: room.style?.thumbnailUrl || '',
+        type: 'room_share',
+      };
+      await addDoc(collection(db, 'posts'), postData);
+      setShowShareDialog(false);
+      toast.success('Room shared to your feed!');
+    } catch (err) {
+      toast.error('Failed to share to feed');
+    }
+  };
+
   const renderRoomHeader = () => (
-    <Box sx={{ 
-      position: 'relative',
-      p: { xs: 1.5, sm: 2 },
-      borderBottom: 1, 
-      borderColor: 'divider',
-      background: roomStyle.headerGradient ? roomStyle.headerColor : roomStyle.headerColor,
-      minHeight: { xs: '56px', sm: 'auto' },
-      display: 'flex',
-      flexDirection: { xs: 'column', sm: 'row' },
-      gap: { xs: 1, sm: 2 }
-    }}>
-      <Box sx={{ 
-        position: 'relative',
-        zIndex: 2,
-        display: 'flex', 
-        flexDirection: { xs: 'column', sm: 'row' },
-        justifyContent: 'space-between', 
-        alignItems: { xs: 'flex-start', sm: 'center' },
-        width: '100%',
-        gap: { xs: 1, sm: 2 },
-        color: roomStyle.textColor
-      }}>
+    <Box sx={{ position: 'relative', p: { xs: 1.5, sm: 2 }, borderBottom: 1, borderColor: 'divider', background: room?.style?.headerGradient ? room?.style?.headerColor : room?.style?.headerColor, minHeight: { xs: '56px', sm: 'auto' }, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: { xs: 1, sm: 2 } }}>
+      <Box sx={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, width: '100%', gap: { xs: 1, sm: 2 }, color: room?.style?.textColor }}>
         {/* Room info */}
         <Box sx={{ width: { xs: '100%', sm: 'auto' } }}>
-          <Typography 
-            variant="h4" 
-            component="h1" 
-            sx={{ 
-              fontFamily: roomStyle.font,
-              textShadow: '2px 2px 4px rgba(0,0,0,0.3)',
-              fontSize: { xs: '1.5rem', sm: `${roomStyle.headerFontSize}px` }
-            }}
-          >
-            {room?.name}
-          </Typography>
-          <Typography 
-            variant="subtitle1" 
-            sx={{ 
-              fontFamily: roomStyle.font,
-              textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
-              fontSize: { xs: '0.875rem', sm: '1rem' }
-            }}
-          >
-            Created by {room?.ownerId === user?.uid ? 'You' : 'Anonymous'}
+          <Typography variant="h4" component="h1" sx={{ fontFamily: room?.style?.font, textShadow: '2px 2px 4px rgba(0,0,0,0.3)', fontSize: { xs: '1.5rem', sm: `${room?.style?.headerFontSize || 24}px` } }}>{room?.name}</Typography>
+          <Typography variant="subtitle1" sx={{ fontFamily: room?.style?.font, textShadow: '1px 1px 2px rgba(0,0,0,0.3)', fontSize: { xs: '0.875rem', sm: '1rem' } }}>
+            Created by {owner?.username || 'Anonymous'}
           </Typography>
         </Box>
-
         {/* Controls */}
-        <Box sx={{ 
-          display: 'flex', 
-          gap: { xs: 0.5, sm: 1 },
-          flexWrap: 'wrap',
-          justifyContent: { xs: 'flex-start', sm: 'flex-end' },
-          width: { xs: '100%', sm: 'auto' }
-        }}>
-          {/* Owner controls */}
+        <Box sx={{ display: 'flex', gap: { xs: 0.5, sm: 1 }, flexWrap: 'wrap', justifyContent: { xs: 'flex-start', sm: 'flex-end' }, width: { xs: '100%', sm: 'auto' } }}>
+          {/* Leave and Follow buttons for viewers only */}
+          {isViewerOnly && (
+            <>
+              <Button variant="outlined" color="error" onClick={handleLeaveRoom} disabled={isProcessing} sx={{ mr: 1 }}>Leave Room</Button>
+              <Button variant="contained" color="primary" onClick={handleFollow} disabled={isFollowing || followLoading || !owner?.userId || owner.userId === currentUser?.uid}>
+                {isFollowing ? 'Following' : followLoading ? 'Following...' : 'Follow Owner'}
+              </Button>
+            </>
+          )}
+          {/* Share icon for everyone */}
+          <Tooltip title="Share Room">
+            <IconButton onClick={handleShareRoom} color="primary">
+              <ShareIcon />
+            </IconButton>
+          </Tooltip>
+          {/* Chat and viewers panel icons for everyone */}
+          <Tooltip title="Toggle Chat">
+            <IconButton 
+              onClick={() => {
+                setShowChat(!showChat);
+                setShowMembers(false);
+              }}
+              color={showChat ? "primary" : "default"}
+            >
+              <Chat />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="View Members">
+            <IconButton
+              onClick={() => {
+                setShowMembers(!showMembers);
+                setShowChat(false);
+              }}
+              color={showMembers ? "primary" : "default"}
+            >
+              <Group />
+            </IconButton>
+          </Tooltip>
+          {/* Room owner controls */}
           {isRoomOwner && (
             <>
-              <IconButton 
-                onClick={handleMenuClick}
-                sx={{ 
-                  color: roomStyle.accentColor,
-                  padding: { xs: 1, sm: 1.5 }
-                }}
-              >
-                <MoreVert />
-              </IconButton>
-              <Button
-                variant="outlined"
-                startIcon={<PersonAdd />}
-                onClick={() => setShowInviteDialog(true)}
-                size="small"
-                sx={{ 
-                  fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                  padding: { xs: '4px 8px', sm: '6px 16px' }
-                }}
-              >
-                Add Member
-              </Button>
-              <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
-                <IconButton 
-                  color={room?.isLive ? "error" : "primary"} 
-                  onClick={handleGoLive}
-                  disabled={isProcessing}
+              <Tooltip title="Room Settings">
+                <IconButton
+                  onClick={handleMenuClick}
+                  color="primary"
                 >
-                  <LocalFireDepartment />
+                  <MoreVert />
                 </IconButton>
               </Tooltip>
-              {room?.isLive && (
-                <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
-                  <IconButton
-                    onClick={isRecording ? handleStopRecording : handleStartRecording}
-                    color={isRecording ? "error" : "primary"}
-                    disabled={isProcessing}
-                  >
-                    {isRecording ? <Stop /> : <FiberManualRecord />}
-                  </IconButton>
-                </Tooltip>
-              )}
-              <Button
-                variant="contained"
-                color={isMobileStreaming ? "error" : "primary"}
-                startIcon={isMobileStreaming ? <VideocamOff /> : <Videocam />}
-                onClick={isMobileStreaming ? handleStopMobileStream : handleStartMobileStream}
+              <Menu
+                anchorEl={anchorEl}
+                open={Boolean(anchorEl)}
+                onClose={handleMenuClose}
+              >
+                <MenuItem onClick={handleEditRoom}>
+                  <ListItemIcon>
+                    <Edit fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>Edit Room</ListItemText>
+                </MenuItem>
+                <MenuItem onClick={handleStyleRoom}>
+                  <ListItemIcon>
+                    <Palette fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>Customize Room</ListItemText>
+                </MenuItem>
+                <MenuItem onClick={handleDeleteRoom}>
+                  <ListItemIcon>
+                    <Delete fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>Delete Room</ListItemText>
+                </MenuItem>
+              </Menu>
+            </>
+          )}
+          {/* (Optional) Other controls, e.g. mobile stream, for owners/viewers as needed */}
+          {isRoomOwner && room?.isLive && (
+            <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
+              <IconButton
+                onClick={isRecording ? handleStopRecording : handleStartRecording}
+                color={isRecording ? "error" : "primary"}
                 disabled={isProcessing}
-                sx={{ mr: 1 }}
               >
-                {isMobileStreaming ? "Stop Mobile Stream" : "Start Mobile Stream"}
-              </Button>
-            </>
+                {isRecording ? <Stop /> : <FiberManualRecord />}
+              </IconButton>
+            </Tooltip>
           )}
-
-          {/* Member controls */}
-          {isMember && !isRoomOwner && (
-            <>
-              <Tooltip title={room?.isLive ? "Stop Live" : "Go Live"}>
-                <IconButton 
-                  color={room?.isLive ? "error" : "primary"} 
-                  onClick={handleGoLive}
-                  disabled={isProcessing}
-                >
-                  <LocalFireDepartment />
-                </IconButton>
-              </Tooltip>
-            </>
-          )}
-
-          {/* Chat and Members buttons - visible to all with access */}
-          {hasRoomAccess && (
-            <>
-              <Tooltip title="Chat">
-                <IconButton 
-                  onClick={() => setShowChat(!showChat)} 
-                  color={showChat ? "primary" : "default"}
-                  sx={{ color: 'inherit' }}
-                >
-                  <Chat />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Members">
-                <IconButton 
-                  onClick={() => setShowMembers(!showMembers)} 
-                  color={showMembers ? "primary" : "default"}
-                  sx={{ color: 'inherit' }}
-                >
-                  <Group />
-                </IconButton>
-              </Tooltip>
-            </>
-          )}
-
-          {/* Join/Leave button for non-owners */}
-          {!isRoomOwner && (
-            <Button
-              variant="contained"
-              color={isViewer ? "error" : "primary"}
-              startIcon={isViewer ? <ExitToApp /> : <Visibility />}
-              onClick={isViewer ? handleLeaveRoom : handleJoinRoom}
-              disabled={isProcessing}
-              sx={{ 
-                fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                padding: { xs: '4px 8px', sm: '6px 16px' }
-              }}
-            >
-              {isProcessing ? 'Processing...' : 
-               isViewer ? 'Leave Room' : 'View Room'}
-            </Button>
+          {isViewer && room?.isLive && (
+            <Tooltip title="Start Mobile Stream">
+              <IconButton 
+                onClick={handleStartMobileStream}
+                color="primary"
+                disabled={isProcessing}
+              >
+                <Videocam />
+              </IconButton>
+            </Tooltip>
           )}
         </Box>
       </Box>
@@ -1793,8 +1739,7 @@ const SideRoomComponent: React.FC = () => {
     return null;
   }
 
-  const isOwner = room.members?.some(member => member.userId === user?.uid && member.role === 'owner');
-  const owner = room.members?.find(member => member.role === 'owner');
+  const isOwner = room.members?.some(member => member.userId === currentUser?.uid && member.role === 'owner');
 
   // Update the live section in the render
   const renderVideoElements = () => {
@@ -1803,7 +1748,7 @@ const SideRoomComponent: React.FC = () => {
     return (
       <Box sx={{ mb: 3 }}>
         <MuxStream 
-          isOwner={room.ownerId === user?.uid}
+          isOwner={room.ownerId === currentUser?.uid}
           roomId={roomId || ''}
         />
       </Box>
@@ -1888,76 +1833,180 @@ const SideRoomComponent: React.FC = () => {
       display: 'flex',
       flexDirection: 'column',
       height: '100%',
-      overflow: 'hidden'
+      overflow: 'hidden',
+      bgcolor: 'background.paper',
+      borderRadius: 1
     }}>
-      {/* Remove the old header since we now have the mobile header */}
+      {/* Messages Container */}
       <Box sx={{ 
         flex: 1,
         overflow: 'auto',
         p: 2,
         display: 'flex',
         flexDirection: 'column',
-        gap: 2
+        gap: 1.5,
+        '&::-webkit-scrollbar': {
+          width: '8px',
+        },
+        '&::-webkit-scrollbar-track': {
+          background: 'transparent',
+        },
+        '&::-webkit-scrollbar-thumb': {
+          background: 'rgba(0, 0, 0, 0.1)',
+          borderRadius: '4px',
+          '&:hover': {
+            background: 'rgba(0, 0, 0, 0.2)',
+          },
+        },
       }}>
         {messages.map((message) => (
           <Box 
             key={message.id} 
             sx={{ 
               display: 'flex',
-              gap: 1,
+              gap: 1.5,
               alignItems: 'flex-start',
-              bgcolor: message.userId === user?.uid ? 'primary.light' : 'background.paper',
-              p: 2,
-              borderRadius: 2,
-              boxShadow: 1,
-              alignSelf: message.userId === user?.uid ? 'flex-end' : 'flex-start',
-              maxWidth: '80%'
+              maxWidth: '85%',
+              alignSelf: message.userId === currentUser?.uid ? 'flex-end' : 'flex-start',
+              animation: 'fadeIn 0.3s ease-in-out',
+              '@keyframes fadeIn': {
+                '0%': { opacity: 0, transform: 'translateY(10px)' },
+                '100%': { opacity: 1, transform: 'translateY(0)' }
+              }
             }}
           >
-            <Avatar 
-              src={message.photoURL || message.avatar} 
-              alt={message.displayName || message.username}
-              sx={{ 
-                width: 40, 
-                height: 40,
-                border: theme => message.userId === user?.uid ? `2px solid ${theme.palette.primary.main}` : 'none'
-              }}
-            >
-              {(!message.photoURL && !message.avatar) && (message.displayName || message.username || 'A').charAt(0).toUpperCase()}
-            </Avatar>
-            <Box sx={{ flex: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography 
-                  variant="subtitle2" 
+            {message.userId !== currentUser?.uid && (
+              <RouterLink 
+                to={`/profile/${message.userId}`}
+                style={{ textDecoration: 'none' }}
+              >
+                <Avatar 
+                  src={message.photoURL || message.avatar} 
+                  alt={message.displayName || message.username}
                   sx={{ 
-                    fontWeight: 'bold',
-                    color: message.userId === user?.uid ? 'primary.dark' : 'text.primary'
+                    width: 36, 
+                    height: 36,
+                    border: '2px solid',
+                    borderColor: 'primary.main',
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s',
+                    '&:hover': {
+                      transform: 'scale(1.1)'
+                    }
                   }}
                 >
-                  {message.displayName || message.username || 'Anonymous'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {message.timestamp instanceof Date 
-                    ? message.timestamp.toLocaleTimeString()
-                    : message.timestamp?.toDate?.()?.toLocaleTimeString() || ''}
+                  {(!message.photoURL && !message.avatar) && (message.displayName || message.username || 'A').charAt(0).toUpperCase()}
+                </Avatar>
+              </RouterLink>
+            )}
+            <Box sx={{ 
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 0.5
+            }}>
+              {message.userId !== currentUser?.uid && (
+                <RouterLink 
+                  to={`/profile/${message.userId}`}
+                  style={{ textDecoration: 'none' }}
+                >
+                  <Typography 
+                    variant="caption" 
+                    sx={{ 
+                      fontWeight: 600,
+                      color: 'primary.main',
+                      ml: 1,
+                      cursor: 'pointer',
+                      '&:hover': {
+                        textDecoration: 'underline'
+                      }
+                    }}
+                  >
+                    {message.displayName || message.username || 'Anonymous'}
+                  </Typography>
+                </RouterLink>
+              )}
+              <Box sx={{
+                bgcolor: message.userId === currentUser?.uid ? 'primary.main' : 'background.default',
+                color: message.userId === currentUser?.uid ? 'primary.contrastText' : 'text.primary',
+                p: 1.5,
+                borderRadius: 2,
+                boxShadow: 1,
+                position: 'relative',
+                '&::before': message.userId === currentUser?.uid ? {
+                  content: '""',
+                  position: 'absolute',
+                  right: -8,
+                  top: '50%',
+                  width: 0,
+                  height: 0,
+                  border: '8px solid transparent',
+                  borderLeftColor: 'primary.main',
+                  transform: 'translateY(-50%)'
+                } : {
+                  content: '""',
+                  position: 'absolute',
+                  left: -8,
+                  top: '50%',
+                  width: 0,
+                  height: 0,
+                  border: '8px solid transparent',
+                  borderRightColor: 'background.default',
+                  transform: 'translateY(-50%)'
+                }
+              }}>
+                <Typography 
+                  variant="body2" 
+                  sx={{ 
+                    wordBreak: 'break-word',
+                    whiteSpace: 'pre-wrap'
+                  }}
+                >
+                  {message.content}
                 </Typography>
               </Box>
               <Typography 
-                variant="body1" 
+                variant="caption" 
                 sx={{ 
-                  wordBreak: 'break-word',
-                  color: message.userId === user?.uid ? 'primary.contrastText' : 'text.primary',
-                  mt: 0.5
+                  color: 'text.secondary',
+                  ml: 1,
+                  fontSize: '0.7rem'
                 }}
               >
-                {message.content}
+                {message.timestamp instanceof Date 
+                  ? message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  : message.timestamp?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || ''}
               </Typography>
             </Box>
+            {message.userId === currentUser?.uid && (
+              <RouterLink 
+                to={`/profile/${message.userId}`}
+                style={{ textDecoration: 'none' }}
+              >
+                <Avatar 
+                  src={message.photoURL || message.avatar} 
+                  alt={message.displayName || message.username}
+                  sx={{ 
+                    width: 36, 
+                    height: 36,
+                    border: '2px solid',
+                    borderColor: 'primary.main',
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s',
+                    '&:hover': {
+                      transform: 'scale(1.1)'
+                    }
+                  }}
+                >
+                  {(!message.photoURL && !message.avatar) && (message.displayName || message.username || 'A').charAt(0).toUpperCase()}
+                </Avatar>
+              </RouterLink>
+            )}
           </Box>
         ))}
         <div ref={messagesEndRef} />
       </Box>
 
+      {/* Message Input */}
       <Box 
         component="form" 
         onSubmit={handleSendMessage}
@@ -1968,15 +2017,27 @@ const SideRoomComponent: React.FC = () => {
           bgcolor: 'background.paper'
         }}
       >
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ 
+          display: 'flex', 
+          gap: 1,
+          alignItems: 'center'
+        }}>
           <TextField
             fullWidth
             placeholder="Type a message..."
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
+            size="small"
             sx={{ 
               '& .MuiOutlinedInput-root': {
-                borderRadius: 2
+                borderRadius: 2,
+                bgcolor: 'background.default',
+                '&:hover': {
+                  bgcolor: 'action.hover'
+                },
+                '&.Mui-focused': {
+                  bgcolor: 'background.paper'
+                }
               }
             }}
           />
@@ -2139,28 +2200,18 @@ const SideRoomComponent: React.FC = () => {
         <DialogTitle>Mobile Streaming Setup</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
-            {isMobileDevice ? (
-              <>
                 <Typography variant="body1" gutterBottom>
-                  Click the button below to start streaming:
+              To stream from your mobile device, use the free <b>Larix Broadcaster</b> app:
                 </Typography>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  fullWidth
-                  onClick={() => window.open(`https://broadcast.mux.com/?streamKey=${streamKey}`, '_blank')}
-                  sx={{ mt: 2 }}
-                >
-                  Start Broadcasting
-                </Button>
-              </>
-            ) : (
-              <>
-                <Typography variant="body1" gutterBottom>
-                  To stream from your mobile device:
+            <Typography variant="body2" color="text.secondary" paragraph>
+              1. Download Larix Broadcaster: <br />
+              <a href="https://apps.apple.com/us/app/larix-broadcaster/id1042474385" target="_blank" rel="noopener noreferrer">iOS (App Store)</a> | <a href="https://play.google.com/store/apps/details?id=com.wmspanel.larix_broadcaster" target="_blank" rel="noopener noreferrer">Android (Google Play)</a>
                 </Typography>
                 <Typography variant="body2" color="text.secondary" paragraph>
-                  1. Open your mobile browser and go to: <Link href="https://broadcast.mux.com" target="_blank" rel="noopener noreferrer">broadcast.mux.com</Link>
+              2. Open Larix Broadcaster and tap the gear/settings icon.<br />
+              3. Go to <b>Connections</b> and tap the <b>+</b> to add a new connection.<br />
+              4. <b>URL:</b> <span style={{ fontFamily: 'monospace' }}>rtmps://global-live.mux.com:443/app</span><br />
+              5. <b>Stream Name/Key:</b> Use the stream key below.
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                   <TextField
@@ -2184,17 +2235,9 @@ const SideRoomComponent: React.FC = () => {
                   />
                 </Box>
                 <Typography variant="body2" color="text.secondary">
-                  2. Enter the stream key shown above
+              6. Save the connection, return to the main screen, and tap the red record button to start streaming.<br />
+              7. Allow camera and microphone access if prompted.
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  3. Allow camera and microphone access when prompted
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  4. Click "Start Broadcasting"
-                </Typography>
-              </>
-            )}
-
             {mobileStreamUrl && (
               <Box sx={{ mt: 2 }}>
                 <Typography variant="subtitle2" gutterBottom>
@@ -2235,7 +2278,7 @@ const SideRoomComponent: React.FC = () => {
       display: 'flex', 
       height: '100vh',
       overflow: 'hidden',
-      flexDirection: { xs: 'column', sm: 'row' }, // Stack on mobile, row on desktop
+      flexDirection: { xs: 'column', sm: 'row' },
       ...(room?.style ? {
         bgcolor: room.style.backgroundColor,
         background: room.style.backgroundGradient ? room.style.backgroundColor : undefined,
@@ -2263,7 +2306,7 @@ const SideRoomComponent: React.FC = () => {
         flex: 1, 
         display: 'flex', 
         flexDirection: 'column',
-        height: { xs: 'calc(100vh - 56px)', sm: '100%' }, // Adjust height for mobile
+        height: { xs: 'calc(100vh - 56px)', sm: '100%' },
         overflow: 'hidden'
       }}>
         {renderRoomHeader()}
@@ -2271,7 +2314,7 @@ const SideRoomComponent: React.FC = () => {
         <Box sx={{ 
           flex: 1, 
           overflow: 'auto',
-          p: { xs: 1, sm: 2 }, // Smaller padding on mobile
+          p: { xs: 1, sm: 2 },
           display: 'flex',
           flexDirection: 'column',
           gap: 2
@@ -2357,380 +2400,155 @@ const SideRoomComponent: React.FC = () => {
       )}
 
       {renderInviteDialog()}
-
       {renderMobileStreamDialog()}
-
-      {/* Add Style Dialog */}
-      <Dialog 
-        open={showStyleDialog} 
-        onClose={() => !isProcessing && setShowStyleDialog(false)}
-        maxWidth="md" 
-        fullWidth
-      >
-        <DialogTitle>Customize Room Style</DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pt: 2 }}>
-            {/* Colors Section */}
-            <Box>
-              <Typography variant="h6" gutterBottom>Colors</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Header Color</InputLabel>
-                    <Select
-                      value={roomStyle.headerColor}
-                      onChange={(e) => setRoomStyle(prev => ({ ...prev, headerColor: e.target.value }))}
-                    >
-                      {COLOR_PRESETS.map((color) => (
-                        <MenuItem key={color.name} value={color.value}>
-                          {color.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    <FormHelperText>Choose a color or gradient for the header</FormHelperText>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Background Color</InputLabel>
-                    <Select
-                      value={roomStyle.backgroundColor}
-                      onChange={(e) => setRoomStyle(prev => ({ ...prev, backgroundColor: e.target.value }))}
-                    >
-                      {COLOR_PRESETS.map((color) => (
-                        <MenuItem key={color.name} value={color.value}>
-                          {color.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    <FormHelperText>Choose a color or gradient for the background</FormHelperText>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Text Color</InputLabel>
-                    <TextField
-                      type="color"
-                      value={roomStyle.textColor}
-                      onChange={(e) => setRoomStyle(prev => ({ ...prev, textColor: e.target.value }))}
-                      fullWidth
-                      sx={{ '& input': { height: '50px', cursor: 'pointer' } }}
-                    />
-                    <FormHelperText>Color for all text</FormHelperText>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Accent Color</InputLabel>
-                    <TextField
-                      type="color"
-                      value={roomStyle.accentColor}
-                      onChange={(e) => setRoomStyle(prev => ({ ...prev, accentColor: e.target.value }))}
-                      fullWidth
-                      sx={{ '& input': { height: '50px', cursor: 'pointer' } }}
-                    />
-                    <FormHelperText>Color for buttons and icons</FormHelperText>
-                  </FormControl>
-                </Grid>
-              </Grid>
-              <Box sx={{ mt: 2 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={roomStyle.headerGradient}
-                      onChange={(e) => setRoomStyle(prev => ({ ...prev, headerGradient: e.target.checked }))}
-                    />
-                  }
-                  label="Enable Header Gradient Effect"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={roomStyle.backgroundGradient}
-                      onChange={(e) => setRoomStyle(prev => ({ ...prev, backgroundGradient: e.target.checked }))}
-                    />
-                  }
-                  label="Enable Background Gradient Effect"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={roomStyle.glitterEffect}
-                      onChange={(e) => setRoomStyle(prev => ({ ...prev, glitterEffect: e.target.checked }))}
-                    />
-                  }
-                  label="Enable Glitter Effect"
-                />
-              </Box>
-            </Box>
-
-            <Divider />
-
-            {/* Font Section */}
-            <Box>
-              <Typography variant="h6" gutterBottom>Font</Typography>
-              <FormControl fullWidth>
-                <InputLabel>Font Style</InputLabel>
-                <Select
-                  value={roomStyle.font}
-                  onChange={(e) => setRoomStyle(prev => ({ ...prev, font: e.target.value }))}
-                  sx={{ fontFamily: roomStyle.font }}
-                >
-                  {FONT_OPTIONS.map((font) => (
-                    <MenuItem 
-                      key={font.value} 
-                      value={font.value}
-                      sx={{ fontFamily: font.value }}
-                    >
-                      {font.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-                <FormHelperText>Choose a font for your room</FormHelperText>
-              </FormControl>
-            </Box>
-
-            <Divider />
-
-            <Box>
-              <Typography variant="h6" gutterBottom>Header Size</Typography>
-              <Box sx={{ px: 2 }}>
-                <Slider
-                  value={roomStyle.headerFontSize}
-                  onChange={(_, value) => setRoomStyle(prev => ({ ...prev, headerFontSize: value as number }))}
-                  min={16}
-                  max={48}
-                  step={1}
-                  marks={[
-                    { value: 16, label: 'Small' },
-                    { value: 24, label: 'Medium' },
-                    { value: 36, label: 'Large' },
-                    { value: 48, label: 'X-Large' }
-                  ]}
-                  valueLabelDisplay="auto"
-                />
-              </Box>
-            </Box>
-
-            <Divider />
-
-            <Box>
-              <Typography variant="h6" gutterBottom>Stickers</Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, p: 2 }}>
-                {STICKER_OPTIONS.map((sticker) => (
-                  <Chip
-                    key={sticker.name}
-                    label={sticker.value}
-                    onClick={() => {
-                      setRoomStyle(prev => ({
-                        ...prev,
-                        stickers: prev.stickers.includes(sticker.value)
-                          ? prev.stickers.filter((s: string) => s !== sticker.value)
-                          : [...prev.stickers, sticker.value]
-                      }));
-                    }}
-                    color={roomStyle.stickers.includes(sticker.value) ? 'primary' : 'default'}
-                    sx={{ fontSize: '1.5rem', cursor: 'pointer' }}
-                  />
+      {showEditDialog && (
+        <RoomForm
+          open={showEditDialog}
+          onClose={() => setShowEditDialog(false)}
+          onSubmit={handleEditSubmit}
+          initialData={room}
+          title="Edit Room"
+          submitButtonText="Save Changes"
+          isProcessing={isProcessing}
+        />
+      )}
+      {showStyleDialog && (
+        <Dialog open={showStyleDialog} onClose={() => setShowStyleDialog(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Customize Room</DialogTitle>
+          <DialogContent>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+              {/* Color Presets */}
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                {COLOR_PRESETS.map((preset) => (
+                  <Button
+                    key={preset.name}
+                    variant="outlined"
+                    size="small"
+                    style={{ background: preset.value, color: '#000', minWidth: 36, minHeight: 36, border: roomStyle.headerColor === preset.value ? '2px solid #1976d2' : undefined }}
+                    onClick={() => setRoomStyle(s => ({ ...s, headerColor: preset.value, backgroundColor: preset.value }))}
+                  >
+                    {preset.name}
+                  </Button>
                 ))}
               </Box>
-            </Box>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button 
-            onClick={() => setShowStyleDialog(false)}
-            disabled={isProcessing}
-          >
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleStyleSubmit}
-            variant="contained"
-            disabled={isProcessing}
-          >
-            {isProcessing ? <CircularProgress size={24} /> : 'Save Style'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Add the Menu component */}
-      <Menu
-        anchorEl={anchorEl}
-        open={Boolean(anchorEl)}
-        onClose={handleMenuClose}
-      >
-        {isRoomOwner && (
-          <>
-            <MenuItem onClick={handleEditRoom} disabled={isProcessing}>
-              <ListItemIcon>
-                <Edit fontSize="small" />
-              </ListItemIcon>
-              Edit Room
-            </MenuItem>
-            <MenuItem onClick={handleStyleRoom} disabled={isProcessing}>
-              <ListItemIcon>
-                <Palette fontSize="small" />
-              </ListItemIcon>
-              Customize Style
-            </MenuItem>
-            <MenuItem onClick={() => setShowRecordingsDialog(true)}>
-              <ListItemIcon>
-                <Videocam fontSize="small" />
-              </ListItemIcon>
-              View Recordings
-            </MenuItem>
-            <Divider />
-            <MenuItem 
-              onClick={handleDeleteRoom} 
-              disabled={isDeleting || isProcessing}
-              sx={{ color: 'error.main' }}
-            >
-              <ListItemIcon>
-                <Delete fontSize="small" color="error" />
-              </ListItemIcon>
-              Delete Room
-            </MenuItem>
-          </>
-        )}
-      </Menu>
-
-      {/* Edit Room Dialog */}
-      <Dialog 
-        open={showEditDialog} 
-        onClose={() => !isProcessing && setShowEditDialog(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>Edit Room</DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-            <TextField
-              fullWidth
-              label="Room Name"
-              defaultValue={room?.name}
-              onChange={(e) => {
-                const updatedRoom = { ...room, name: e.target.value };
-                setRoom(updatedRoom);
-              }}
-            />
-            <TextField
-              fullWidth
-              label="Description"
-              multiline
-              rows={4}
-              defaultValue={room?.description}
-              onChange={(e) => {
-                const updatedRoom = { ...room, description: e.target.value };
-                setRoom(updatedRoom);
-              }}
-            />
-            <FormControl fullWidth>
-              <InputLabel>Category</InputLabel>
-              <Select
-                value={room?.category || ''}
-                label="Category"
-                onChange={(e) => {
-                  const updatedRoom = { ...room, category: e.target.value };
-                  setRoom(updatedRoom);
-                }}
-              >
-                <MenuItem value="Gaming">Gaming</MenuItem>
-                <MenuItem value="Music">Music</MenuItem>
-                <MenuItem value="Art">Art</MenuItem>
-                <MenuItem value="Technology">Technology</MenuItem>
-                <MenuItem value="Sports">Sports</MenuItem>
-                <MenuItem value="Education">Education</MenuItem>
-                <MenuItem value="Entertainment">Entertainment</MenuItem>
-                <MenuItem value="Social">Social</MenuItem>
-                <MenuItem value="Other">Other</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              fullWidth
-              label="Maximum Members"
-              type="number"
-              defaultValue={room?.maxMembers}
-              onChange={(e) => {
-                const updatedRoom = { ...room, maxMembers: parseInt(e.target.value) };
-                setRoom(updatedRoom);
-              }}
-              InputProps={{
-                inputProps: { min: 1 }
-              }}
-            />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={room?.isPrivate || false}
-                  onChange={(e) => {
-                    const updatedRoom = { ...room, isPrivate: e.target.checked };
-                    setRoom(updatedRoom);
-                  }}
-                />
-              }
-              label="Private Room"
-            />
-            {room?.isPrivate && (
               <TextField
+                label="Header Color"
+                type="color"
+                value={roomStyle.headerColor}
+                onChange={e => setRoomStyle(s => ({ ...s, headerColor: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
                 fullWidth
-                label="Room Password"
-                type="password"
-                defaultValue={room?.password}
-                onChange={(e) => {
-                  const updatedRoom = { ...room, password: e.target.value };
-                  setRoom(updatedRoom);
-                }}
               />
-            )}
-            <Autocomplete
-              multiple
-              freeSolo
-              options={[]}
-              defaultValue={room?.tags || []}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Tags"
-                  placeholder="Add tags"
-                />
-              )}
-              onChange={(_, newValue) => {
-                const updatedRoom = { ...room, tags: newValue };
-                setRoom(updatedRoom);
-              }}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button 
-            onClick={() => setShowEditDialog(false)}
-            disabled={isProcessing}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => {
-              const updatedData = {
-                name: room?.name,
-                description: room?.description,
-                category: room?.category,
-                maxMembers: room?.maxMembers,
-                isPrivate: room?.isPrivate,
-                password: room?.password,
-                tags: room?.tags
-              };
-              handleEditSubmit(updatedData);
-            }}
-            disabled={isProcessing}
-          >
-            {isProcessing ? <CircularProgress size={24} /> : 'Save Changes'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {renderRecordingsDialog()}
+              <TextField
+                label="Background Color"
+                type="color"
+                value={roomStyle.backgroundColor}
+                onChange={e => setRoomStyle(s => ({ ...s, backgroundColor: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+              <TextField
+                label="Text Color"
+                type="color"
+                value={roomStyle.textColor}
+                onChange={e => setRoomStyle(s => ({ ...s, textColor: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+              <TextField
+                label="Accent Color"
+                type="color"
+                value={roomStyle.accentColor}
+                onChange={e => setRoomStyle(s => ({ ...s, accentColor: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+              <FormControl fullWidth>
+                <InputLabel>Font</InputLabel>
+                <Select
+                  value={roomStyle.font}
+                  label="Font"
+                  onChange={e => setRoomStyle(s => ({ ...s, font: e.target.value }))}
+                >
+                  {FONT_OPTIONS.map(opt => (
+                    <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={roomStyle.headerGradient}
+                    onChange={e => setRoomStyle(s => ({ ...s, headerGradient: e.target.checked }))}
+                  />
+                }
+                label="Header Gradient"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={roomStyle.backgroundGradient}
+                    onChange={e => setRoomStyle(s => ({ ...s, backgroundGradient: e.target.checked }))}
+                  />
+                }
+                label="Background Gradient"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={roomStyle.glitterEffect}
+                    onChange={e => setRoomStyle(s => ({ ...s, glitterEffect: e.target.checked }))}
+                  />
+                }
+                label="Glitter Effect"
+              />
+              <TextField
+                label="Header Font Size"
+                type="number"
+                value={roomStyle.headerFontSize}
+                onChange={e => setRoomStyle(s => ({ ...s, headerFontSize: Number(e.target.value) }))}
+                InputProps={{ inputProps: { min: 12, max: 64 } }}
+                fullWidth
+              />
+              {/* Sticker Selection */}
+              <Box>
+                <Typography variant="subtitle2">Stickers</Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                  {STICKER_OPTIONS.map(sticker => (
+                    <Button
+                      key={sticker.value}
+                      variant={roomStyle.stickers?.includes(sticker.value) ? 'contained' : 'outlined'}
+                      onClick={() => setRoomStyle(s => ({ ...s, stickers: s.stickers?.includes(sticker.value) ? s.stickers.filter(sv => sv !== sticker.value) : [...(s.stickers || []), sticker.value] }))}
+                      size="small"
+                    >
+                      {sticker.value}
+                    </Button>
+                  ))}
+                </Box>
+              </Box>
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowStyleDialog(false)}>Cancel</Button>
+            <Button onClick={handleStyleSubmit} variant="contained" disabled={isProcessing}>
+              Save Style
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
+      {showShareDialog && (
+        <Dialog open={showShareDialog} onClose={() => setShowShareDialog(false)}>
+          <DialogTitle>Share Room</DialogTitle>
+          <DialogContent>
+            <Typography gutterBottom>Share this live room to your feed or copy the link to share with others.</Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleShareToFeed} variant="contained">Share to Feed</Button>
+            <Button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/side-room/' + roomId); toast.success('Room link copied!'); }}>Copy Link</Button>
+            <Button onClick={() => setShowShareDialog(false)}>Cancel</Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Box>
   );
 };

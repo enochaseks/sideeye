@@ -239,33 +239,11 @@ service cloud.firestore {
       allow create: if isAuthenticated() && 
         request.resource.data.ownerId == request.auth.uid;
       
-      // Allow updates if:
-      // 1. User is the owner OR
-      // 2. User is adding themselves as a viewer OR
-      // 3. User is removing themselves from members/viewers
-      allow update: if isAuthenticated() && (
-        // Owner can update any field
-        resource.data.ownerId == request.auth.uid ||
-        
-        // Allow any authenticated user to add themselves as a viewer
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['viewers', 'viewerCount', 'activeUsers', 'lastActive']) ||
-        
-        // Allow users to remove themselves from members/viewers
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['members', 'memberCount', 'viewers', 'viewerCount', 'activeUsers', 'lastActive']) &&
-        (
-          // Check if they're removing themselves from members
-          (resource.data.members is list && 
-           resource.data.members.hasAny([request.auth.uid]) &&
-           !request.resource.data.members.hasAny([request.auth.uid])) ||
-          
-          // Check if they're removing themselves from viewers
-          (resource.data.viewers is list && 
-           resource.data.viewers.hasAny([request.auth.uid]) &&
-           !request.resource.data.viewers.hasAny([request.auth.uid]))
-        )
-      );
+      // Allow the owner to update any field
+      allow update: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      // Allow any authenticated user to update ONLY activeUsers and lastActive
+      allow update: if isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeUsers', 'lastActive']);
       
       // Allow delete if owner
       allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
@@ -274,8 +252,8 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if isAuthenticated();
         allow create: if isAuthenticated() && (
-          resource.data.ownerId == request.auth.uid ||
-          resource.data.members.hasAny([request.auth.uid])
+          get(/databases/$(database)/documents/sideRooms/$(roomId)).data.ownerId == request.auth.uid ||
+          get(/databases/$(database)/documents/sideRooms/$(roomId)).data.viewers.hasAny([request.auth.uid])
         );
         allow update, delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
       }
@@ -285,16 +263,6 @@ service cloud.firestore {
         allow read: if isAuthenticated();
         allow create, update: if isAuthenticated() && request.auth.uid == userId;
         allow delete: if isAuthenticated() && request.auth.uid == userId;
-      }
-
-      // Members subcollection
-      match /members/{userId} {
-        allow read: if isAuthenticated();
-        allow create: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
-        allow update, delete: if isAuthenticated() && (
-          resource.data.ownerId == request.auth.uid ||
-          request.auth.uid == userId
-        );
       }
 
       // Viewers subcollection

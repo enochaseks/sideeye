@@ -36,12 +36,10 @@ export interface SideRoom {
   name: string;
   description: string;
   ownerId: string;
-  members: RoomMember[];
   viewers: RoomMember[];
   isPrivate: boolean;
   password?: string;
-  maxMembers: number;
-  memberCount: number;
+  maxViewers: number;
   viewerCount: number;
   activeUsers: number;
   lastActive: Timestamp;

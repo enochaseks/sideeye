@@ -43,13 +43,9 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
   const [tags, setTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
   const [category, setCategory] = useState('');
-  const [maxParticipants, setMaxParticipants] = useState(50);
   const [rules, setRules] = useState<string[]>([]);
   const [newRule, setNewRule] = useState('');
   const [enableLiveSessions, setEnableLiveSessions] = useState(false);
-  const [maxLiveParticipants, setMaxLiveParticipants] = useState(4);
-  const [allowGuestSpeakers, setAllowGuestSpeakers] = useState(false);
-  const [guestSpeakerLimit, setGuestSpeakerLimit] = useState(2);
 
   const handleCreateRoom = async () => {
     if (!currentUser || !db) return;
@@ -100,16 +96,12 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
         password: isPrivate ? password.trim() : null,
         tags,
         category,
-        maxParticipants,
         rules,
         isLive: false,
         liveParticipants: [],
         activeUsers: 0,
         bannedUsers: [],
         enableLiveSessions,
-        maxLiveParticipants,
-        allowGuestSpeakers,
-        guestSpeakerLimit,
         liveSettings: {
           audioEnabled: true,
           videoEnabled: false,
@@ -278,16 +270,6 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
           />
         )}
 
-        <TextField
-          margin="dense"
-          label="Maximum Participants"
-          type="number"
-          fullWidth
-          value={maxParticipants}
-          onChange={(e) => setMaxParticipants(Number(e.target.value))}
-          inputProps={{ min: 2, max: 100 }}
-        />
-
         <Divider sx={{ my: 2 }} />
 
         <Typography variant="h6" sx={{ mb: 2 }}>Live Session Settings</Typography>
@@ -301,44 +283,6 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
           }
           label="Enable Live Sessions"
         />
-
-        {enableLiveSessions && (
-          <>
-            <TextField
-              margin="dense"
-              label="Maximum Live Participants"
-              type="number"
-              fullWidth
-              value={maxLiveParticipants}
-              onChange={(e) => setMaxLiveParticipants(Number(e.target.value))}
-              inputProps={{ min: 1, max: 10 }}
-              helperText="Maximum number of people who can join the live session"
-            />
-
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={allowGuestSpeakers}
-                  onChange={(e) => setAllowGuestSpeakers(e.target.checked)}
-                />
-              }
-              label="Allow Guest Speakers"
-            />
-
-            {allowGuestSpeakers && (
-              <TextField
-                margin="dense"
-                label="Guest Speaker Limit"
-                type="number"
-                fullWidth
-                value={guestSpeakerLimit}
-                onChange={(e) => setGuestSpeakerLimit(Number(e.target.value))}
-                inputProps={{ min: 1, max: 5 }}
-                helperText="Maximum number of guest speakers allowed in a session"
-              />
-            )}
-          </>
-        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>

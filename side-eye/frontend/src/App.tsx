@@ -145,18 +145,20 @@ const App: React.FC = () => {
     <ErrorBoundary>
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <CustomThemeProvider>
-          <CssBaseline />
-          <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <AuthProvider>
-              <FirestoreProvider>
-                <NotificationProvider>
-                  <RateLimiter>
-                    <AppContent />
-                  </RateLimiter>
-                </NotificationProvider>
-              </FirestoreProvider>
-            </AuthProvider>
-          </LocalizationProvider>
+          <ThemeContextProvider>
+            <CssBaseline />
+            <LocalizationProvider dateAdapter={AdapterDateFns}>
+              <AuthProvider>
+                <FirestoreProvider>
+                  <NotificationProvider>
+                    <RateLimiter>
+                      <AppContent />
+                    </RateLimiter>
+                  </NotificationProvider>
+                </FirestoreProvider>
+              </AuthProvider>
+            </LocalizationProvider>
+          </ThemeContextProvider>
         </CustomThemeProvider>
       </Router>
     </ErrorBoundary>

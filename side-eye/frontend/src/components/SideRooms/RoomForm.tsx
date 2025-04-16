@@ -37,7 +37,6 @@ const RoomForm: React.FC<RoomFormProps> = ({
     isPrivate: initialData?.isPrivate || false,
     password: initialData?.password || '',
     category: initialData?.category || '',
-    maxParticipants: initialData?.maxParticipants || 50,
     tags: initialData?.tags || []
   });
 
@@ -73,14 +72,6 @@ const RoomForm: React.FC<RoomFormProps> = ({
               value={formData.category}
               onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
               fullWidth
-            />
-            <TextField
-              label="Max Participants"
-              type="number"
-              value={formData.maxParticipants}
-              onChange={(e) => setFormData(prev => ({ ...prev, maxParticipants: parseInt(e.target.value) }))}
-              fullWidth
-              inputProps={{ min: 1, max: 100 }}
             />
             <TextField
               label="Tags (comma separated)"
