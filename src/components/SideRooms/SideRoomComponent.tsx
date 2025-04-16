@@ -1270,20 +1270,20 @@ const SideRoomComponent: React.FC = () => {
       }
 
       // Create a new Mux live stream
-      const response = await fetch(`${API_URL}/api/mux/create-stream`, {
+      const response = await fetch(`${API_URL}/api/create-stream`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
         },
         body: JSON.stringify({
-          roomId,
-          userId: currentUser.uid
+          roomId
         })
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create stream');
+        throw new Error(errorData.details || errorData.error || 'Failed to create stream');
       }
 
       const { streamKey, playbackId, streamId } = await response.json();
@@ -1306,7 +1306,7 @@ const SideRoomComponent: React.FC = () => {
       toast.success('Mobile streaming setup complete');
     } catch (error) {
       console.error('Error starting mobile stream:', error);
-      toast.error('Failed to start mobile stream. Please check your connection and try again.');
+      toast.error(error instanceof Error ? error.message : 'Failed to start mobile stream. Please check your connection and try again.');
     } finally {
       setIsProcessing(false);
     }
