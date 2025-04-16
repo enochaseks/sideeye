@@ -1,0 +1,45 @@
+rules_version = '2';
+
+// Craft rules based on data in your Firestore database
+// allow write: if firestore.get(
+//    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow users to upload and read their own profile pictures
+    match /profile_pictures/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Allow users to upload and read stories
+    match /stories/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Allow users to upload, read, and delete their own videos
+    match /videos/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && 
+                   request.auth.uid == userId &&
+                   request.resource.contentType.matches('video/.*') &&
+                   request.resource.size < 100 * 1024 * 1024; // 100MB limit for 3-minute videos
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Allow users to upload and read video thumbnails
+    match /thumbnails/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && 
+                   request.auth.uid == userId &&
+                   request.resource.contentType.matches('image/.*') &&
+                   request.resource.size < 5 * 1024 * 1024; // 5MB limit for thumbnails
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Default deny all other access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
