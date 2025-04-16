@@ -300,6 +300,8 @@ const SideRoomComponent: React.FC = () => {
   // Combine owner and viewer checks
   const hasRoomAccess = isRoomOwner || isViewer;
 
+  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -1245,12 +1247,6 @@ const SideRoomComponent: React.FC = () => {
   const handleStartMobileStream = async () => {
     if (!db || !currentUser || !roomId) return;
 
-    // Add access control check
-    if (!isRoomOwner && !room?.members?.some(member => member.userId === currentUser.uid)) {
-      toast.error('Only room owners and members can start mobile streaming');
-      return;
-    }
-
     try {
       setIsProcessing(true);
       
@@ -1274,7 +1270,7 @@ const SideRoomComponent: React.FC = () => {
       }
 
       // Create a new Mux live stream
-      const response = await fetch('http://localhost:3001/api/mux/create-stream', {
+      const response = await fetch(`${API_URL}/api/mux/create-stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1319,23 +1315,11 @@ const SideRoomComponent: React.FC = () => {
   const handleStopMobileStream = async () => {
     if (!db || !currentUser || !roomId) return;
 
-    // Add access control check
-    if (!isRoomOwner && !room?.members?.some(member => member.userId === currentUser.uid)) {
-      toast.error('Only room owners and members can stop mobile streaming');
-      return;
-    }
-
-    // Add check to ensure only the streamer can stop their own stream
-    if (room?.mobileStreamerId && room.mobileStreamerId !== currentUser.uid) {
-      toast.error('Only the current streamer can stop the stream');
-      return;
-    }
-
     try {
       setIsProcessing(true);
 
       // Delete the Mux live stream through your backend
-      const response = await fetch('http://localhost:3001/api/mux/delete-stream', {
+      const response = await fetch(`${API_URL}/api/mux/delete-stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
