@@ -92,7 +92,9 @@ import {
   Stop,
   ContentCopy,
   Visibility,
-  Share as ShareIcon
+  Share as ShareIcon,
+  LiveTv,
+  PhoneAndroid
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember } from '../../types/index';
 import MuxStream from '../Stream/MuxStream';
@@ -369,10 +371,15 @@ const SideRoomComponent: React.FC = () => {
     try {
       setIsLoadingMore(true);
       const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
+      
+      // Get the timestamp from the last message
+      const lastMessageTimestamp = lastMessageDoc.data().timestamp;
+      
+      // Create a query that uses the actual timestamp value
       const q = query(
         messagesRef,
         orderBy('timestamp', 'desc'),
-        startAfter(lastMessageDoc),
+        where('timestamp', '<', lastMessageTimestamp),
         limit(MESSAGES_PER_PAGE)
       );
 
@@ -1245,7 +1252,7 @@ const SideRoomComponent: React.FC = () => {
     }
   };
 
-  const handleStartMobileStream = async () => {
+  const handleStartMobileStreamSetup = async () => {
     if (!db || !currentUser || !roomId) return;
 
     try {
@@ -1262,9 +1269,8 @@ const SideRoomComponent: React.FC = () => {
       // Get room reference
       const roomRef = doc(db, 'sideRooms', roomId);
 
-      // Update room with streaming status
+      // Update room with streaming status and keys
       await updateDoc(roomRef, {
-        isMobileStreaming: true,
         mobileStreamKey: data.stream_key,
         mobilePlaybackId: data.playback_ids[0].id,
         mobileStreamerId: currentUser.uid,
@@ -1274,13 +1280,36 @@ const SideRoomComponent: React.FC = () => {
       // Set local state
       setMobileStreamUrl(`https://stream.mux.com/${data.playback_ids[0].id}`);
       setStreamKey(data.stream_key);
-      setIsMobileStreaming(true);
       setShowMobileStreamDialog(true);
 
-      toast.success('Mobile streaming setup complete');
+      toast.success('Mobile streaming setup complete. Configure Larix then return here to start streaming.');
+    } catch (error) {
+      console.error('Error setting up mobile stream:', error);
+      toast.error('Failed to setup mobile stream. Please check your connection and try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleStartMobileStream = async () => {
+    if (!db || !currentUser || !roomId) return;
+
+    try {
+      setIsProcessing(true);
+      const roomRef = doc(db, 'sideRooms', roomId);
+
+      // Update room to indicate mobile streaming is active
+      await updateDoc(roomRef, {
+        isMobileStreaming: true,
+        lastActive: serverTimestamp()
+      });
+
+      setIsMobileStreaming(true);
+      setShowMobileStreamDialog(false);
+      toast.success('Mobile streaming started! Your stream is now live.');
     } catch (error) {
       console.error('Error starting mobile stream:', error);
-      toast.error('Failed to start mobile stream. Please check your connection and try again.');
+      toast.error('Failed to start mobile stream');
     } finally {
       setIsProcessing(false);
     }
@@ -1644,31 +1673,39 @@ const SideRoomComponent: React.FC = () => {
                   <ListItemText>Delete Room</ListItemText>
                 </MenuItem>
               </Menu>
+              {/* Streaming controls */}
+              <Tooltip title={isLive ? "Stop Streaming" : "Go Live"}>
+                <IconButton
+                  onClick={handleGoLive}
+                  color={isLive ? "error" : "primary"}
+                  disabled={isProcessing}
+                >
+                  {isLive ? <VideocamOff /> : <LiveTv />}
+                </IconButton>
+              </Tooltip>
+              {isLive && (
+                <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
+                  <IconButton
+                    onClick={isRecording ? handleStopRecording : handleStartRecording}
+                    color={isRecording ? "error" : "primary"}
+                    disabled={isProcessing}
+                  >
+                    {isRecording ? <Stop /> : <FiberManualRecord />}
+                  </IconButton>
+                </Tooltip>
+              )}
             </>
           )}
-          {/* (Optional) Other controls, e.g. mobile stream, for owners/viewers as needed */}
-          {isRoomOwner && room?.isLive && (
-            <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
-              <IconButton
-                onClick={isRecording ? handleStopRecording : handleStartRecording}
-                color={isRecording ? "error" : "primary"}
-                disabled={isProcessing}
-              >
-                {isRecording ? <Stop /> : <FiberManualRecord />}
-              </IconButton>
-            </Tooltip>
-          )}
-          {isViewer && room?.isLive && (
-            <Tooltip title="Start Mobile Stream">
-              <IconButton 
-                onClick={handleStartMobileStream}
-                color="primary"
-                disabled={isProcessing}
-              >
-                <Videocam />
-              </IconButton>
-            </Tooltip>
-          )}
+          {/* Mobile Stream button - moved outside isRoomOwner check */}
+          <Tooltip title="Start Mobile Stream">
+            <IconButton 
+              onClick={handleStartMobileStreamSetup}
+              color="primary"
+              disabled={isProcessing}
+            >
+              <PhoneAndroid />
+            </IconButton>
+          </Tooltip>
         </Box>
       </Box>
     </Box>
@@ -2143,8 +2180,6 @@ const SideRoomComponent: React.FC = () => {
 
   // Update the mobile streaming dialog to show different content based on device type
   const renderMobileStreamDialog = () => {
-    const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
     return (
       <Dialog
         open={showMobileStreamDialog}
@@ -2155,70 +2190,64 @@ const SideRoomComponent: React.FC = () => {
         <DialogTitle>Mobile Streaming Setup</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
-                <Typography variant="body1" gutterBottom>
+            <Typography variant="body1" gutterBottom>
               To stream from your mobile device, use the free <b>Larix Broadcaster</b> app:
-                </Typography>
+            </Typography>
             <Typography variant="body2" color="text.secondary" paragraph>
               1. Download Larix Broadcaster: <br />
               <a href="https://apps.apple.com/us/app/larix-broadcaster/id1042474385" target="_blank" rel="noopener noreferrer">iOS (App Store)</a> | <a href="https://play.google.com/store/apps/details?id=com.wmspanel.larix_broadcaster" target="_blank" rel="noopener noreferrer">Android (Google Play)</a>
-                </Typography>
-                <Typography variant="body2" color="text.secondary" paragraph>
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
               2. Open Larix Broadcaster and tap the gear/settings icon.<br />
               3. Go to <b>Connections</b> and tap the <b>+</b> to add a new connection.<br />
               4. <b>URL:</b> <span style={{ fontFamily: 'monospace' }}>rtmps://global-live.mux.com:443/app</span><br />
               5. <b>Stream Name/Key:</b> Use the stream key below.
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                  <TextField
-                    fullWidth
-                    label="Stream Key"
-                    value={streamKey}
-                    InputProps={{
-                      readOnly: true,
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <IconButton onClick={() => {
-                            navigator.clipboard.writeText(streamKey);
-                            toast.success('Stream key copied to clipboard');
-                          }}>
-                            <ContentCopy />
-                          </IconButton>
-                        </InputAdornment>
-                      )
-                    }}
-                    variant="outlined"
-                  />
-                </Box>
-                <Typography variant="body2" color="text.secondary">
-              6. Save the connection, return to the main screen, and tap the red record button to start streaming.<br />
-              7. Allow camera and microphone access if prompted.
-                </Typography>
-            {mobileStreamUrl && (
-              <Box sx={{ mt: 2 }}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Stream URL (for viewers):
-                </Typography>
-                <TextField
-                  fullWidth
-                  value={mobileStreamUrl}
-                  InputProps={{
-                    readOnly: true,
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton onClick={() => {
-                          navigator.clipboard.writeText(mobileStreamUrl);
-                          toast.success('Stream URL copied to clipboard');
-                        }}>
-                          <ContentCopy />
-                        </IconButton>
-                      </InputAdornment>
-                    )
-                  }}
-                  variant="outlined"
-                  size="small"
-                />
-              </Box>
-            )}
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <TextField
+                fullWidth
+                label="Stream Key"
+                value={streamKey}
+                InputProps={{
+                  readOnly: true,
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton onClick={() => {
+                        navigator.clipboard.writeText(streamKey);
+                        toast.success('Stream key copied to clipboard');
+                      }}>
+                        <ContentCopy />
+                      </IconButton>
+                    </InputAdornment>
+                  )
+                }}
+                variant="outlined"
+              />
+            </Box>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              6. Save the connection, return to the main screen, and tap the red record button in Larix to start streaming.<br />
+              7. Allow camera and microphone access if prompted.<br />
+              8. Once Larix is streaming, click the red button below to go live!
+            </Typography>
+            <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
+              <Button
+                variant="contained"
+                color="error"
+                size="large"
+                onClick={handleStartMobileStream}
+                disabled={isProcessing}
+                startIcon={<FiberManualRecord />}
+                sx={{ 
+                  py: 2,
+                  px: 4,
+                  borderRadius: 2,
+                  fontSize: '1.1rem',
+                  fontWeight: 'bold'
+                }}
+              >
+                {isProcessing ? 'Starting Stream...' : 'START STREAMING'}
+              </Button>
+            </Box>
           </Box>
         </DialogContent>
         <DialogActions>
