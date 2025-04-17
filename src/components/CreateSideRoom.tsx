@@ -18,17 +18,28 @@ import {
   IconButton,
   Alert,
   Divider,
+  FormHelperText,
 } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import { collection, addDoc, serverTimestamp, Firestore, Timestamp, getDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, Firestore, Timestamp, getDoc, doc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { SideRoom, RoomMember } from '../types/index';
+import { toast } from 'react-hot-toast';
 
 interface CreateSideRoomProps {
   open: boolean;
   onClose: () => void;
+}
+
+interface FormData {
+  name: string;
+  description: string;
+  isPrivate: boolean;
+  password: string;
+  category: string;
+  tags: string[];
 }
 
 const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
@@ -36,8 +47,14 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [formData, setFormData] = useState<FormData>({
+    name: '',
+    description: '',
+    isPrivate: false,
+    password: '',
+    category: '',
+    tags: []
+  });
   const [isPrivate, setIsPrivate] = useState(false);
   const [password, setPassword] = useState('');
   const [tags, setTags] = useState<string[]>([]);
@@ -46,86 +63,74 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
   const [rules, setRules] = useState<string[]>([]);
   const [newRule, setNewRule] = useState('');
   const [enableLiveSessions, setEnableLiveSessions] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleCreateRoom = async () => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!currentUser || !db) return;
 
-    if (!name.trim()) {
-      setError('Room name is required');
+    // Validate required fields
+    if (!formData.name.trim()) {
+      toast.error('Room name is required');
       return;
     }
-
-    if (isPrivate && !password.trim()) {
-      setError('Password is required for private rooms');
+    if (!formData.description.trim()) {
+      toast.error('Description is required');
       return;
     }
-
-    setLoading(true);
-    setError('');
+    if (!formData.category) {
+      toast.error('Category is required');
+      return;
+    }
+    if (formData.isPrivate && !formData.password.trim()) {
+      toast.error('Password is required for private rooms');
+      return;
+    }
 
     try {
-      // Get current user's data from Firestore
-      const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-      if (!userDoc.exists()) {
-        throw new Error('User data not found');
-      }
-      const userData = userDoc.data();
-
-      const ownerData = {
-        userId: currentUser.uid,
-        username: userData.username || currentUser.displayName || 'Unknown User',
-        displayName: userData.displayName || userData.username || currentUser.displayName || 'Unknown User',
-        avatar: userData.avatar || userData.photoURL || currentUser.photoURL || ''
-      };
-
-      const currentDate = new Date();
-
+      setIsSubmitting(true);
       const roomData = {
-        name: name.trim(),
-        description: description.trim(),
+        name: formData.name,
+        description: formData.description,
         ownerId: currentUser.uid,
-        owner: ownerData,
-        members: [{
-          ...ownerData,
+        viewers: [{
+          userId: currentUser.uid,
+          username: currentUser.displayName || 'Anonymous',
+          avatar: currentUser.photoURL || '',
           role: 'owner',
-          joinedAt: currentDate
+          joinedAt: serverTimestamp()
         }],
-        memberCount: 1,
-        createdAt: currentDate,
-        isPrivate,
-        password: isPrivate ? password.trim() : null,
-        tags,
-        category,
-        rules,
+        viewerCount: 1,
+        createdAt: serverTimestamp(),
+        isPrivate: formData.isPrivate,
+        password: formData.isPrivate ? formData.password : '',
+        category: formData.category,
+        tags: formData.tags,
+        lastActive: serverTimestamp(),
         isLive: false,
         liveParticipants: [],
-        activeUsers: 0,
-        bannedUsers: [],
-        enableLiveSessions,
-        liveSettings: {
-          audioEnabled: true,
-          videoEnabled: false,
-          screenSharingEnabled: false,
-          raiseHandEnabled: true,
-          chatEnabled: true,
-          reactionsEnabled: true
-        }
+        activeUsers: 0
       };
 
-      const docRef = await addDoc(collection(db, 'sideRooms'), roomData);
+      const roomRef = await addDoc(collection(db, 'sideRooms'), roomData);
 
-      const userRef = doc(db, 'users', currentUser.uid);
-      await updateDoc(userRef, {
-        sideRooms: arrayUnion(docRef.id)
+      // Add room to user's rooms collection
+      await setDoc(doc(db, 'users', currentUser.uid, 'sideRooms', roomRef.id), {
+        name: formData.name,
+        description: formData.description,
+        role: 'owner',
+        joinedAt: serverTimestamp(),
+        lastActive: serverTimestamp()
       });
 
+      toast.success('Room created successfully!');
       onClose();
-      navigate(`/side-room/${docRef.id}`);
-    } catch (err) {
-      console.error('Error creating room:', err);
-      setError('Failed to create room. Please try again.');
+      navigate(`/side-room/${roomRef.id}`);
+    } catch (error) {
+      console.error('Error creating room:', error);
+      toast.error('Failed to create room');
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -163,9 +168,11 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
           label="Room Name"
           type="text"
           fullWidth
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+          value={formData.name}
+          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
           required
+          error={!formData.name.trim()}
+          helperText={!formData.name.trim() ? "Room name is required" : ""}
         />
         
         <TextField
@@ -175,15 +182,18 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
           fullWidth
           multiline
           rows={3}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          value={formData.description}
+          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+          required
+          error={!formData.description.trim()}
+          helperText={!formData.description.trim() ? "Description is required" : ""}
         />
 
-        <FormControl fullWidth margin="dense">
+        <FormControl fullWidth margin="dense" required error={!formData.category}>
           <InputLabel>Category</InputLabel>
           <Select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            value={formData.category}
+            onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
             label="Category"
           >
             <MenuItem value="general">General</MenuItem>
@@ -196,10 +206,11 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
             <MenuItem value="education">Education</MenuItem>
             <MenuItem value="other">Other</MenuItem>
           </Select>
+          {!formData.category && <FormHelperText>Category is required</FormHelperText>}
         </FormControl>
 
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2">Tags</Typography>
+          <Typography variant="subtitle2">Tags (Optional)</Typography>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
             {tags.map((tag) => (
               <Chip
@@ -224,7 +235,7 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
         </Box>
 
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2">Rules</Typography>
+          <Typography variant="subtitle2">Rules (Optional)</Typography>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
             {rules.map((rule) => (
               <Chip
@@ -251,47 +262,35 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
         <FormControlLabel
           control={
             <Switch
-              checked={isPrivate}
-              onChange={(e) => setIsPrivate(e.target.checked)}
+              checked={formData.isPrivate}
+              onChange={(e) => setFormData(prev => ({ ...prev, isPrivate: e.target.checked }))}
             />
           }
           label="Private Room"
         />
 
-        {isPrivate && (
+        {formData.isPrivate && (
           <TextField
             margin="dense"
             label="Password"
             type="password"
             fullWidth
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={formData.password}
+            onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
             required
+            error={!formData.password.trim()}
+            helperText={!formData.password.trim() ? "Password is required for private rooms" : ""}
           />
         )}
-
-        <Divider sx={{ my: 2 }} />
-
-        <Typography variant="h6" sx={{ mb: 2 }}>Live Session Settings</Typography>
-
-        <FormControlLabel
-          control={
-            <Switch
-              checked={enableLiveSessions}
-              onChange={(e) => setEnableLiveSessions(e.target.checked)}
-            />
-          }
-          label="Enable Live Sessions"
-        />
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button
-          onClick={handleCreateRoom}
+          onClick={handleSubmit}
           variant="contained"
-          disabled={loading}
+          disabled={isSubmitting}
         >
-          {loading ? 'Creating...' : 'Create Room'}
+          {isSubmitting ? 'Creating...' : 'Create Room'}
         </Button>
       </DialogActions>
     </Dialog>

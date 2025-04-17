@@ -9,5 +9,5 @@ export const isRoomOwner = (room: SideRoom, user: User): boolean => {
 };
 
 export const hasRoomAccess = (room: SideRoom, user: User): boolean => {
-  return isRoomOwner(room, user) || isRoomViewer(room, user);
+  return true; // Allow access to everyone
 }; 

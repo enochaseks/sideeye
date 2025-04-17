@@ -51,11 +51,11 @@ import {
   Lock
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment, limit } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment, limit, writeBatch, Timestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { formatDistanceToNow } from 'date-fns';
+import { formatTimestamp } from '../utils/dateUtils';
 import { User, UserProfile, SideRoom, UserSideRoom } from '../types/index';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
 import { toast } from 'react-hot-toast';
@@ -371,6 +371,10 @@ const Profile: React.FC = () => {
   const [following, setFollowing] = useState<string[]>([]);
   const [joinedRooms, setJoinedRooms] = useState<UserSideRoom[]>([]);
   const [createdRooms, setCreatedRooms] = useState<UserSideRoom[]>([]);
+  const [pendingFollowRequests, setPendingFollowRequests] = useState<FollowRequestProfile[]>([]);
+  const [showFollowRequestsDialog, setShowFollowRequestsDialog] = useState(false);
+  const navigate = useNavigate();
+  const [isProcessing, setIsProcessing] = useState(false);
   
   const userId = targetUserId || currentUser?.uid || '';
 
@@ -629,6 +633,59 @@ const Profile: React.FC = () => {
       fetchPendingRequests();
     }
   }, [currentUser?.uid, targetUserId, db]);
+
+  // Add type for user document data
+  interface UserDocData {
+    name?: string;
+    username?: string;
+    profilePic?: string;
+    bio?: string;
+    isPrivate?: boolean;
+    createdAt?: Timestamp;
+  }
+
+  // Add a new interface for follow request profiles
+  interface FollowRequestProfile {
+    id: string;
+    name: string;
+    username: string;
+    profilePic: string;
+    bio: string;
+    isPrivate: boolean;
+    createdAt: Date;
+  }
+
+  // Update the follow requests effect
+  useEffect(() => {
+    if (!db || !userId || userId !== currentUser?.uid) return;
+
+    const requestsRef = collection(db, 'users', userId, 'followRequests');
+    const unsubscribe = onSnapshot(requestsRef, async (snapshot) => {
+      const requests = await Promise.all(
+        snapshot.docs.map(async (requestDoc) => {
+          const userDocRef = doc(db, 'users', requestDoc.id);
+          const userDocSnap = await getDoc(userDocRef);
+          const userData = userDocSnap.data() as UserDocData;
+          
+          // Create a follow request profile with minimal required fields
+          const requestProfile: FollowRequestProfile = {
+            id: requestDoc.id,
+            name: userData.name || '',
+            username: userData.username || '',
+            profilePic: userData.profilePic || '',
+            bio: userData.bio || '',
+            isPrivate: userData.isPrivate || false,
+            createdAt: userData.createdAt ? (userData.createdAt as Timestamp).toDate() : new Date()
+          };
+
+          return requestProfile;
+        })
+      );
+      setPendingFollowRequests(requests);
+    });
+
+    return () => unsubscribe();
+  }, [db, userId, currentUser]);
 
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentUser || !e.target.files?.[0] || !db) return;
@@ -1282,7 +1339,7 @@ const Profile: React.FC = () => {
                       <>
                         <Typography variant="body2">{comment.content}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {formatDistanceToNow(comment.timestamp?.toDate?.() || new Date())} ago
+                          {formatTimestamp(comment.timestamp)}
                         </Typography>
                       </>
                     }
@@ -1389,7 +1446,7 @@ const Profile: React.FC = () => {
                 />
                 <ListItemSecondaryAction>
                   <Typography variant="caption" color="text.secondary">
-                    {message.timestamp?.toDate().toLocaleString()}
+                    {formatTimestamp(message.timestamp)}
                   </Typography>
                 </ListItemSecondaryAction>
               </ListItem>
@@ -1468,7 +1525,7 @@ const Profile: React.FC = () => {
               </Typography>
             </Link>
             <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
-              {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
+              {formatTimestamp(post.timestamp)}
             </Typography>
           </Box>
         }
@@ -1547,85 +1604,126 @@ const Profile: React.FC = () => {
 
   // Add functions to handle follow request responses
   const handleAcceptFollow = async (requesterId: string) => {
-    if (!db || !targetUserId) return;
-
+    if (!currentUser || !db) return;
+    
     try {
-      // Remove from follow requests
-      const requestRef = doc(db, 'users', targetUserId, 'followRequests', requesterId);
-      await deleteDoc(requestRef);
-
-      // Add to followers/following
-      const followingRef = doc(db, 'users', requesterId, 'following', targetUserId);
-      const followersRef = doc(db, 'users', targetUserId, 'followers', requesterId);
+      setIsProcessing(true);
       
-      await setDoc(followingRef, { timestamp: serverTimestamp() });
-      await setDoc(followersRef, { timestamp: serverTimestamp() });
+      // Add as follower
+      const followerRef = doc(db, `users/${currentUser.uid}/followers/${requesterId}`);
+      const followingRef = doc(db, `users/${requesterId}/following/${currentUser.uid}`);
+      
+      // Remove from requests
+      const requestRef = doc(db, `users/${currentUser.uid}/followRequests/${requesterId}`);
+      
+      await Promise.all([
+        setDoc(followerRef, {
+          timestamp: serverTimestamp()
+        }),
+        setDoc(followingRef, {
+          timestamp: serverTimestamp()
+        }),
+        deleteDoc(requestRef)
+      ]);
 
-      // Update local state
-      setPendingRequests(prev => prev.filter(id => id !== requesterId));
+      // Create notification for the requester
+      const notificationRef = doc(collection(db, 'users', requesterId, 'notifications'));
+      await setDoc(notificationRef, {
+        type: 'follow_accepted',
+        userId: currentUser.uid,
+        username: currentUser.displayName || 'Anonymous',
+        timestamp: serverTimestamp(),
+        read: false
+      });
+
+      toast.success('Follow request accepted');
     } catch (error) {
       console.error('Error accepting follow request:', error);
-      setError('Failed to accept follow request');
+      toast.error('Failed to accept follow request');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleRejectFollow = async (requesterId: string) => {
-    if (!db || !targetUserId) return;
-
+    if (!currentUser || !db) return;
+    
     try {
-      const requestRef = doc(db, 'users', targetUserId, 'followRequests', requesterId);
+      setIsProcessing(true);
+      
+      // Remove from requests
+      const requestRef = doc(db, `users/${currentUser.uid}/followRequests/${requesterId}`);
       await deleteDoc(requestRef);
-      setPendingRequests(prev => prev.filter(id => id !== requesterId));
+
+      // Create notification for the requester
+      const notificationRef = doc(collection(db, 'users', requesterId, 'notifications'));
+      await setDoc(notificationRef, {
+        type: 'follow_rejected',
+        userId: currentUser.uid,
+        username: currentUser.displayName || 'Anonymous',
+        timestamp: serverTimestamp(),
+        read: false
+      });
+
+      toast.success('Follow request rejected');
     } catch (error) {
       console.error('Error rejecting follow request:', error);
-      setError('Failed to reject follow request');
+      toast.error('Failed to reject follow request');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   // Add follow requests dialog
   const renderFollowRequestsDialog = () => (
     <Dialog
-      open={showFollowRequests}
-      onClose={() => setShowFollowRequests(false)}
+      open={showFollowRequestsDialog}
+      onClose={() => setShowFollowRequestsDialog(false)}
       maxWidth="sm"
       fullWidth
     >
       <DialogTitle>Follow Requests</DialogTitle>
       <DialogContent>
         <List>
-          {pendingRequests.length > 0 ? (
-            pendingRequests.map((requesterId) => (
-              <ListItem key={requesterId} divider>
-                <ListItemText primary={requesterId} />
-                <ListItemSecondaryAction>
+          {pendingFollowRequests.length === 0 ? (
+            <ListItem>
+              <ListItemText primary="No pending follow requests" />
+            </ListItem>
+          ) : (
+            pendingFollowRequests.map((request) => (
+              <ListItem key={request.id}>
+                <ListItemAvatar>
+                  <Avatar src={request.profilePic} alt={request.name}>
+                    {request.name[0]}
+                  </Avatar>
+                </ListItemAvatar>
+                <ListItemText
+                  primary={request.name}
+                  secondary={`@${request.username}`}
+                />
+                <Box sx={{ display: 'flex', gap: 1 }}>
                   <Button
                     variant="contained"
                     color="primary"
-                    onClick={() => handleAcceptFollow(requesterId)}
-                    sx={{ mr: 1 }}
+                    onClick={() => handleAcceptFollow(request.id)}
+                    disabled={isProcessing}
                   >
                     Accept
                   </Button>
                   <Button
                     variant="outlined"
                     color="error"
-                    onClick={() => handleRejectFollow(requesterId)}
+                    onClick={() => handleRejectFollow(request.id)}
+                    disabled={isProcessing}
                   >
                     Reject
                   </Button>
-                </ListItemSecondaryAction>
+                </Box>
               </ListItem>
             ))
-          ) : (
-            <Typography variant="body1" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
-              No pending follow requests
-            </Typography>
           )}
         </List>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={() => setShowFollowRequests(false)}>Close</Button>
-      </DialogActions>
     </Dialog>
   );
 
@@ -1707,6 +1805,51 @@ const Profile: React.FC = () => {
       setIsLoading(false);
     }
   }, [db, targetUserId]);
+
+  // Add function to handle follow request response
+  const handleFollowRequest = async (requesterId: string, accept: boolean) => {
+    if (!db || !currentUser) return;
+
+    try {
+      const batch = writeBatch(db);
+      const requestRef = doc(db, 'users', currentUser.uid, 'followRequests', requesterId);
+
+      if (accept) {
+        // Add to followers and following collections
+        const followerRef = doc(db, 'users', currentUser.uid, 'followers', requesterId);
+        const followingRef = doc(db, 'users', requesterId, 'following', currentUser.uid);
+
+        batch.set(followerRef, {
+          userId: requesterId,
+          followedAt: serverTimestamp()
+        });
+
+        batch.set(followingRef, {
+          userId: currentUser.uid,
+          followedAt: serverTimestamp()
+        });
+
+        // Create notification for accepted request
+        const notificationRef = doc(collection(db, 'users', requesterId, 'notifications'));
+        batch.set(notificationRef, {
+          type: 'follow_accepted',
+          userId: currentUser.uid,
+          username: currentUser.displayName || 'Anonymous',
+          timestamp: serverTimestamp(),
+          read: false
+        });
+      }
+
+      // Delete the request
+      batch.delete(requestRef);
+      await batch.commit();
+
+      toast.success(accept ? 'Follow request accepted' : 'Follow request rejected');
+    } catch (error) {
+      console.error('Error handling follow request:', error);
+      toast.error('Failed to process follow request');
+    }
+  };
 
   if (authLoading || isLoading) {
     return (
@@ -1806,6 +1949,17 @@ const Profile: React.FC = () => {
               )}
             </Box>
           </Box>
+          {currentUser?.uid === userId && pendingFollowRequests.length > 0 && (
+            <Button
+              startIcon={<PersonAddIcon />}
+              onClick={() => setShowFollowRequestsDialog(true)}
+              color="primary"
+              variant="outlined"
+              sx={{ ml: 2 }}
+            >
+              Follow Requests ({pendingFollowRequests.length})
+            </Button>
+          )}
         </Paper>
 
         {/* Stats and Tabs - Only visible if canViewFullProfile is true */}
@@ -1969,7 +2123,7 @@ const Profile: React.FC = () => {
                 <Button
                   variant="contained"
                   color="primary"
-                  component={Link}
+                  component={RouterLink}
                   to="/side-rooms"
                   sx={{ mt: 2 }}
                 >
@@ -2043,7 +2197,7 @@ const Profile: React.FC = () => {
                           <CardActions>
                             <Button
                               size="small"
-                              component={Link}
+                              component={RouterLink}
                               to={`/side-room/${room.id}`}
                               variant="contained"
                               fullWidth
@@ -2189,7 +2343,7 @@ const Profile: React.FC = () => {
                             </Typography>
                           </Link>
                           <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
-                            {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
+                            {formatTimestamp(post.timestamp)}
                           </Typography>
                         </Box>
                       }
@@ -2260,7 +2414,7 @@ const Profile: React.FC = () => {
                             </Typography>
                           </Box>
                         }
-                        secondary={`Deleted ${formatDistanceToNow(item.deletedAt.toDate())} ago`}
+                        secondary={`Deleted ${formatTimestamp(item.deletedAt)} ago`}
                       />
                       <ListItemSecondaryAction>
                         <Button 
@@ -2400,7 +2554,7 @@ const Profile: React.FC = () => {
             <Box>
               <Typography variant="subtitle1">{selectedPost?.authorName}</Typography>
               <Typography variant="body2" color="text.secondary">
-                {selectedPost?.timestamp?.toDate?.()?.toLocaleString()}
+                {formatTimestamp(selectedPost?.timestamp)}
               </Typography>
             </Box>
           </Box>

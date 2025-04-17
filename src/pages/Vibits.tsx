@@ -55,7 +55,7 @@ import {
 import { toast } from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import { saveAs } from 'file-saver';
-import { formatDistanceToNow } from 'date-fns';
+import { formatTimestamp } from '../utils/dateUtils';
 import VibitIcon from '../components/VibitIcon';
 
 interface Video {
@@ -785,26 +785,7 @@ const Vibits: React.FC = () => {
 
   const formatCommentTimestamp = (timestamp: any) => {
     if (!timestamp) return '';
-    
-    try {
-      // If it's a Firebase Timestamp
-      if (timestamp.toDate) {
-        return formatDistanceToNow(timestamp.toDate(), { addSuffix: true });
-      }
-      // If it's already a Date object
-      if (timestamp instanceof Date) {
-        return formatDistanceToNow(timestamp, { addSuffix: true });
-      }
-      // If it's a string or number, try to convert to Date
-      const date = new Date(timestamp);
-      if (!isNaN(date.getTime())) {
-        return formatDistanceToNow(date, { addSuffix: true });
-      }
-      return '';
-    } catch (error) {
-      console.error('Error formatting timestamp:', error);
-      return '';
-    }
+    return formatTimestamp(timestamp);
   };
 
   const handleDeleteComment = async (commentId: string) => {

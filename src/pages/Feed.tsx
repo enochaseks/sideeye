@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Container, Box, Typography, CircularProgress, Alert, Paper, List, ListItem, ListItemAvatar, ListItemText, ListItemSecondaryAction, IconButton, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Slide, AppBar, Toolbar, Divider } from '@mui/material';
+import { Container, Box, Typography, CircularProgress, Alert, Paper, List, ListItem, ListItemAvatar, ListItemText, ListItemSecondaryAction, IconButton, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, AppBar, Toolbar, Divider } from '@mui/material';
 import { useNavigate, Link } from 'react-router-dom';
 import CreatePostDialog from '../components/CreatePostDialog';
 import Stories from '../components/Stories';
@@ -12,7 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import { PostComponent } from '../components/PostComponent';
 import Post from '../components/Post';
-import { formatDistanceToNow } from 'date-fns';
+import { formatTimestamp } from '../utils/dateUtils';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import RepeatIcon from '@mui/icons-material/Repeat';
 import CommentIcon from '@mui/icons-material/Comment';
@@ -24,13 +24,13 @@ import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import DeleteIcon from '@mui/icons-material/Delete';
+import Slide from '@mui/material/Slide';
 
-// Slide up transition for dialog
 const Transition = React.forwardRef(function Transition(
   props: TransitionProps & {
-    children: React.ReactElement;
+    children: React.ReactElement<any, any>;
   },
-  ref: React.Ref<unknown>,
+  ref: React.Ref<unknown>
 ) {
   return <Slide direction="up" ref={ref} {...props} />;
 });
@@ -667,7 +667,7 @@ const Feed: React.FC = () => {
                 </Typography>
               </Link>
               <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
-                {formatDistanceToNow(post.timestamp?.toDate?.() || new Date())} ago
+                {formatTimestamp(post.timestamp)}
               </Typography>
               {!post.isRepost && post.reposts > 0 && (
                 <Typography variant="body2" color="text.secondary" component="span" sx={{ ml: 1 }}>
@@ -820,7 +820,7 @@ const Feed: React.FC = () => {
                 </Typography>
               </Link>
               <Typography variant="body2" color="text.secondary">
-                {formatDistanceToNow(selectedPost.timestamp?.toDate?.() || new Date())} ago
+                {formatTimestamp(selectedPost.timestamp)}
               </Typography>
             </Box>
           </Box>
@@ -878,7 +878,7 @@ const Feed: React.FC = () => {
                           {comment.authorName}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {comment.timestamp ? formatDistanceToNow(comment.timestamp.toDate()) + ' ago' : ''}
+                          {comment.timestamp ? formatTimestamp(comment.timestamp) + ' ago' : ''}
                         </Typography>
                       </Box>
                     }

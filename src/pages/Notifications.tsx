@@ -15,8 +15,10 @@ import {
 } from '@mui/material';
 import { Delete as DeleteIcon } from '@mui/icons-material';
 import { useNotifications, Notification } from '../contexts/NotificationContext';
-import { formatDistanceToNow } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { db } from '../services/firebase';
+import { formatTimestamp } from '../utils/dateUtils';
 
 const NotificationPage: React.FC = () => {
   const { notifications, markAsRead, deleteNotification, markAllAsRead } = useNotifications();
@@ -114,7 +116,7 @@ const NotificationPage: React.FC = () => {
                         {notification.content}
                       </Typography>
                     }
-                    secondary={formatDistanceToNow(notification.createdAt, { addSuffix: true })}
+                    secondary={formatTimestamp(notification.createdAt)}
                   />
                   <IconButton
                     edge="end"

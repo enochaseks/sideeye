@@ -15,6 +15,7 @@ import CreateStory from './CreateStory';
 import StoryViewer from './StoryViewer';
 import { Story } from '../types/story';
 import { Link } from 'react-router-dom';
+import { formatTimestamp } from '../utils/dateUtils';
 
 interface StoriesProps {
   following: string[];

@@ -52,19 +52,17 @@ interface SideRoomMember {
 interface SideRoomData {
   id: string;
   name: string;
-  description?: string;
+  description: string;
   createdAt: Timestamp;
   lastActive: Timestamp;
-  memberCount: number;
-  maxMembers: number;
-  members?: SideRoomMember[];
-  isPrivate?: boolean;
+  viewerCount: number;
+  maxViewers: number;
+  viewers: SideRoomMember[] | undefined;
+  isPrivate: boolean;
   password?: string;
   genre?: string;
   tags?: string[];
   category?: string;
-  viewers?: SideRoomMember[];
-  viewerCount?: number;
 }
 
 const GENRES = [
@@ -121,16 +119,14 @@ const SideRoomList: React.FC = () => {
               description: data.description,
               createdAt: data.createdAt as Timestamp,
               lastActive: data.lastActive as Timestamp,
-              memberCount: data.memberCount || 0,
-              maxMembers: data.maxMembers || 50,
-              members: data.members as SideRoomMember[] | undefined,
+              viewerCount: data.viewerCount || 0,
+              maxViewers: data.maxViewers || 100,
+              viewers: data.viewers as SideRoomMember[] | undefined,
               isPrivate: data.isPrivate,
               password: data.password,
               genre: data.genre,
               tags: data.tags as string[] | undefined,
-              category: data.category,
-              viewers: data.viewers as SideRoomMember[] | undefined,
-              viewerCount: data.viewerCount || 0
+              category: data.category
             } as SideRoomData;
           });
           
@@ -189,7 +185,7 @@ const SideRoomList: React.FC = () => {
         case 'oldest':
           return timeA - timeB;
         case 'members':
-          return (b.memberCount || 0) - (a.memberCount || 0);
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
         case 'activity':
           return lastActiveB - lastActiveA;
         default:
@@ -284,7 +280,7 @@ const SideRoomList: React.FC = () => {
           }
 
           const roomData = roomDoc.data();
-          const members = roomData.members || [];
+          const members = roomData.viewers || [];
           
           // Check if user is already a member
           const isMember = members.some((member: any) => member.userId === currentUser.uid);
@@ -292,14 +288,14 @@ const SideRoomList: React.FC = () => {
           if (!isMember) {
             // Add user as a member
             transaction.update(roomRef, {
-              members: arrayUnion({
+              viewers: arrayUnion({
                 userId: currentUser.uid,
                 username: currentUser.displayName || 'Anonymous',
                 avatar: currentUser.photoURL || '',
                 role: 'member',
                 joinedAt: new Date()
               }),
-              memberCount: increment(1),
+              viewerCount: increment(1),
               activeUsers: increment(1),
               lastActive: serverTimestamp()
             });
@@ -440,7 +436,7 @@ const SideRoomList: React.FC = () => {
                 <Chip
                   size="small"
                   icon={<Group />}
-                  label={`${room.memberCount || 0} members`}
+                  label={`${room.viewerCount || 0} viewers`}
                   variant="outlined"
                 />
               </CardContent>
@@ -449,7 +445,7 @@ const SideRoomList: React.FC = () => {
                   fullWidth
                   variant="contained"
                   onClick={() => handleJoinRoom(room)}
-                  disabled={isProcessing || room.memberCount >= room.maxMembers}
+                  disabled={isProcessing || room.viewerCount >= room.maxViewers}
                   sx={{ 
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
@@ -457,7 +453,7 @@ const SideRoomList: React.FC = () => {
                   }}
                 >
                   {isProcessing ? <CircularProgress size={24} /> : 
-                   (room.memberCount >= room.maxMembers ? 'Room Full' : 'Join Room')}
+                   (room.viewerCount >= room.maxViewers ? 'Room Full' : 'Join Room')}
                 </Button>
               </CardActions>
             </Card>

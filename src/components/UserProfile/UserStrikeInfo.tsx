@@ -24,7 +24,7 @@ import {
   History as HistoryIcon,
 } from '@mui/icons-material';
 import { getUserStrikeInfo } from '../../services/contentModeration';
-import { formatDistanceToNow } from 'date-fns';
+import { formatTimestamp } from '../../utils/dateUtils';
 
 interface UserStrikeInfoProps {
   userId: string;
@@ -177,7 +177,7 @@ const UserStrikeInfo: React.FC<UserStrikeInfoProps> = ({ userId }) => {
           {actionStatus.description}
           {strikeData.lastActionDate && (
             <Typography variant="body2" sx={{ mt: 1 }}>
-              Last action taken: {formatDistanceToNow(new Date(strikeData.lastActionDate))} ago
+              Last action taken: {formatTimestamp(new Date(strikeData.lastActionDate))}
             </Typography>
           )}
         </Alert>
@@ -230,7 +230,7 @@ const UserStrikeInfo: React.FC<UserStrikeInfoProps> = ({ userId }) => {
                       .map((strike, index) => (
                         <ListItem key={index} sx={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                           <ListItemText
-                            primary={`Strike: ${strike.count} points - ${formatDistanceToNow(new Date(strike.timestamp))} ago`}
+                            primary={`Strike: ${strike.count} points - ${formatTimestamp(new Date(strike.timestamp))}`}
                             secondary={
                               <Box sx={{ mt: 1 }}>
                                 <Typography variant="body2" color="text.secondary">
@@ -271,7 +271,7 @@ const UserStrikeInfo: React.FC<UserStrikeInfoProps> = ({ userId }) => {
                       .map((warning, index) => (
                         <ListItem key={index} sx={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                           <ListItemText
-                            primary={`Warning Level: ${warning.level.toUpperCase()} - ${formatDistanceToNow(new Date(warning.timestamp))} ago`}
+                            primary={`Warning Level: ${warning.level.toUpperCase()} - ${formatTimestamp(new Date(warning.timestamp))}`}
                             secondary={
                               <Box sx={{ mt: 1 }}>
                                 <Typography variant="body2" color="text.secondary">

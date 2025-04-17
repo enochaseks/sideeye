@@ -94,7 +94,7 @@ import {
   Visibility,
   Share as ShareIcon,
   LiveTv,
-  PhoneAndroid
+  PhoneAndroid as PhoneAndroidIcon
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember } from '../../types/index';
 import MuxStream from '../Stream/MuxStream';
@@ -820,84 +820,6 @@ const SideRoomComponent: React.FC = () => {
       }
     }
   }, [room, currentUser, roomId, isProcessing, db, setShowPasswordDialog, setIsProcessing]);
-
-  // Add new function for room owners to add members
-  const handleAddMember = async (userId: string) => {
-    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) return;
-
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-      
-      // Get user's profile data
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      if (!userDoc.exists()) {
-        throw new Error('User not found');
-      }
-
-      const userData = userDoc.data();
-      
-      // Check if user is already a member or viewer
-      const isMember = room.members?.some(member => member.userId === userId);
-      const isViewer = room.viewers?.some(viewer => viewer.userId === userId);
-      
-      if (isMember) {
-        throw new Error('User is already a member');
-      }
-
-      // Remove from viewers if they are one
-      if (isViewer) {
-        const viewerToRemove = room.viewers?.find(viewer => viewer.userId === userId);
-        if (viewerToRemove) {
-          await updateDoc(roomRef, {
-            viewers: arrayRemove(viewerToRemove),
-            viewerCount: increment(-1)
-          });
-        }
-      }
-
-      // Add as member
-      const newMember: RoomMember = {
-        userId: userId,
-        username: userData.username || 'Anonymous',
-        avatar: userData.avatar || '',
-        role: 'member' as const,
-        joinedAt: serverTimestamp()
-      };
-
-      // Update room with new member
-      await updateDoc(roomRef, {
-        members: arrayUnion(newMember),
-        memberCount: increment(1),
-        activeUsers: increment(1),
-        lastActive: serverTimestamp()
-      });
-
-      // Create notification for new member
-      const notificationRef = doc(collection(db, 'users', userId, 'notifications'));
-      await setDoc(notificationRef, {
-        type: 'room_invite',
-        roomId,
-        roomName: room.name,
-        invitedBy: currentUser.uid,
-        inviterName: currentUser.displayName || 'Anonymous',
-        timestamp: serverTimestamp(),
-        status: 'unread',
-        message: `You have been added as a member to "${room.name}"`
-      });
-
-      toast.success('Member added successfully');
-    } catch (err) {
-      console.error('Error adding member:', err);
-      if (err instanceof Error) {
-        toast.error(err.message);
-      } else {
-        toast.error('Failed to add member');
-      }
-    } finally {
-      setIsProcessing(false);
-    }
-  };
 
   const handlePasswordSubmit = useCallback(() => {
     if (!room) {
@@ -1694,18 +1616,19 @@ const SideRoomComponent: React.FC = () => {
                   </IconButton>
                 </Tooltip>
               )}
+              {/* Mobile streaming button - only visible to room owners */}
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleStartMobileStreamSetup}
+                startIcon={<PhoneAndroidIcon />}
+                disabled={isProcessing}
+                sx={{ mb: 2 }}
+              >
+                Start Mobile Stream
+              </Button>
             </>
           )}
-          {/* Mobile Stream button - moved outside isRoomOwner check */}
-          <Tooltip title="Start Mobile Stream">
-            <IconButton 
-              onClick={handleStartMobileStreamSetup}
-              color="primary"
-              disabled={isProcessing}
-            >
-              <PhoneAndroid />
-            </IconButton>
-          </Tooltip>
         </Box>
       </Box>
     </Box>

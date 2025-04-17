@@ -1,4 +1,4 @@
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow as formatDistance } from 'date-fns';
 
 // Helper function to convert timestamp to Date
 export const convertTimestampToDate = (timestamp: any): Date => {
@@ -18,7 +18,7 @@ export const formatDate = (timestamp: any): string => {
       console.error('Invalid date:', timestamp);
       return 'Just now';
     }
-    return formatDistanceToNow(date, { addSuffix: true });
+    return formatDistance(date, { addSuffix: true });
   } catch (error) {
     console.error('Error formatting date:', error);
     return 'Just now';
@@ -34,5 +34,37 @@ export const compareTimestamps = (timestamp1: any, timestamp2: any): boolean => 
   } catch (error) {
     console.error('Error comparing timestamps:', error);
     return false;
+  }
+};
+
+export const formatDistanceToNow = (date: Date | number): string => {
+  try {
+    return formatDistance(date);
+  } catch (error) {
+    // Fallback formatting if date-fns fails
+    if (date instanceof Date) {
+      return date.toLocaleString();
+    }
+    return new Date(date).toLocaleString();
+  }
+};
+
+export const formatTimestamp = (timestamp: any): string => {
+  if (!timestamp) return '';
+  
+  try {
+    // Handle Firebase Timestamp
+    if (timestamp.toDate) {
+      return formatDistanceToNow(timestamp.toDate());
+    }
+    // Handle Date object
+    if (timestamp instanceof Date) {
+      return formatDistanceToNow(timestamp);
+    }
+    // Handle numeric timestamp
+    return formatDistanceToNow(new Date(timestamp));
+  } catch (error) {
+    console.error('Error formatting timestamp:', error);
+    return '';
   }
 }; 
