@@ -56,13 +56,13 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories, initialIndex, open, 
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [showViewers, setShowViewers] = useState(false);
   const [viewers, setViewers] = useState<Viewer[]>([]);
-  const progressInterval = useRef<NodeJS.Timeout>();
+  const progressInterval = useRef<NodeJS.Timeout | undefined>(undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [isHolding, setIsHolding] = useState(false);
-  const holdTimeoutRef = useRef<NodeJS.Timeout>();
+  const holdTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const navigate = useNavigate();
 
   const currentStory = stories[currentIndex];

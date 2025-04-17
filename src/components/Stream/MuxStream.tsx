@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Box, Button, Typography, Alert, CircularProgress } from '@mui/material';
 import '@mux/mux-player';
 import { createLiveStream, deleteLiveStream, fetchWithCORS } from '../../api/mux';
+import MuxPlayer from './MuxPlayer';
 
-declare global {
+declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
       'mux-player': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
@@ -11,6 +12,7 @@ declare global {
         'playback-id'?: string;
         'metadata-video-title'?: string;
         'metadata-viewer-user-id'?: string;
+        style?: React.CSSProperties;
       };
     }
   }
@@ -31,7 +33,7 @@ const MuxStream: React.FC<MuxStreamProps> = ({ isOwner, roomId }) => {
   const [playbackId, setPlaybackId] = useState<string>('');
   const [isStreamActive, setIsStreamActive] = useState(false);
   const playerRef = useRef<HTMLElement>(null);
-  const checkStreamInterval = useRef<NodeJS.Timeout>();
+  const checkStreamInterval = useRef<NodeJS.Timeout | undefined>(undefined);
 
   useEffect(() => {
     if (isOwner && roomId) {
@@ -234,12 +236,12 @@ const MuxStream: React.FC<MuxStreamProps> = ({ isOwner, roomId }) => {
               </Alert>
             </Box>
           ) : (
-            <mux-player
+            <MuxPlayer
               ref={playerRef}
-              stream-type="live"
-              playback-id={playbackId}
-              metadata-video-title="Live Stream"
-              metadata-viewer-user-id={roomId}
+              streamType="live"
+              playbackId={playbackId}
+              metadataVideoTitle="Live Stream"
+              metadataViewerUserId={roomId}
               style={{ width: '100%', maxHeight: '500px' }}
             />
           )}
