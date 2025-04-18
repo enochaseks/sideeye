@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Container, Box, Typography, CircularProgress, Alert, Paper, List, ListItem, ListItemAvatar, ListItemText, ListItemSecondaryAction, IconButton, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, AppBar, Toolbar, Divider } from '@mui/material';
+import { Container, Box, Typography, CircularProgress, Alert, Paper, List, ListItem, ListItemAvatar, ListItemText, ListItemSecondaryAction, IconButton, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, AppBar, Toolbar, Divider, Tabs, Tab } from '@mui/material';
 import { useNavigate, Link } from 'react-router-dom';
 import CreatePostDialog from '../components/CreatePostDialog';
-import Stories from '../components/Stories';
 import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, Timestamp, getDocs, DocumentData, documentId, writeBatch } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from '../services/firebase';
@@ -35,6 +34,32 @@ const Transition = React.forwardRef(function Transition(
   return <Slide direction="up" ref={ref} {...props} />;
 });
 
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`feed-tabpanel-${index}`}
+      aria-labelledby={`feed-tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ py: 3 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
+
 // Add interface for repost data
 interface RepostData {
   id: string;
@@ -49,6 +74,7 @@ const Feed: React.FC = () => {
   const { db } = useFirestore();
   const navigate = useNavigate();
   const [posts, setPosts] = useState<PostData[]>([]);
+  const [discoverPosts, setDiscoverPosts] = useState<PostData[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [following, setFollowing] = useState<string[]>([]);
@@ -65,6 +91,11 @@ const Feed: React.FC = () => {
   const open = Boolean(anchorEl);
   const [createPostOpen, setCreatePostOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [tabValue, setTabValue] = useState(0);
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
+  };
 
   // Function to load reposts separately
   const loadReposts = async (regularPosts: PostData[]) => {
@@ -183,6 +214,7 @@ const Feed: React.FC = () => {
     loadUserProfile();
   }, [currentUser, db, authLoading]);
 
+  // Load following feed
   useEffect(() => {
     if (!db || !currentUser) {
       setFeedLoading(false);
@@ -223,11 +255,6 @@ const Feed: React.FC = () => {
           setPosts(postsList);
           setIsLoading(false);
           setFeedLoading(false);
-        }, (error) => {
-          console.error('Error fetching posts:', error);
-          setError('Failed to load posts');
-          setIsLoading(false);
-          setFeedLoading(false);
         });
 
         return () => unsubscribe();
@@ -241,6 +268,43 @@ const Feed: React.FC = () => {
 
     fetchPosts();
   }, [db, currentUser]);
+
+  // Load discover feed
+  useEffect(() => {
+    if (!db) {
+      return;
+    }
+
+    const fetchDiscoverPosts = async () => {
+      try {
+        setIsLoading(true);
+        
+        // Create a query to get recent posts from all users
+        const postsQuery = query(
+          collection(db, 'posts'),
+          orderBy('timestamp', 'desc'),
+          limit(50)
+        );
+
+        const unsubscribe = onSnapshot(postsQuery, (snapshot) => {
+          const postsList = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as PostData[];
+          setDiscoverPosts(postsList);
+          setIsLoading(false);
+        });
+
+        return () => unsubscribe();
+      } catch (error) {
+        console.error('Error setting up discover posts listener:', error);
+        setError('Failed to load discover posts');
+        setIsLoading(false);
+      }
+    };
+
+    fetchDiscoverPosts();
+  }, [db]);
 
   const uploadImage = async (file: File): Promise<string> => {
     const storageRef = ref(storage, `posts/${Date.now()}_${file.name}`);
@@ -1034,104 +1098,63 @@ const Feed: React.FC = () => {
 
   return (
     <Container maxWidth="lg">
-      <Box 
-        sx={{ 
-          mb: 4,
-          pt: 3,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          position: 'relative'
-        }}
-      >
-        <Typography 
-          variant="h4" 
-          component="h1"
-          sx={{
-            fontWeight: 'bold',
-            background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-            backgroundClip: 'text',
-            textFillColor: 'transparent',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            mb: 1,
-            textAlign: 'center',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
-            position: 'relative',
-            '&::after': {
-              content: '""',
-              position: 'absolute',
-              bottom: -8,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              width: '60px',
-              height: '4px',
-              background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-              borderRadius: '2px'
-            }
-          }}
-        >
-          Your Feed
-        </Typography>
-        <Typography 
-          variant="subtitle1" 
-          color="text.secondary"
-          sx={{ 
-            textAlign: 'center',
-            fontStyle: 'italic',
-            mb: 2
-          }}
-        >
-          Stay updated with your friends and community
-        </Typography>
-      </Box>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {feedLoading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-          <CircularProgress />
-        </Box>
-      ) : (
-        <>
-          <Box sx={{ mb: 4 }}>
-            <Stories following={userProfile?.following || []} />
-          </Box>
-
-          <Paper 
-            elevation={3}
-            sx={{ 
-              mb: 4,
-              borderRadius: 2,
-              p: 2,
-              position: 'relative',
-              zIndex: 10
+      <Box sx={{ width: '100%' }}>
+        <Box sx={{ 
+          borderBottom: 0,
+          position: 'sticky',
+          top: 0,
+          backgroundColor: 'background.paper',
+          zIndex: 1000,
+          mb: 2
+        }}>
+          <Tabs 
+            value={tabValue} 
+            onChange={handleTabChange} 
+            variant="fullWidth"
+            sx={{
+              '& .MuiTab-root': {
+                fontWeight: 'bold',
+                fontSize: '1rem',
+              }
             }}
           >
-            <CreatePostDialog
-              open={createPostOpen}
-              onClose={() => setCreatePostOpen(false)}
-            />
-          </Paper>
+            <Tab label="Following" />
+            <Tab label="Discover" />
+          </Tabs>
+        </Box>
 
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {posts.length === 0 ? (
-              <Typography variant="body1" color="text.secondary" align="center">
-                No posts yet. Follow some users to see their posts!
-              </Typography>
-            ) : (
-              <List>
-                {posts.map(renderPost)}
-              </List>
-            )}
-          </Box>
-        </>
-      )}
+        <TabPanel value={tabValue} index={0}>
+          {isLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : posts.length === 0 ? (
+            <Typography variant="body1" color="text.secondary" align="center">
+              No posts yet. Follow some users to see their posts!
+            </Typography>
+          ) : (
+            <List>
+              {posts.map(renderPost)}
+            </List>
+          )}
+        </TabPanel>
+
+        <TabPanel value={tabValue} index={1}>
+          {isLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : discoverPosts.length === 0 ? (
+            <Typography variant="body1" color="text.secondary" align="center">
+              No posts to discover yet.
+            </Typography>
+          ) : (
+            <List>
+              {discoverPosts.map(renderPost)}
+            </List>
+          )}
+        </TabPanel>
+      </Box>
 
       {renderPostDialog()}
       {renderSyncButton()}

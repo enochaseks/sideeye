@@ -432,7 +432,7 @@ const SideRoomComponent: React.FC = () => {
     };
   }, [messagesEndRef.current, lastMessageDoc]);
 
-  // Optimize presence updates with debouncing
+  // Update presence data
   const updatePresence = useCallback(
     _.debounce(async () => {
       if (!currentUser?.uid || !roomId) {
@@ -445,14 +445,14 @@ const SideRoomComponent: React.FC = () => {
           userId: currentUser.uid,
           username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
           avatar: currentUser.photoURL || '',
+          displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
           lastSeen: serverTimestamp(),
           isOnline: true,
           role: isRoomOwner ? 'owner' : 'viewer'
         };
-        console.log('Writing presence (debounced):', { path: presenceRef.path, data: presenceData });
         await setDoc(presenceRef, presenceData, { merge: true });
       } catch (err) {
-        console.error('Presence Firestore write failed (debounced):', err, { currentUser, roomId });
+        console.error('Presence Firestore write failed:', err, { currentUser, roomId });
       }
     }, 1000),
     [currentUser, roomId, isRoomOwner]
@@ -523,7 +523,6 @@ const SideRoomComponent: React.FC = () => {
       avatar: currentUser.photoURL || '',
       content: messageContent,
       timestamp: new Date(),
-      photoURL: currentUser.photoURL || '',
       displayName: currentUser.displayName || currentUser.email?.split('@')[0] || ''
     };
 
@@ -538,7 +537,6 @@ const SideRoomComponent: React.FC = () => {
         avatar: currentUser.photoURL || '',
         content: messageContent,
         timestamp: serverTimestamp(),
-        photoURL: currentUser.photoURL || '',
         displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
         // Add required fields for security rules
         ownerId: room?.ownerId,
@@ -597,9 +595,9 @@ const SideRoomComponent: React.FC = () => {
               username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
               avatar: currentUser.photoURL || '',
               displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-              photoURL: currentUser.photoURL || '',
               lastSeen: serverTimestamp(),
-            isOnline: true
+              isOnline: true,
+              role: isRoomOwner ? 'owner' : 'viewer'
           };
           // console.log('Writing presence (updateDoc):', { path: userPresenceRef.path, data: presenceData });
           await setDoc(userPresenceRef, presenceData, { merge: true });
@@ -1796,8 +1794,8 @@ const SideRoomComponent: React.FC = () => {
                 style={{ textDecoration: 'none' }}
               >
                 <Avatar 
-                  src={message.photoURL || message.avatar} 
-                  alt={message.displayName || message.username}
+                  src={message.avatar} 
+                  alt={message.username}
                   sx={{ 
                     width: 36, 
                     height: 36,
@@ -1810,7 +1808,7 @@ const SideRoomComponent: React.FC = () => {
                     }
                   }}
                 >
-                  {(!message.photoURL && !message.avatar) && (message.displayName || message.username || 'A').charAt(0).toUpperCase()}
+                  {!message.avatar && message.username?.charAt(0).toUpperCase()}
                 </Avatar>
               </RouterLink>
             )}
@@ -1836,7 +1834,7 @@ const SideRoomComponent: React.FC = () => {
                       }
                     }}
                   >
-                    {message.displayName || message.username || 'Anonymous'}
+                    {message.username}
                   </Typography>
                 </RouterLink>
               )}
@@ -1898,8 +1896,8 @@ const SideRoomComponent: React.FC = () => {
                 style={{ textDecoration: 'none' }}
               >
                 <Avatar 
-                  src={message.photoURL || message.avatar} 
-                  alt={message.displayName || message.username}
+                  src={message.avatar} 
+                  alt={message.username}
                   sx={{ 
                     width: 36, 
                     height: 36,
@@ -1912,7 +1910,7 @@ const SideRoomComponent: React.FC = () => {
                     }
                   }}
                 >
-                  {(!message.photoURL && !message.avatar) && (message.displayName || message.username || 'A').charAt(0).toUpperCase()}
+                  {!message.avatar && message.username?.charAt(0).toUpperCase()}
                 </Avatar>
               </RouterLink>
             )}

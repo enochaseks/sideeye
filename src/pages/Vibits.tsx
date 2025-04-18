@@ -55,8 +55,9 @@ import {
 import { toast } from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import { saveAs } from 'file-saver';
-import { formatTimestamp } from '../utils/dateUtils';
+import { formatDistanceToNow } from 'date-fns';
 import VibitIcon from '../components/VibitIcon';
+import VideoEditor from '../components/VideoEditor';
 
 interface Video {
   id: string;
@@ -136,6 +137,8 @@ const Vibits: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [isCommenting, setIsCommenting] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
+  const [videoToEdit, setVideoToEdit] = useState<File | null>(null);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -475,9 +478,6 @@ const Vibits: React.FC = () => {
     if (!file || !currentUser) return;
 
     try {
-      setUploading(true);
-      setUploadProgress(0);
-
       // Create a URL for the video file
       const videoURL = URL.createObjectURL(file);
       const video = document.createElement('video');
@@ -498,42 +498,67 @@ const Vibits: React.FC = () => {
       // Check duration
       if (duration < 5 || duration > 180) {
         toast.error('Videos must be between 5 seconds and 3 minutes long');
-        setUploading(false);
         return;
       }
 
+      // Show the editor with the video file BEFORE upload
+      setVideoToEdit(file);
+      setShowEditor(true);
+    } catch (error) {
+      console.error('Error processing video:', error);
+      toast.error('Failed to process video');
+    }
+  };
+
+  const handleEditorSave = async (editedVideo: File) => {
+    if (!currentUser) {
+      toast.error('You must be logged in to upload videos');
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setUploadProgress(0);
+
       const storage = getStorage();
       const timestamp = Date.now();
-      const fileName = `${timestamp}_${file.name}`;
+      const fileName = `${timestamp}_${editedVideo.name}`;
       const storageRef = ref(storage, `videos/${currentUser.uid}/${fileName}`);
 
-      // Create thumbnail
+      // Create thumbnail from edited video
+      const videoURL = URL.createObjectURL(editedVideo);
+      const video = document.createElement('video');
+      video.src = videoURL;
+      
+      await new Promise((resolve) => {
+        video.onloadedmetadata = resolve;
+        video.load();
+      });
+
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
-      
-      // Set canvas dimensions based on video dimensions
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       
-      // Draw the video frame
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
 
-      // Convert canvas to blob
       const thumbnailBlob = await new Promise<Blob>((resolve) => {
         canvas.toBlob((blob) => {
           if (blob) resolve(blob);
         }, 'image/jpeg', 0.7);
       });
 
+      URL.revokeObjectURL(videoURL);
+
       // Upload thumbnail
       const thumbnailRef = ref(storage, `thumbnails/${currentUser.uid}/${timestamp}.jpg`);
       await uploadBytes(thumbnailRef, thumbnailBlob);
       const thumbnailUrl = await getDownloadURL(thumbnailRef);
 
-      // Upload video
-      const uploadTask = uploadBytesResumable(storageRef, file);
+      // Upload the edited video
+      const uploadTask = uploadBytesResumable(storageRef, editedVideo);
       
       uploadTask.on('state_changed',
         (snapshot) => {
@@ -563,7 +588,7 @@ const Vibits: React.FC = () => {
               likes: 0,
               comments: 0,
               timestamp: serverTimestamp(),
-              duration,
+              duration: video.duration,
               resolution: `${video.videoWidth}x${video.videoHeight}`
             });
 
@@ -575,6 +600,8 @@ const Vibits: React.FC = () => {
           } finally {
             setUploading(false);
             setUploadProgress(0);
+            setShowEditor(false);
+            setVideoToEdit(null);
           }
         }
       );
@@ -584,6 +611,11 @@ const Vibits: React.FC = () => {
       setUploading(false);
       setUploadProgress(0);
     }
+  };
+
+  const handleEditorCancel = () => {
+    setShowEditor(false);
+    setVideoToEdit(null);
   };
 
   const handleDeleteVideo = async (video: Video) => {
@@ -785,7 +817,26 @@ const Vibits: React.FC = () => {
 
   const formatCommentTimestamp = (timestamp: any) => {
     if (!timestamp) return '';
-    return formatTimestamp(timestamp);
+    
+    try {
+      // If it's a Firebase Timestamp
+      if (timestamp.toDate) {
+        return formatDistanceToNow(timestamp.toDate(), { addSuffix: true });
+      }
+      // If it's already a Date object
+      if (timestamp instanceof Date) {
+        return formatDistanceToNow(timestamp, { addSuffix: true });
+      }
+      // If it's a string or number, try to convert to Date
+      const date = new Date(timestamp);
+      if (!isNaN(date.getTime())) {
+        return formatDistanceToNow(date, { addSuffix: true });
+      }
+      return '';
+    } catch (error) {
+      console.error('Error formatting timestamp:', error);
+      return '';
+    }
   };
 
   const handleDeleteComment = async (commentId: string) => {
@@ -1002,68 +1053,94 @@ const Vibits: React.FC = () => {
         zIndex: 1000,
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'space-between',
+        px: 2
       }}>
-        <Tabs
-          value={tabIndex}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
-          centered
-          sx={{
-            width: '100%',
-            height: '100%',
-            '& .MuiTab-root': {
-              color: 'text.primary',
-              fontSize: '1.1rem',
-              fontWeight: 500,
-              textTransform: 'none',
-              minHeight: '48px',
-              '&.Mui-selected': {
-                color: 'primary.main'
-              }
-            },
-            '& .MuiTabs-indicator': {
-              height: '3px'
-            }
-          }}
-        >
-          <Tab 
-            label="DISCOVER" 
-            sx={{ 
-              flex: 1,
-              maxWidth: 'none'
+        <Typography variant="h6" sx={{ color: 'text.primary' }}>
+          Vibits
+        </Typography>
+
+        <input
+          type="file"
+          accept="video/*"
+          onChange={handleVideoUpload}
+          style={{ display: 'none' }}
+          id="video-upload"
+          ref={videoInputRef}
+        />
+        <label htmlFor="video-upload">
+          <IconButton
+            color="primary"
+            component="span"
+            sx={{
+              backgroundColor: 'primary.main',
+              '&:hover': {
+                backgroundColor: 'primary.dark'
+              },
+              width: 40,
+              height: 40
             }}
-          />
-          <Tab 
-            label="FOLLOWING" 
-            sx={{ 
-              flex: 1,
-              maxWidth: 'none'
+            onClick={() => {
+              toast('Videos must be between 5 seconds and 3 minutes long');
+              setTimeout(() => {
+                videoInputRef.current?.click();
+              }, 1000);
             }}
-          />
-        </Tabs>
-        <Box
-          sx={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: '32px',
-            height: '32px',
-            bgcolor: 'primary.main',
-            borderRadius: '50%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 2,
-            boxShadow: 2,
-            cursor: 'pointer'
-          }}
-        >
-          <VibitIcon sx={{ color: '#fff', fontSize: 20 }} />
-        </Box>
+          >
+            {uploading ? (
+              <CircularProgress 
+                size={24} 
+                color="inherit" 
+                sx={{ color: 'white' }}
+              />
+            ) : (
+              <AddIcon sx={{ fontSize: 24, color: 'white' }} />
+            )}
+          </IconButton>
+        </label>
       </Box>
+
+      <Tabs
+        value={tabIndex}
+        onChange={handleTabChange}
+        indicatorColor="primary"
+        textColor="primary"
+        centered
+        sx={{
+          width: '100%',
+          height: '48px',
+          bgcolor: 'background.default',
+          '& .MuiTab-root': {
+            color: 'text.primary',
+            fontSize: '1.1rem',
+            fontWeight: 500,
+            textTransform: 'none',
+            minHeight: '48px',
+            '&.Mui-selected': {
+              color: 'primary.main'
+            }
+          },
+          '& .MuiTabs-indicator': {
+            height: '3px'
+          }
+        }}
+      >
+        <Tab 
+          label="DISCOVER" 
+          sx={{ 
+            flex: 1,
+            maxWidth: 'none'
+          }}
+        />
+        <Tab 
+          label="FOLLOWING" 
+          sx={{ 
+            flex: 1,
+            maxWidth: 'none'
+          }}
+        />
+      </Tabs>
+
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
           <CircularProgress />
@@ -1419,58 +1496,29 @@ const Vibits: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      <input
-        type="file"
-        accept="video/*"
-        onChange={handleVideoUpload}
-        style={{ display: 'none' }}
-        id="video-upload"
-        ref={videoInputRef}
-      />
-      <label htmlFor="video-upload">
-        <IconButton
-          color="primary"
-          component="span"
-          sx={{
-            position: 'fixed',
-            bottom: 140,
-            right: 16,
-            backgroundColor: 'primary.main',
-            '&:hover': {
-              backgroundColor: 'primary.dark'
-            },
-            boxShadow: 3,
-            width: 56,
-            height: 56,
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-          onClick={() => {
-            toast('Videos must be between 5 seconds and 3 minutes long');
-            setTimeout(() => {
-              videoInputRef.current?.click();
-            }, 1000);
-          }}
-        >
-          {uploading ? (
-            <CircularProgress 
-              size={24} 
-              color="inherit" 
-              sx={{ 
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                marginTop: '-12px',
-                marginLeft: '-12px'
-              }} 
+      {/* Video Editor Dialog */}
+      <Dialog
+        open={showEditor && !!videoToEdit}
+        onClose={handleEditorCancel}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{
+          sx: {
+            height: '90vh',
+            bgcolor: 'background.paper'
+          }
+        }}
+      >
+        <DialogContent sx={{ p: 0, height: '100%' }}>
+          {videoToEdit && (
+            <VideoEditor
+              videoFile={videoToEdit}
+              onSave={handleEditorSave}
+              onCancel={handleEditorCancel}
             />
-          ) : (
-            <AddIcon sx={{ fontSize: 32 }} />
           )}
-        </IconButton>
-      </label>
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 };

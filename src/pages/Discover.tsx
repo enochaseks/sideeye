@@ -53,12 +53,15 @@ import {
   updateDoc,
   arrayRemove,
   arrayUnion,
-  getDoc
+  getDoc,
+  DocumentSnapshot,
+  onSnapshot
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import VibitIcon from '../components/VibitIcon';
+import { formatTimestamp } from '../utils/dateUtils';
 
 interface UserProfile {
   id: string;
@@ -80,27 +83,49 @@ interface Room {
   shareCount: number;
   isPrivate: boolean;
   createdAt: Date;
+  creatorName: string;
+  creatorId: string;
+  creatorAvatar: string;
+  tags: string[];
+  lastActive: Date;
+  maxMembers: number;
+  activeUsers: number;
+  isLive: boolean;
 }
 
 interface FirestoreUser extends DocumentData {
-  displayName?: string;
-  photoURL?: string;
-  username?: string;
+  id: string;
+  username: string;
+  name: string;
   bio?: string;
-  followers?: number;
-  following?: number;
-  displayNameSearch?: string;
-  usernameSearch?: string;
+  profilePic?: string;
+  avatar?: string;
+  email?: string;
+  createdAt: Timestamp;
+}
+
+interface FirestoreVideo extends DocumentData {
+  id: string;
+  title: string;
+  description?: string;
+  username: string;
+  userId: string;
+  url: string;
+  thumbnailUrl?: string;
+  timestamp: Timestamp;
 }
 
 interface FirestoreRoom extends DocumentData {
-  name?: string;
-  description?: string;
-  memberCount?: number;
-  shareCount?: number;
-  isPrivate?: boolean;
-  createdAt?: Timestamp;
-  nameSearch?: string;
+  id: string;
+  name: string;
+  description: string;
+  ownerId: string;
+  createdAt: Timestamp;
+  lastActive: Timestamp;
+  tags?: string[];
+  isPrivate: boolean;
+  activeUsers: number;
+  isLive: boolean;
 }
 
 interface Video {
@@ -153,22 +178,62 @@ const Discover: React.FC = () => {
 
   const fetchRooms = async () => {
     try {
-      const roomsRef = collection(db, 'rooms');
+      setLoading(true);
+      const roomsRef = collection(db, 'sideRooms');
       const q = firestoreQuery(
         roomsRef,
         orderBy('createdAt', 'desc'),
         limit(20)
       );
       
-      const querySnapshot = await getDocs(q);
-      const roomsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Room[];
-      
-      setRooms(roomsData);
+      // Use onSnapshot instead of getDocs for real-time updates
+      const unsubscribe = onSnapshot(q, async (snapshot) => {
+        const roomsData = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
+          const roomData = docSnapshot.data();
+          let creatorData = null;
+          
+          // Get creator data if ownerId exists
+          if (roomData.ownerId) {
+            const creatorDocRef = doc(db, 'users', roomData.ownerId);
+            const creatorDocSnapshot = await getDoc(creatorDocRef);
+            if (creatorDocSnapshot.exists()) {
+              creatorData = creatorDocSnapshot.data();
+            }
+          }
+          
+          return {
+            id: docSnapshot.id,
+            name: roomData.name || 'Unnamed Room',
+            description: roomData.description || '',
+            memberCount: roomData.memberCount || 0,
+            shareCount: roomData.shareCount || 0,
+            isPrivate: roomData.isPrivate || false,
+            createdAt: roomData.createdAt?.toDate() || new Date(),
+            creatorName: creatorData?.username || roomData.creatorName || '',
+            creatorId: roomData.ownerId || '',
+            creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
+            tags: roomData.tags || [],
+            lastActive: roomData.lastActive?.toDate() || new Date(),
+            maxMembers: roomData.maxMembers || 50,
+            activeUsers: roomData.activeUsers || 0,
+            isLive: roomData.isLive || false
+          };
+        }));
+        
+        setRooms(roomsData);
+        setLoading(false);
+      }, (error) => {
+        console.error('Error fetching rooms:', error);
+        toast.error('Failed to load rooms');
+        setLoading(false);
+      });
+
+      // Return unsubscribe function
+      return () => unsubscribe();
     } catch (error) {
       console.error('Error fetching rooms:', error);
+      toast.error('Failed to load rooms');
+      setLoading(false);
     }
   };
 
@@ -391,7 +456,7 @@ const Discover: React.FC = () => {
   };
 
   const handleRoomClick = (roomId: string) => {
-    navigate(`/room/${roomId}`);
+    navigate(`/side-room/${roomId}`);
   };
 
   const handleSearch = async (query: string) => {
@@ -400,73 +465,214 @@ const Discover: React.FC = () => {
     if (!currentUser || !db) {
       setUsers([]);
       setRooms([]);
+      setVideos([]);
       return;
     }
 
     if (query.length < 2) {
-      // If query is too short, fetch default users and rooms
+      // If query is too short, fetch default data
       fetchDefaultUsers();
       fetchRooms();
+      fetchVideos();
       return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      // Search for users in Firestore
+      const searchTerm = query.toLowerCase();
+
+      // Search for users
       const usersRef = collection(db, 'users');
-      const usernameQuery = query.toLowerCase();
-      
-      // Basic username search
-      const q = firestoreQuery(
+      const usersQuery = firestoreQuery(
         usersRef,
-        orderBy('username'),
+        where('username_lower', '>=', searchTerm),
+        where('username_lower', '<=', searchTerm + '\uf8ff'),
         limit(20)
       );
-      
-      const querySnapshot = await getDocs(q);
-      const allUsers = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as UserProfile[];
-      
-      // Filter client-side
-      const filteredUsers = allUsers.filter(user => 
-        user.username?.toLowerCase().includes(usernameQuery) || 
-        user.name?.toLowerCase().includes(usernameQuery)
-      );
-      
-      setUsers(filteredUsers);
       
       // Search for rooms
-      const roomsRef = collection(db, 'rooms');
+      const roomsRef = collection(db, 'sideRooms');
       const roomsQuery = firestoreQuery(
         roomsRef,
-        orderBy('name'),
+        where('name_lower', '>=', searchTerm),
+        where('name_lower', '<=', searchTerm + '\uf8ff'),
         limit(20)
       );
-      
-      const roomsSnapshot = await getDocs(roomsQuery);
-      const allRooms = roomsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Room[];
-      
-      // Filter client-side
-      const filteredRooms = allRooms.filter(room => 
-        room.name?.toLowerCase().includes(usernameQuery) || 
-        room.description?.toLowerCase().includes(usernameQuery)
+
+      // Search for videos
+      const videosRef = collection(db, 'videos');
+      const videosQuery = firestoreQuery(
+        videosRef,
+        where('title_lower', '>=', searchTerm),
+        where('title_lower', '<=', searchTerm + '\uf8ff'),
+        limit(20)
       );
+
+      // Execute all queries in parallel
+      const [usersSnapshot, roomsSnapshot, videosSnapshot] = await Promise.all([
+        getDocs(usersQuery),
+        getDocs(roomsQuery),
+        getDocs(videosQuery)
+      ]);
+
+      // Process users results
+      const usersData = usersSnapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          username: doc.data().username || '',
+          name: doc.data().name || '',
+          bio: doc.data().bio || '',
+          profilePic: doc.data().profilePic || '',
+          avatar: doc.data().avatar || '',
+          createdAt: doc.data().createdAt
+        } as FirestoreUser))
+        .filter(user => 
+          user.username.toLowerCase().includes(searchTerm) || 
+          user.name.toLowerCase().includes(searchTerm) ||
+          (user.bio && user.bio.toLowerCase().includes(searchTerm))
+        );
       
-      setRooms(filteredRooms);
+      // Process rooms results
+      const roomsData = await Promise.all(roomsSnapshot.docs.map(async (docSnapshot) => {
+        const data = docSnapshot.data();
+        const roomData: FirestoreRoom = {
+          id: docSnapshot.id,
+          name: data.name || '',
+          description: data.description || '',
+          ownerId: data.ownerId || '',
+          createdAt: data.createdAt,
+          lastActive: data.lastActive,
+          tags: data.tags || [],
+          isPrivate: data.isPrivate || false,
+          activeUsers: data.activeUsers || 0,
+          isLive: data.isLive || false
+        };
+
+        let creatorData: FirestoreUser | null = null;
+        
+        if (roomData.ownerId) {
+          const creatorDocRef = doc(db, 'users', roomData.ownerId);
+          const creatorDocSnapshot = await getDoc(creatorDocRef);
+          if (creatorDocSnapshot.exists()) {
+            const creatorDocData = creatorDocSnapshot.data();
+            creatorData = {
+              id: creatorDocSnapshot.id,
+              username: creatorDocData.username || '',
+              name: creatorDocData.name || '',
+              profilePic: creatorDocData.profilePic || '',
+              avatar: creatorDocData.avatar || '',
+              createdAt: creatorDocData.createdAt
+            } as FirestoreUser;
+          }
+        }
+        
+        return {
+          id: docSnapshot.id,
+          name: roomData.name,
+          description: roomData.description,
+          memberCount: data.memberCount || 0,
+          shareCount: data.shareCount || 0,
+          isPrivate: roomData.isPrivate,
+          createdAt: roomData.createdAt?.toDate() || new Date(),
+          creatorName: creatorData?.username || data.creatorName || '',
+          creatorId: roomData.ownerId,
+          creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
+          tags: roomData.tags,
+          lastActive: roomData.lastActive?.toDate() || new Date(),
+          maxMembers: data.maxMembers || 50,
+          activeUsers: roomData.activeUsers,
+          isLive: roomData.isLive
+        };
+      }));
+
+      // Filter rooms by search term
+      const filteredRooms = roomsData.filter(room => 
+        room.name.toLowerCase().includes(searchTerm) || 
+        room.description.toLowerCase().includes(searchTerm) ||
+        room.tags?.some((tag: string) => tag.toLowerCase().includes(searchTerm))
+      );
+
+      // Convert room data to Room type
+      const roomResults = filteredRooms.map(room => ({
+        id: room.id,
+        name: room.name,
+        description: room.description,
+        memberCount: room.memberCount || 0,
+        shareCount: room.shareCount || 0,
+        isPrivate: room.isPrivate,
+        createdAt: room.createdAt,
+        creatorName: room.creatorName,
+        creatorId: room.creatorId,
+        creatorAvatar: room.creatorAvatar,
+        tags: room.tags || [],
+        lastActive: room.lastActive,
+        maxMembers: room.maxMembers || 50,
+        activeUsers: room.activeUsers,
+        isLive: room.isLive
+      })) as Room[];
+
+      // Process videos results
+      const videosData = videosSnapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            title: data.title || '',
+            description: data.description || '',
+            username: data.username || '',
+            userId: data.userId || '',
+            url: data.url || '',
+            thumbnailUrl: data.thumbnailUrl || '',
+            timestamp: data.timestamp
+          } as FirestoreVideo;
+        })
+        .filter(video => 
+          video.title.toLowerCase().includes(searchTerm) ||
+          (video.description && video.description.toLowerCase().includes(searchTerm)) ||
+          video.username.toLowerCase().includes(searchTerm)
+        );
+
+      // Convert FirestoreUser to UserProfile
+      const userProfiles = usersData.map(user => ({
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        profilePic: user.profilePic || '',
+        bio: user.bio || '',
+        coverPhoto: user.coverPhoto || '',
+        isPublic: true,
+        isAuthenticated: true,
+        createdAt: user.createdAt
+      }));
+
+      // Convert FirestoreVideo to Video
+      const videoResults = videosData.map(video => ({
+        id: video.id,
+        title: video.title,
+        description: video.description || '',
+        username: video.username,
+        userId: video.userId,
+        url: video.url,
+        thumbnailUrl: video.thumbnailUrl || '',
+        timestamp: video.timestamp,
+        likes: 0,
+        comments: 0
+      }));
+
+      setUsers(userProfiles);
+      setRooms(roomResults);
+      setVideos(videoResults);
 
     } catch (error: any) {
       console.error('Search error:', error);
       setError(`Failed to perform search: ${error.message}`);
       toast.error(`Search failed: ${error.code || error.message}`);
-      // Fallback to default users and rooms on error
+      // Fallback to default data on error
       fetchDefaultUsers();
       fetchRooms();
+      fetchVideos();
     } finally {
       setLoading(false);
     }
@@ -618,7 +824,7 @@ const Discover: React.FC = () => {
                 <ListItem>
                   <ListItemText 
                     primary="No rooms found" 
-                    secondary="Try a different search term"
+                    secondary="No side rooms have been created yet."
                   />
                 </ListItem>
               ) : (
@@ -626,12 +832,21 @@ const Discover: React.FC = () => {
                   <React.Fragment key={room.id}>
                     <ListItem
                       secondaryAction={
-                        <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                           <Chip
                             icon={<PeopleIcon />}
-                            label={`${room.memberCount} members`}
+                            label={`${room.activeUsers || 0} viewing`}
                             size="small"
+                            color="primary"
+                            variant="outlined"
                           />
+                          {room.isLive && (
+                            <Chip
+                              label="Live"
+                              color="error"
+                              size="small"
+                            />
+                          )}
                           {room.isPrivate && (
                             <Chip
                               label="Private"
@@ -643,12 +858,29 @@ const Discover: React.FC = () => {
                       }
                     >
                       <ListItemAvatar>
-                        <Avatar>
-                          <GroupIcon />
-                        </Avatar>
+                        <Link to={`/profile/${room.creatorId}`} style={{ textDecoration: 'none' }}>
+                          <Avatar 
+                            src={room.creatorAvatar}
+                            alt={room.creatorName}
+                          >
+                            {room.creatorName ? room.creatorName.charAt(0).toUpperCase() : '?'}
+                          </Avatar>
+                        </Link>
                       </ListItemAvatar>
                       <ListItemText
-                        primary={room.name}
+                        primary={
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="subtitle1">{room.name}</Typography>
+                            {room.tags && room.tags.map((tag, i) => (
+                              <Chip
+                                key={i}
+                                label={tag}
+                                size="small"
+                                sx={{ height: 20 }}
+                              />
+                            ))}
+                          </Box>
+                        }
                         secondary={
                           <React.Fragment>
                             <Typography
@@ -657,16 +889,27 @@ const Discover: React.FC = () => {
                               color="text.secondary"
                               sx={{ display: 'block' }}
                             >
-                              {room.description.length > 100 
-                                ? `${room.description.substring(0, 100)}...` 
-                                : room.description}
+                              {room.description}
                             </Typography>
                             <Typography
                               component="span"
                               variant="caption"
                               color="text.secondary"
+                              sx={{ display: 'block', mt: 0.5 }}
                             >
-                              {room.shareCount} shares
+                              Created by{' '}
+                              {room.creatorName ? (
+                                <Link 
+                                  to={`/profile/${room.creatorId}`}
+                                  style={{ textDecoration: 'none', color: 'inherit', fontWeight: 'bold' }}
+                                >
+                                  {room.creatorName}
+                                </Link>
+                              ) : (
+                                <span style={{ fontStyle: 'italic' }}>deleted user</span>
+                              )}
+                              {' • '}
+                              Last active {formatTimestamp(room.lastActive)}
                             </Typography>
                           </React.Fragment>
                         }

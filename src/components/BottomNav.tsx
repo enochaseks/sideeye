@@ -70,6 +70,16 @@ const BottomNav: React.FC = () => {
           icon={<HomeIcon />}
         />
         <BottomNavigationAction
+          label="Discover"
+          value="/discover"
+          icon={<TrendingUpIcon />}
+        />
+        <BottomNavigationAction
+          label="Post"
+          value="create-post"
+          icon={<AddIcon />}
+        />
+        <BottomNavigationAction
           label="Side Rooms"
           value="/side-rooms"
           icon={<MeetingRoomIcon />}
@@ -78,16 +88,6 @@ const BottomNav: React.FC = () => {
           label="Vibits"
           value="/vibits"
           icon={<VibitIcon />}
-        />
-        <BottomNavigationAction
-          label="Post"
-          value="create-post"
-          icon={<AddIcon />}
-        />
-        <BottomNavigationAction
-          label="Discover"
-          value="/discover"
-          icon={<TrendingUpIcon />}
         />
         <BottomNavigationAction
           label="Profile"
