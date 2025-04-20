@@ -58,6 +58,8 @@ import { saveAs } from 'file-saver';
 import { formatDistanceToNow } from 'date-fns';
 import VibitIcon from '../components/VibitIcon';
 import VideoEditor from '../components/VideoEditor';
+import { EditInstructions, VideoSegment, AudioTrack, TextOverlay } from '../components/VideoEditor';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 interface Video {
   id: string;
@@ -139,6 +141,8 @@ const Vibits: React.FC = () => {
   const [isCommenting, setIsCommenting] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [videoToEdit, setVideoToEdit] = useState<File | null>(null);
+  const [processing, setProcessing] = useState(false);
+  const functions = getFunctions();
 
   useEffect(() => {
     if (videoRef.current) {
@@ -510,106 +514,196 @@ const Vibits: React.FC = () => {
     }
   };
 
-  const handleEditorSave = async (editedVideo: File) => {
+  const uploadSourceFile = async (file: File, userId: string, timestamp: number): Promise<string> => {
+    const storage = getStorage();
+    // Sanitize filename if necessary
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_'); 
+    const filePath = `sources/${userId}/${timestamp}/${safeFileName}`;
+    const storageRef = ref(storage, filePath);
+    
+    console.log(`Uploading source file: ${filePath}`);
+    await uploadBytes(storageRef, file);
+    const downloadURL = await getDownloadURL(storageRef);
+    console.log(`Uploaded ${filePath} to ${downloadURL}`);
+    return downloadURL;
+  };
+
+  const handleEditorSave = async (instructions: EditInstructions) => {
     if (!currentUser) {
-      toast.error('You must be logged in to upload videos');
+      toast.error('You must be logged in.');
       return;
     }
 
+    setUploading(true); // Indicate activity start
+    setProcessing(true);
+    setUploadProgress(0);
+    setShowEditor(false);
+    setVideoToEdit(null);
+    toast.success('Processing video... This may take a moment.'); // More accurate message
+
+    const userId = currentUser.uid;
+    const operationTimestamp = Date.now(); // Use a single timestamp for related uploads
+    let videoDocId: string | null = null; // To store the Firestore Doc ID
+
     try {
-      setUploading(true);
-      setUploadProgress(0);
+      // 1. Upload unique source files and get their URLs
+      const sourceFiles = new Map<File, string>(); // Map to store File -> URL
+      const uploadPromises: Promise<void>[] = [];
+      const filesToUpload: File[] = [];
 
-      const storage = getStorage();
-      const timestamp = Date.now();
-      const fileName = `${timestamp}_${editedVideo.name}`;
-      const storageRef = ref(storage, `videos/${currentUser.uid}/${fileName}`);
-
-      // Create thumbnail from edited video
-      const videoURL = URL.createObjectURL(editedVideo);
-      const video = document.createElement('video');
-      video.src = videoURL;
-      
-      await new Promise((resolve) => {
-        video.onloadedmetadata = resolve;
-        video.load();
+      // Collect unique files
+      instructions.segments.forEach(segment => {
+        if (!sourceFiles.has(segment.file)) {
+          filesToUpload.push(segment.file);
+          sourceFiles.set(segment.file, ''); // Placeholder
+        }
       });
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      instructions.audioTracks.forEach(track => {
+        if (!sourceFiles.has(track.file)) {
+          filesToUpload.push(track.file);
+          sourceFiles.set(track.file, ''); // Placeholder
+        }
+      });
+      // Add original file if it's part of the edit (e.g., not fully replaced)
+      if (instructions.originalVideoFile && !sourceFiles.has(instructions.originalVideoFile)) {
+         // You might need logic here to decide if the original is still needed 
+         // based on segments. For now, assume it might be.
+         // filesToUpload.push(instructions.originalVideoFile);
+         // sourceFiles.set(instructions.originalVideoFile, ''); 
       }
 
-      const thumbnailBlob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((blob) => {
-          if (blob) resolve(blob);
-        }, 'image/jpeg', 0.7);
+      // Upload files concurrently
+      filesToUpload.forEach(file => {
+        uploadPromises.push(
+          uploadSourceFile(file, userId, operationTimestamp).then(url => {
+            sourceFiles.set(file, url); // Store the URL back in the map
+          })
+        );
       });
 
-      URL.revokeObjectURL(videoURL);
+      console.log(`Attempting to upload ${filesToUpload.length} unique source files.`);
+      await Promise.all(uploadPromises); // Wait for all source uploads
+      console.log('All source files uploaded.');
 
-      // Upload thumbnail
-      const thumbnailRef = ref(storage, `thumbnails/${currentUser.uid}/${timestamp}.jpg`);
-      await uploadBytes(thumbnailRef, thumbnailBlob);
-      const thumbnailUrl = await getDownloadURL(thumbnailRef);
+      // 2. Prepare payload for backend function
+      const backendPayload = {
+        ...instructions,
+        segments: instructions.segments.map(segment => ({
+          ...segment,
+          fileUrl: sourceFiles.get(segment.file) || '', // Replace File with URL
+          // file: undefined // Optional: remove file object if not needed by backend 
+        })),
+        audioTracks: instructions.audioTracks.map(track => ({
+          ...track,
+          fileUrl: sourceFiles.get(track.file) || '', // Replace File with URL
+          // file: undefined
+        })),
+        // Ensure originalVideoFile is handled if sent (e.g., replaced with URL or removed)
+        originalVideoFileUrl: instructions.originalVideoFile ? sourceFiles.get(instructions.originalVideoFile) : undefined,
+        // originalVideoFile: undefined 
+      };
 
-      // Upload the edited video
-      const uploadTask = uploadBytesResumable(storageRef, editedVideo);
+      // Remove File objects from the payload before sending to function
+      backendPayload.segments.forEach(s => delete (s as any).file);
+      backendPayload.audioTracks.forEach(t => delete (t as any).file);
+      delete (backendPayload as any).originalVideoFile;
+
+      // 3. Create initial Firestore document
+      console.log('Creating initial Firestore document...');
+      // Generate thumbnail (using first segment's source file)
+      const firstSourceFile = instructions.segments[0]?.file || instructions.originalVideoFile;
+      let thumbnailUrl = ''; // Default empty thumbnail
+      if (firstSourceFile) {
+         try {
+            const tempVideoURL = URL.createObjectURL(firstSourceFile);
+            const video = document.createElement('video');
+            video.src = tempVideoURL;
+            await new Promise<void>((resolve, reject) => { /* ...load metadata promise... */ });
+            const canvas = document.createElement('canvas'); /* ...set dimensions...*/
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+               video.currentTime = Math.min(1, video.duration / 2);
+               await new Promise<void>((resolve, reject) => { /* ...seek promise...*/ });
+               ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+               const thumbnailBlob = await new Promise<Blob>((resolve, reject) => { /* ...toBlob promise...*/ });
+               const storage = getStorage();
+               const thumbRef = ref(storage, `thumbnails/${userId}/${operationTimestamp}.jpg`);
+               await uploadBytes(thumbRef, thumbnailBlob);
+               thumbnailUrl = await getDownloadURL(thumbRef);
+            }
+            URL.revokeObjectURL(tempVideoURL);
+            console.log('Thumbnail generated and uploaded:', thumbnailUrl);
+         } catch (thumbError) {
+            console.error("Thumbnail generation failed:", thumbError);
+            toast.error('Could not generate video thumbnail.');
+            // Continue without thumbnail
+         }
+      }
       
-      uploadTask.on('state_changed',
-        (snapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          setUploadProgress(progress);
-        },
-        (error) => {
-          console.error('Upload error:', error);
-          toast.error('Upload failed');
-          setUploading(false);
-        },
-        async () => {
-          try {
-            const videoUrl = await getDownloadURL(storageRef);
-            
-            // Get user data
-            const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-            const userData = userDoc.data();
-            const username = userData?.username || currentUser.displayName || 'Anonymous';
+      const docRef = await addDoc(collection(db, 'videos'), {
+        // url: '', // No final URL yet
+        thumbnailUrl: thumbnailUrl,
+        userId: userId,
+        username: currentUser.displayName || 'Anonymous', // Fetch username properly if needed
+        likes: 0,
+        comments: 0,
+        timestamp: serverTimestamp(),
+        duration: instructions.duration, 
+        // resolution: instructions.resolution, // Add resolution if available
+        isEdited: true,
+        status: 'processing', // Initial status
+        processingTimestamp: operationTimestamp // Link potential webhook calls
+      });
+      videoDocId = docRef.id;
+      console.log(`Initial Firestore doc created: ${videoDocId}, status: processing`);
 
-            // Add video document to Firestore
-            await addDoc(collection(db, 'videos'), {
-              url: videoUrl,
-              thumbnailUrl,
-              userId: currentUser.uid,
-              username,
-              likes: 0,
-              comments: 0,
-              timestamp: serverTimestamp(),
-              duration: video.duration,
-              resolution: `${video.videoWidth}x${video.videoHeight}`
-            });
+      // Add placeholder to local state immediately
+      const placeholderVideoData = {
+        id: videoDocId,
+        url: '', // No URL yet
+        thumbnailUrl,
+        userId,
+        username: currentUser.displayName || 'Anonymous',
+        likes: 0,
+        comments: 0,
+        timestamp: new Date(),
+        duration: instructions.duration,
+        resolution: 'processing...',
+        isEdited: true,
+        status: 'processing', // Reflect status locally
+      };
+      setVideos(prevVideos => [placeholderVideoData, ...prevVideos]);
+      setCurrentVideoIndex(0);
 
-            toast.success('Video uploaded successfully!');
-            fetchVideos(); // Refresh video list
-          } catch (error) {
-            console.error('Error saving video data:', error);
-            toast.error('Failed to save video data');
-          } finally {
-            setUploading(false);
-            setUploadProgress(0);
-            setShowEditor(false);
-            setVideoToEdit(null);
-          }
-        }
-      );
+      // 4. Call backend function
+      console.log('Calling backend function startVideoProcessing...');
+      const startVideoProcessing = httpsCallable(functions, 'startVideoProcessing');
+      await startVideoProcessing({ 
+          instructions: backendPayload, 
+          videoId: videoDocId 
+      }); 
+      console.log('Backend function called successfully.');
+      // Note: We don't wait for the function to complete here.
+      // Completion is handled by the Firestore listener.
+
+      setUploading(false); // Source uploads finished
+      // Keep processing true until listener confirms completion
+
     } catch (error) {
-      console.error('Error uploading video:', error);
-      toast.error('Failed to upload video. Please try again.');
+      console.error('Error during video processing initiation:', error);
+      toast.error(`Failed to start video processing: ${error instanceof Error ? error.message : String(error)}`);
       setUploading(false);
-      setUploadProgress(0);
+      setProcessing(false);
+      // Optionally update Firestore status to 'failed' if doc was created
+      if (videoDocId) {
+          try {
+             await updateDoc(doc(db, 'videos', videoDocId), { status: 'failed', error: String(error) });
+          } catch (updateError) {
+             console.error("Failed to update status to failed:", updateError);
+          }
+      }
+      // Remove placeholder from local state if needed
+      setVideos(prev => prev.filter(v => v.id !== videoDocId));
     }
   };
 

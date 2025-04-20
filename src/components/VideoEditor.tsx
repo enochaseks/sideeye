@@ -1,445 +1,337 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Box, CircularProgress, Typography, Button, Slider, Stack, Select, MenuItem, FormControl, InputLabel, Alert, IconButton, Dialog, TextField, Popover, DialogTitle } from '@mui/material';
-import { 
-  ContentCut as CutIcon,
-  Save, 
-  Close, 
-  Add as AddIcon, 
-  CallSplit as SplitIcon,
-  PlayArrow, 
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Box, CircularProgress, Typography, Button, IconButton, Dialog, Alert, TextField, DialogTitle, Slider, Select, MenuItem, DialogContent, LinearProgress } from '@mui/material';
+import {
+  PlayArrow,
   Pause,
-  EmojiEmotions as StickerIcon,
-  Gif as GiphyIcon,
-  Animation as AnimationIcon,
-  Edit as EditIcon,
-  TextFields as TextIcon,
   ArrowBack as BackIcon,
-  Refresh as UndoIcon,
-  Link as LinkIcon,
-  Tune as FilterIcon,
-  Delete as DeleteIcon
+  Save,
+  ContentCut as CutIcon,
+  CallSplit as SplitIcon,
+  Add as AddIcon,
+  TextFields as TextIcon,
+  Undo as UndoIcon,
+  Redo as RedoIcon,
+  Delete as DeleteIcon,
+  VolumeOff,
+  VolumeUp,
+  MusicNote as MusicNoteIcon,
+  AudioFile as AudioFileIcon
 } from '@mui/icons-material';
-import { storage } from '../firebase';
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
+import VibitIcon from '../components/VibitIcon';
+import { toast } from 'react-hot-toast';
+import { getStorage, ref, uploadBytes, getDownloadURL, uploadBytesResumable } from 'firebase/storage';
+import { getDoc, doc, addDoc, collection, serverTimestamp, Firestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { getDatabase } from 'firebase/database';
+import { getFirestore } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
+import { useAuth } from '../contexts/AuthContext';
+import { db } from '../services/firebase';
 
-interface VideoEditorProps {
-  videoFile?: File;
-  onSave: (editedVideo: File) => void;
-  onCancel: () => void;
+// Define AND EXPORT the structure for editing instructions
+export interface EditInstructions {
+  segments: VideoSegment[];
+  audioTracks: AudioTrack[];
+  textOverlays: TextOverlay[];
+  duration: number;
+  videoVolume: number;
+  originalVideoFile?: File;
 }
 
-interface VideoSegment {
+// Export dependent interfaces as well
+export interface VideoSegment {
   id: string;
   startTime: number;
   endTime: number;
   file: File;
+  isMuted: boolean;
+  volume: number;
 }
 
-interface TimelineFrame {
-  time: number;
+export interface TimelineFrame {
   thumbnail: string;
+  time: number;
 }
 
-interface Sticker {
-  id: string;
-  url: string;
-  position: { x: number; y: number };
-  scale: number;
-  rotation: number;
-}
-
-interface TextOverlay {
+export interface TextOverlay {
   id: string;
   text: string;
   position: { x: number; y: number };
   fontSize: number;
   color: string;
   rotation: number;
+  startTime: number;
+  duration: number;
+  width: number;
+  height: number;
+  fontFamily: string;
+  fontWeight: string;
+  fontStyle: string;
+  textDecoration: string;
+  borderWidth: number;
+  borderColor: string;
+  backgroundColor: string;
+  opacity: number;
 }
 
-interface GiphyResult {
+export interface AudioTrack {
   id: string;
-  url: string;
-  title: string;
+  file: File;
+  name: string;
+  startTime: number;
+  duration: number;
+  volume: number;
+  isMuted: boolean;
 }
 
-interface TimelineMarker {
-  id: string;
-  time: number;
-  type: 'split' | 'cut';
+interface VideoEditorProps {
+  videoFile?: File;
+  onSave: (instructions: EditInstructions) => Promise<void>;
+  onCancel: () => void;
 }
+
+interface TimelineSegmentProps {
+  segment: VideoSegment;
+  duration: number;
+  isActive: boolean;
+  frames: TimelineFrame[];
+  onSelect: (id: string) => void;
+  onDragStart: (e: React.MouseEvent, segment: VideoSegment) => void;
+  onTouchStart: (e: React.TouchEvent, segment: VideoSegment) => void;
+}
+
+interface EditorState {
+  segments: VideoSegment[];
+  activeSegment: string | null;
+  textOverlays: TextOverlay[];
+  audioTracks: AudioTrack[];
+  currentTime: number;
+}
+
+const TimelineSegment: React.FC<TimelineSegmentProps> = ({ segment, duration, isActive, frames, onSelect, onDragStart, onTouchStart }) => {
+  const segmentStart = (segment.startTime / duration) * 100;
+  const segmentWidth = ((segment.endTime - segment.startTime) / duration) * 100;
+  
+  return (
+    <Box
+      onClick={() => onSelect(segment.id)}
+      onMouseDown={(e) => onDragStart(e, segment)}
+      onTouchStart={(e) => onTouchStart(e, segment)}
+      sx={{
+        position: 'absolute',
+        left: `${segmentStart}%`,
+        width: `${segmentWidth}%`,
+        height: '100%',
+        border: isActive ? '2px solid #4a90e2' : '1px solid rgba(255,255,255,0.3)',
+        borderRadius: '4px',
+        overflow: 'hidden',
+        cursor: 'grab',
+        touchAction: 'none',
+        '&:hover': {
+          border: '2px solid #4a90e2'
+        },
+        '&:active': {
+          cursor: 'grabbing'
+        }
+      }}
+    >
+      <Box sx={{ 
+        display: 'flex',
+        height: '100%',
+        position: 'relative'
+      }}>
+        {frames
+          .filter(frame => frame.time >= segment.startTime && frame.time <= segment.endTime)
+          .map((frame, index) => (
+            <Box
+              key={index}
+              sx={{
+                flex: 1,
+                height: '100%',
+                position: 'relative',
+                borderRight: index < frames.length - 1 ? '1px solid rgba(255,255,255,0.1)' : 'none'
+              }}
+            >
+              <img
+                src={frame.thumbnail}
+                alt={`Frame ${index}`}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover'
+                }}
+              />
+            </Box>
+          ))}
+      </Box>
+    </Box>
+  );
+};
 
 const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }) => {
+  // Core state
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0);
-  const [selectedFilter, setSelectedFilter] = useState('none');
-  const [selectedEffect, setSelectedEffect] = useState('none');
-  const [duration, setDuration] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [frames, setFrames] = useState<TimelineFrame[]>([]);
   const [segments, setSegments] = useState<VideoSegment[]>([]);
   const [activeSegment, setActiveSegment] = useState<string | null>(null);
-  const additionalVideoInputRef = useRef<HTMLInputElement>(null);
-  const [frames, setFrames] = useState<TimelineFrame[]>([]);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const timelineRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const frameInterval = 0.5; // Capture frame every 0.5 seconds
-
-  // New state for editing features
-  const [stickers, setStickers] = useState<Sticker[]>([]);
-  const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
-  const [selectedElement, setSelectedElement] = useState<string | null>(null);
-  const [showStickerPicker, setShowStickerPicker] = useState(false);
-  const [showGiphySearch, setShowGiphySearch] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
-  const [giphyResults, setGiphyResults] = useState<GiphyResult[]>([]);
-  const [giphySearch, setGiphySearch] = useState('');
-  const [editHistory, setEditHistory] = useState<any[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [splitPoints, setSplitPoints] = useState<number[]>([]);
-  const [animations, setAnimations] = useState<Map<string, string>>(new Map());
-  const [showFilters, setShowFilters] = useState(false);
-  const [timelineMarkers, setTimelineMarkers] = useState<TimelineMarker[]>([]);
-  const [selectedMarker, setSelectedMarker] = useState<string | null>(null);
-  const [isPlayheadVisible, setIsPlayheadVisible] = useState(true);
+  const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
+  const [selectedText, setSelectedText] = useState<TextOverlay | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeStart, setResizeStart] = useState({ width: 0, height: 0 });
+  const { currentUser } = useAuth();
+  
+  // Undo/Redo state
+  const [history, setHistory] = useState<EditorState[]>([{
+    segments: [],
+    activeSegment: null,
+    textOverlays: [],
+    audioTracks: [],
+    currentTime: 0
+  }]);
+  const [currentHistoryIndex, setCurrentHistoryIndex] = useState(0);
 
-  const filters = [
-    { value: 'none', label: 'None' },
-    { value: 'boost', label: 'Boost' },
-    { value: 'contrast', label: 'Contrast' },
-    { value: 'muted', label: 'Muted' },
-    { value: 'dramatic', label: 'Dramatic' }
-  ];
+  // Refs
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const additionalVideoInputRef = useRef<HTMLInputElement>(null);
 
-  const effects = [
-    { value: 'none', label: 'None' },
-    { value: 'zoom', label: 'Zoom' },
-    { value: 'slideLeft', label: 'Slide Left' },
-    { value: 'slideRight', label: 'Slide Right' },
-    { value: 'fadeIn', label: 'Fade In' }
-  ];
+  // Add new state for audio control
+  const [videoVolume, setVideoVolume] = useState(1);
+  const [isAudioDetached, setIsAudioDetached] = useState(false);
 
-  const handleVideoLoad = async () => {
-    if (!videoFile) return;
-    
-    // Create a temporary URL for the video file
-    const videoUrl = URL.createObjectURL(videoFile);
-    const video = document.createElement('video');
-    video.src = videoUrl;
-    
-    // Wait for metadata to load to get duration
-    await new Promise((resolve) => {
-      video.onloadedmetadata = () => {
-        setDuration(video.duration);
-        setTrimEnd(video.duration);
-        resolve(null);
-      };
-    });
-    
-    URL.revokeObjectURL(videoUrl);
+  // Audio state
+  const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState<AudioTrack | null>(null);
+  const [isAudioDragging, setIsAudioDragging] = useState(false);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const audioElements = useRef<{ [key: string]: HTMLAudioElement }>({});
 
-    // Initialize first segment
-    setSegments([{
-      id: 'initial',
-      startTime: 0,
-      endTime: video.duration,
-      file: videoFile
-    }]);
-    setActiveSegment('initial');
-  };
+  // Add these state variables at the top with other state declarations
+  const [isDraggingSegment, setIsDraggingSegment] = useState(false);
+  const [draggedSegment, setDraggedSegment] = useState<VideoSegment | null>(null);
+  const [dragStartX, setDragStartX] = useState(0);
+  const [dragStartTime, setDragStartTime] = useState(0);
 
-  React.useEffect(() => {
-    handleVideoLoad();
-  }, [videoFile]);
+  // Video text movement state
+  const [isDraggingVideo, setIsDraggingVideo] = useState(false);
+  const [videoTextDragStart, setVideoTextDragStart] = useState({ x: 0, y: 0 });
 
-  const handleSplit = () => {
-    if (!videoRef.current || !activeSegment) return;
-    
-    const currentTime = videoRef.current.currentTime;
-    const currentSegment = segments.find(s => s.id === activeSegment);
-    
-    if (!currentSegment) return;
+  // Timeline text movement state
+  const [isDraggingTimeline, setIsDraggingTimeline] = useState(false);
+  const [timelineDragStart, setTimelineDragStart] = useState(0);
 
-    // Create two new segments from the split point
-    const newSegments: VideoSegment[] = [
-      {
-        id: `segment-${Date.now()}-1`,
-        startTime: currentSegment.startTime,
-        endTime: currentTime,
-        file: currentSegment.file
-      },
-      {
-        id: `segment-${Date.now()}-2`,
-        startTime: currentTime,
-        endTime: currentSegment.endTime,
-        file: currentSegment.file
-      }
-    ];
+  // Initialize video and history when file is provided
+  useEffect(() => {
+    if (!videoFile || !videoRef.current) return;
 
-    // Replace the current segment with the new segments
-    setSegments(prev => [
-      ...prev.filter(s => s.id !== activeSegment),
-      ...newSegments
-    ].sort((a, b) => a.startTime - b.startTime));
+    const video = videoRef.current;
+    const url = URL.createObjectURL(videoFile);
+    video.src = url;
 
-    setActiveSegment(newSegments[0].id);
-  };
-
-  const handleAddVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      // Create a temporary URL for the video file
-      const videoUrl = URL.createObjectURL(file);
-      const video = document.createElement('video');
-      video.src = videoUrl;
-      
-      // Wait for metadata to load
-      await new Promise((resolve) => {
-        video.onloadedmetadata = () => {
-          resolve(null);
-        };
-      });
-
-      // Add new segment
-      setSegments(prev => [...prev, {
-        id: `segment-${Date.now()}`,
+    const handleLoad = () => {
+      setDuration(video.duration);
+      // Initialize first segment
+      const initialSegment: VideoSegment = {
+        id: 'initial',
         startTime: 0,
         endTime: video.duration,
-        file
-      }]);
+        file: videoFile,
+        isMuted: false,
+        volume: 1
+      };
+      setSegments([initialSegment]);
+      setActiveSegment(initialSegment.id);
+      
+      // Initialize history with initial state
+      const initialState: EditorState = {
+        segments: [initialSegment],
+        activeSegment: initialSegment.id,
+        textOverlays: [],
+        audioTracks: [],
+        currentTime: 0
+      };
+      setHistory([initialState]);
+      setCurrentHistoryIndex(0);
+      
+      generateFrames();
+    };
 
-      URL.revokeObjectURL(videoUrl);
-    } catch (error) {
-      console.error('Error adding video:', error);
-      setError('Failed to add video');
-    }
-  };
+    video.addEventListener('loadeddata', handleLoad);
 
-  const handleCut = () => {
-    if (!activeSegment) return;
-    
-    const currentSegment = segments.find(s => s.id === activeSegment);
-    if (!currentSegment) return;
+    return () => {
+      video.removeEventListener('loadeddata', handleLoad);
+      URL.revokeObjectURL(url);
+    };
+  }, [videoFile]);
 
-    // Remove the selected region from the current segment
-    const remainingSegments: VideoSegment[] = [
-      {
-        id: `segment-${Date.now()}-1`,
-        startTime: currentSegment.startTime,
-        endTime: trimStart,
-        file: currentSegment.file
-      },
-      {
-        id: `segment-${Date.now()}-2`,
-        startTime: trimEnd,
-        endTime: currentSegment.endTime,
-        file: currentSegment.file
-      }
-    ];
-
-    // Update segments, removing the cut portion
-    setSegments(prev => [
-      ...prev.filter(s => s.id !== activeSegment),
-      ...remainingSegments
-    ].sort((a, b) => a.startTime - b.startTime));
-
-    setActiveSegment(remainingSegments[0].id);
-  };
-
-  const handleSave = async () => {
-    if (!videoFile) return;
+  // Basic frame generation
+  const generateFrames = useCallback(async () => {
+    if (!videoRef.current || !videoFile) return;
 
     try {
-      setLoading(true);
-      setError(null);
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
       
-      // Check for API key
-      const apiKey = process.env.REACT_APP_SHOTSTACK_API_KEY;
-      if (!apiKey) {
-        throw new Error('Shotstack API key is not configured');
-      }
+      if (!context) return;
 
-      // Create edit using direct API call
-      const edit = {
-        timeline: {
-          background: "#000000",
-          tracks: [
-            {
-              clips: segments.map((segment, index) => ({
-                asset: {
-                  type: "video",
-                  src: URL.createObjectURL(segment.file)
-                },
-                start: index === 0 ? 0 : segments.slice(0, index).reduce((acc, seg) => acc + (seg.endTime - seg.startTime), 0),
-                length: segment.endTime - segment.startTime,
-                filter: selectedFilter !== 'none' ? selectedFilter : undefined,
-                effect: selectedEffect !== 'none' ? selectedEffect : undefined,
-                trim: {
-                  start: segment.startTime,
-                  length: segment.endTime - segment.startTime
-                }
-              }))
-            }
-          ]
-        },
-        output: {
-          format: "mp4",
-          resolution: "1080"
-        }
-      };
+      canvas.width = 160;
+      canvas.height = 90;
 
-      // Submit edit using direct API call
-      const response = await fetch('https://api.shotstack.io/v1/render', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey
-        },
-        body: JSON.stringify(edit)
-      });
+      const frameCount = 20;
+      const interval = video.duration / frameCount;
+      const newFrames: TimelineFrame[] = [];
 
-      if (!response.ok) {
-        throw new Error('Failed to submit video for processing');
-      }
+      for (let i = 0; i < frameCount; i++) {
+        const time = i * interval;
+        video.currentTime = time;
 
-      const { id } = await response.json();
-
-      // Poll for status
-      const checkStatus = async () => {
-        const statusResponse = await fetch(`https://api.shotstack.io/v1/render/${id}`, {
-          headers: {
-            'x-api-key': apiKey
-          }
+        await new Promise<void>((resolve) => {
+          const handleSeeked = () => {
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            newFrames.push({
+              thumbnail: canvas.toDataURL('image/jpeg'),
+              time: time
+            });
+            video.removeEventListener('seeked', handleSeeked);
+            resolve();
+          };
+          video.addEventListener('seeked', handleSeeked);
         });
+      }
 
-        if (!statusResponse.ok) {
-          throw new Error('Failed to check render status');
-        }
-
-        const status = await statusResponse.json();
-        
-        if (status.response.status === 'done') {
-          // Download the edited video
-          const videoResponse = await fetch(status.response.url);
-          const blob = await videoResponse.blob();
-          const file = new File([blob], 'edited_video.mp4', { type: 'video/mp4' });
-          
-          onSave(file);
-          setLoading(false);
-        } else if (status.response.status === 'failed') {
-          throw new Error('Video processing failed');
-        } else {
-          // Update progress (remaining 50% is processing progress)
-          setProgress(50 + (status.response.progress * 0.5));
-          setTimeout(checkStatus, 1000);
-        }
-      };
-
-      await checkStatus();
-
+      video.currentTime = 0;
+      setFrames(newFrames);
     } catch (error) {
-      console.error('Error processing video:', error);
-      setError(error instanceof Error ? error.message : 'An error occurred while processing the video');
-      setLoading(false);
-    }
-  };
-
-  const formatTime = (time: number) => {
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  // Generate timeline frames
-  const generateFrames = async (video: HTMLVideoElement) => {
-    const frames: TimelineFrame[] = [];
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) return;
-
-    canvas.width = 160;
-    canvas.height = 90;
-
-    for (let time = 0; time < video.duration; time += 0.5) {
-      video.currentTime = time;
-      await new Promise(resolve => {
-        video.onseeked = resolve;
-      });
-      
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      frames.push({
-        time,
-        thumbnail: canvas.toDataURL('image/jpeg', 0.5)
-      });
-    }
-
-    setFrames(frames);
-  };
-
-  // Initialize frames when video loads
-  useEffect(() => {
-    if (videoFile) {
-      const video = document.createElement('video');
-      video.src = URL.createObjectURL(videoFile);
-      video.onloadedmetadata = () => {
-        setDuration(video.duration);
-        setTrimEnd(video.duration);
-        generateFrames(video);
-      };
+      console.error('Error generating frames:', error);
+      setError('Failed to generate video preview');
     }
   }, [videoFile]);
 
-  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  // Handle timeline click
+  const handleTimelineClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!timelineRef.current || !videoRef.current) return;
     
     const rect = timelineRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const percentage = x / rect.width;
-    const newTime = percentage * duration;
+    const clickX = event.clientX - rect.left;
+    const clickTime = (clickX / rect.width) * duration;
     
-    videoRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
+    videoRef.current.currentTime = clickTime;
+    setCurrentTime(clickTime);
   };
 
-  const handleTrimStart = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!timelineRef.current) return;
-    const rect = timelineRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const percentage = x / rect.width;
-    const newTrimStart = percentage * duration;
-    
-    if (newTrimStart < trimEnd) {
-      setTrimStart(newTrimStart);
-      if (videoRef.current) {
-        videoRef.current.currentTime = newTrimStart;
-      }
-    }
-  };
-
-  const handleTrimEnd = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!timelineRef.current) return;
-    const rect = timelineRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const percentage = x / rect.width;
-    const newTrimEnd = percentage * duration;
-    
-    if (newTrimEnd > trimStart) {
-      setTrimEnd(newTrimEnd);
-      if (videoRef.current) {
-        videoRef.current.currentTime = newTrimEnd;
-      }
-    }
-  };
-
-  const togglePlayPause = () => {
+  // Handle play/pause
+  const handlePlayPause = () => {
     if (!videoRef.current) return;
     
     if (isPlaying) {
@@ -450,591 +342,1684 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
     setIsPlaying(!isPlaying);
   };
 
-  useEffect(() => {
-    const handleVideoTimeUpdate = () => {
-      if (videoRef.current) {
-        setCurrentTime(videoRef.current.currentTime);
-      }
-    };
-
-    const handleVideoEnded = () => {
-      setIsPlaying(false);
-      if (videoRef.current) {
-        videoRef.current.currentTime = trimStart;
-      }
-    };
-
-    const video = videoRef.current;
-    if (video) {
-      video.addEventListener('timeupdate', handleVideoTimeUpdate);
-      video.addEventListener('ended', handleVideoEnded);
-    }
-
-    return () => {
-      if (video) {
-        video.removeEventListener('timeupdate', handleVideoTimeUpdate);
-        video.removeEventListener('ended', handleVideoEnded);
-      }
-    };
-  }, [trimStart]);
-
-  // Handle sticker addition
-  const handleAddSticker = (stickerUrl: string) => {
-    const newSticker: Sticker = {
-      id: `sticker-${Date.now()}`,
-      url: stickerUrl,
-      position: { x: 50, y: 50 },
-      scale: 1,
-      rotation: 0
-    };
-    setStickers([...stickers, newSticker]);
-    addToHistory('add-sticker', newSticker);
-    setShowStickerPicker(false);
-  };
-
-  // Handle text addition
-  const handleAddText = (text: string) => {
-    const newText: TextOverlay = {
-      id: `text-${Date.now()}`,
-      text,
-      position: { x: 50, y: 50 },
-      fontSize: 24,
-      color: '#ffffff',
-      rotation: 0
-    };
-    setTextOverlays([...textOverlays, newText]);
-    addToHistory('add-text', newText);
-    setShowTextEditor(false);
-  };
-
-  // Handle GIPHY search
-  const handleGiphySearch = async (query: string) => {
-    try {
-      const GIPHY_API_KEY = process.env.REACT_APP_GIPHY_API_KEY;
-      const response = await fetch(
-        `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${query}&limit=20`
-      );
-      const data = await response.json();
-      setGiphyResults(data.data.map((gif: any) => ({
-        id: gif.id,
-        url: gif.images.fixed_height.url,
-        title: gif.title
-      })));
-    } catch (error) {
-      console.error('Error searching GIPHY:', error);
-      setError('Failed to search GIPHY');
-    }
-  };
-
-  // Handle animation
-  const handleAddAnimation = (elementId: string, animationType: string) => {
-    setAnimations(new Map(animations.set(elementId, animationType)));
-    addToHistory('add-animation', { elementId, animationType });
-  };
-
-  // Handle undo/redo
-  const addToHistory = (actionType: string, data: any) => {
-    const newAction = { type: actionType, data };
-    const newHistory = [...editHistory.slice(0, historyIndex + 1), newAction];
-    setEditHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  };
-
-  const handleUndo = () => {
-    if (historyIndex >= 0) {
-      const action = editHistory[historyIndex];
-      undoAction(action);
-      setHistoryIndex(historyIndex - 1);
-    }
-  };
-
-  const undoAction = (action: { type: string; data: any }) => {
-    switch (action.type) {
-      case 'add-sticker':
-        setStickers(stickers.filter(s => s.id !== action.data.id));
-        break;
-      case 'add-text':
-        setTextOverlays(textOverlays.filter(t => t.id !== action.data.id));
-        break;
-      case 'split':
-        setSplitPoints(splitPoints.filter(time => time !== action.data));
-        break;
-      case 'add-animation':
-        const newAnimations = new Map(animations);
-        newAnimations.delete(action.data.elementId);
-        setAnimations(newAnimations);
-        break;
-    }
-  };
-
-  // Handle element dragging
-  const handleDragStart = (e: React.MouseEvent, elementId: string) => {
-    setSelectedElement(elementId);
-    // Add drag logic
-  };
-
-  // Render functions
-  const renderStickers = () => {
-    return stickers.map(sticker => (
-      <img
-        key={sticker.id}
-        src={sticker.url}
-        style={{
-          position: 'absolute',
-          left: `${sticker.position.x}%`,
-          top: `${sticker.position.y}%`,
-          transform: `scale(${sticker.scale}) rotate(${sticker.rotation}deg)`,
-          cursor: 'move',
-          zIndex: selectedElement === sticker.id ? 2 : 1
-        }}
-        onMouseDown={(e) => handleDragStart(e, sticker.id)}
-      />
-    ));
-  };
-
-  const renderTextOverlays = () => {
-    return textOverlays.map(text => (
-      <div
-        key={text.id}
-        style={{
-          position: 'absolute',
-          left: `${text.position.x}%`,
-          top: `${text.position.y}%`,
-          transform: `rotate(${text.rotation}deg)`,
-          cursor: 'move',
-          zIndex: selectedElement === text.id ? 2 : 1,
-          color: text.color,
-          fontSize: `${text.fontSize}px`
-        }}
-        onMouseDown={(e) => handleDragStart(e, text.id)}
-      >
-        {text.text}
-      </div>
-    ));
-  };
-
-  // Add marker handlers
-  const handleDeleteMarker = (markerId: string) => {
-    setTimelineMarkers(prev => prev.filter(marker => marker.id !== markerId));
-    setSelectedMarker(null);
-  };
-
-  // Update video time tracking
+  // Handle time update
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const handleTimeUpdate = () => {
       setCurrentTime(video.currentTime);
-      setIsPlayheadVisible(true);
     };
 
     video.addEventListener('timeupdate', handleTimeUpdate);
-    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
+    return () => {
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+    };
   }, []);
 
+  // Save current state to history
+  const saveToHistory = useCallback(() => {
+    const currentState: EditorState = {
+      segments,
+      activeSegment,
+      textOverlays,
+      audioTracks,
+      currentTime
+    };
+
+    setHistory(prev => {
+      // Remove any future states if we're not at the end
+      const newHistory = prev.slice(0, currentHistoryIndex + 1);
+      return [...newHistory, currentState];
+    });
+    setCurrentHistoryIndex(prev => prev + 1);
+  }, [segments, activeSegment, textOverlays, audioTracks, currentTime, currentHistoryIndex]);
+
+  // Handle undo
+  const handleUndo = useCallback(() => {
+    if (currentHistoryIndex <= 0) return;
+
+    const previousState = history[currentHistoryIndex - 1];
+    setSegments(previousState.segments);
+    setActiveSegment(previousState.activeSegment);
+    setTextOverlays(previousState.textOverlays);
+    setAudioTracks(previousState.audioTracks);
+    setCurrentTime(previousState.currentTime);
+    setCurrentHistoryIndex(prev => prev - 1);
+
+    if (videoRef.current) {
+      videoRef.current.currentTime = previousState.currentTime;
+    }
+  }, [currentHistoryIndex, history]);
+
+  // Handle redo
+  const handleRedo = useCallback(() => {
+    if (currentHistoryIndex >= history.length - 1) return;
+
+    const nextState = history[currentHistoryIndex + 1];
+    setSegments(nextState.segments);
+    setActiveSegment(nextState.activeSegment);
+    setTextOverlays(nextState.textOverlays);
+    setAudioTracks(nextState.audioTracks);
+    setCurrentTime(nextState.currentTime);
+    setCurrentHistoryIndex(prev => prev + 1);
+
+    if (videoRef.current) {
+      videoRef.current.currentTime = nextState.currentTime;
+    }
+  }, [currentHistoryIndex, history]);
+
+  // Handle split
+  const handleSplit = useCallback(() => {
+    if (!videoRef.current || !activeSegment) return;
+    
+    const splitTime = currentTime;
+    const currentSegment = segments.find(s => s.id === activeSegment);
+    
+    if (!currentSegment) return;
+
+    if (splitTime <= currentSegment.startTime || splitTime >= currentSegment.endTime) {
+      return;
+    }
+
+    const newSegments: VideoSegment[] = [
+      {
+        id: `segment-${Date.now()}-1`,
+        startTime: currentSegment.startTime,
+        endTime: splitTime,
+        file: currentSegment.file,
+        isMuted: currentSegment.isMuted,
+        volume: currentSegment.volume
+      },
+      {
+        id: `segment-${Date.now()}-2`,
+        startTime: splitTime,
+        endTime: currentSegment.endTime,
+        file: currentSegment.file,
+        isMuted: currentSegment.isMuted,
+        volume: currentSegment.volume
+      }
+    ];
+
+    setSegments(prev => [
+      ...prev.filter(s => s.id !== activeSegment),
+      ...newSegments
+    ].sort((a, b) => a.startTime - b.startTime));
+
+    setActiveSegment(newSegments[0].id);
+    saveToHistory();
+  }, [videoRef, activeSegment, currentTime, segments, saveToHistory]);
+
+  // Handle cut
+  const handleCut = useCallback(() => {
+    if (!videoRef.current || !activeSegment) return;
+    
+    const cutTime = currentTime;
+    const currentSegment = segments.find(s => s.id === activeSegment);
+    if (!currentSegment) return;
+
+    if (cutTime <= currentSegment.startTime || cutTime >= currentSegment.endTime) {
+      return;
+    }
+
+    const remainingSegments: VideoSegment[] = [
+      {
+        id: `segment-${Date.now()}-1`,
+        startTime: currentSegment.startTime,
+        endTime: Math.max(currentSegment.startTime, cutTime - 0.5),
+        file: currentSegment.file,
+        isMuted: currentSegment.isMuted,
+        volume: currentSegment.volume
+      },
+      {
+        id: `segment-${Date.now()}-2`,
+        startTime: Math.min(currentSegment.endTime, cutTime + 0.5),
+        endTime: currentSegment.endTime,
+        file: currentSegment.file,
+        isMuted: currentSegment.isMuted,
+        volume: currentSegment.volume
+      }
+    ];
+
+    setSegments(prev => [
+      ...prev.filter(s => s.id !== activeSegment),
+      ...remainingSegments
+    ].sort((a, b) => a.startTime - b.startTime));
+
+    setActiveSegment(remainingSegments[0].id);
+    saveToHistory();
+  }, [videoRef, activeSegment, currentTime, segments, saveToHistory]);
+
+  // Handle add video
+  const handleAddVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    try {
+      for (const file of Array.from(files)) {
+      const videoUrl = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.src = videoUrl;
+      
+      await new Promise((resolve) => {
+        video.onloadedmetadata = resolve;
+        video.load();
+      });
+
+        // Calculate the start time based on current time
+        const startTime = currentTime;
+        const endTime = startTime + video.duration;
+
+      // Add new segment
+      const newSegment: VideoSegment = {
+          id: `segment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          startTime,
+          endTime,
+        file,
+        isMuted: false,
+        volume: 1
+      };
+
+        // Update segments array
+        setSegments(prev => {
+          const updatedSegments = [...prev];
+          
+          // Find the segment that contains the current time
+          const currentSegmentIndex = prev.findIndex(s => 
+            s.startTime <= currentTime && s.endTime >= currentTime
+          );
+
+          if (currentSegmentIndex !== -1) {
+            const currentSegment = prev[currentSegmentIndex];
+            
+            // If we're adding in the middle of a segment, split it
+            if (currentTime > currentSegment.startTime && currentTime < currentSegment.endTime) {
+              const splitSegments = [
+                {
+                  ...currentSegment,
+                  id: `segment-${Date.now()}-1-${Math.random().toString(36).substr(2, 9)}`,
+                  endTime: currentTime
+                },
+                {
+                  ...currentSegment,
+                  id: `segment-${Date.now()}-2-${Math.random().toString(36).substr(2, 9)}`,
+                  startTime: endTime
+                }
+              ];
+              
+              // Replace the current segment with split segments and new segment
+              updatedSegments.splice(currentSegmentIndex, 1, ...splitSegments, newSegment);
+            } else {
+              // Just insert the new segment
+              updatedSegments.splice(currentSegmentIndex + 1, 0, newSegment);
+            }
+          } else {
+            // If no segment contains current time, just append
+            updatedSegments.push(newSegment);
+          }
+
+          // Sort segments by start time
+          return updatedSegments.sort((a, b) => a.startTime - b.startTime);
+        });
+
+      setActiveSegment(newSegment.id);
+        
+        // Create a new video element for the segment
+        const segmentVideo = document.createElement('video');
+        segmentVideo.src = videoUrl;
+        await new Promise((resolve) => {
+          segmentVideo.onloadedmetadata = resolve;
+          segmentVideo.load();
+        });
+
+        // Generate frames for the new segment
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) return;
+
+        canvas.width = 160;
+        canvas.height = 90;
+
+        const frameCount = 20;
+        const interval = segmentVideo.duration / frameCount;
+        const newFrames: TimelineFrame[] = [];
+
+        for (let i = 0; i < frameCount; i++) {
+          const time = i * interval;
+          segmentVideo.currentTime = time;
+
+          await new Promise<void>((resolve) => {
+            const handleSeeked = () => {
+              context.drawImage(segmentVideo, 0, 0, canvas.width, canvas.height);
+              newFrames.push({
+                thumbnail: canvas.toDataURL('image/jpeg'),
+                time: time + startTime // Add the start time offset
+              });
+              segmentVideo.removeEventListener('seeked', handleSeeked);
+              resolve();
+            };
+            segmentVideo.addEventListener('seeked', handleSeeked);
+          });
+        }
+
+        // Update frames state with new frames
+        setFrames(prev => [...prev, ...newFrames]);
+
+        // Update video playback
+        if (videoRef.current) {
+          videoRef.current.currentTime = startTime;
+          videoRef.current.play();
+        }
+
+      URL.revokeObjectURL(videoUrl);
+      }
+
+      // Reset the input value to allow adding more files
+      if (additionalVideoInputRef.current) {
+        additionalVideoInputRef.current.value = '';
+      }
+      
+      saveToHistory();
+    } catch (error) {
+      console.error('Error adding video(s):', error);
+      setError('Failed to add video(s). Please try again.');
+    }
+  };
+
+  // Handle video text dragging
+  const handleVideoTextMouseDown = (e: React.MouseEvent, text: TextOverlay) => {
+    if (e.target instanceof HTMLElement && e.target.classList.contains('resize-handle')) {
+      return;
+    }
+    e.stopPropagation();
+    setIsDraggingVideo(true);
+    setSelectedText(text);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setVideoTextDragStart({
+      x: e.clientX - (text.position.x * rect.width / 100),
+      y: e.clientY - (text.position.y * rect.height / 100)
+    });
+  };
+
+  const handleVideoTextMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDraggingVideo || !selectedText) return;
+
+      const videoContainer = document.querySelector('.video-container');
+      if (!videoContainer) return;
+
+      const rect = videoContainer.getBoundingClientRect();
+    const x = ((e.clientX - videoTextDragStart.x) / rect.width) * 100;
+    const y = ((e.clientY - videoTextDragStart.y) / rect.height) * 100;
+
+      setTextOverlays(prev => prev.map(t =>
+        t.id === selectedText.id
+        ? { ...t, position: { 
+            x: Math.max(0, Math.min(100, x)), 
+            y: Math.max(0, Math.min(100, y)) 
+          }}
+          : t
+      ));
+  }, [isDraggingVideo, selectedText, videoTextDragStart]);
+
+  const handleVideoTextMouseUp = useCallback(() => {
+    if (isDraggingVideo) {
+      setIsDraggingVideo(false);
+      saveToHistory();
+    }
+  }, [isDraggingVideo, saveToHistory]);
+
+  // Handle timeline text dragging
+  const handleTimelineTextMouseDown = (e: React.MouseEvent, text: TextOverlay) => {
+    e.stopPropagation();
+    setIsDraggingTimeline(true);
+    setSelectedText(text);
+    const rect = timelineRef.current?.getBoundingClientRect();
+    if (rect) {
+      const clickX = e.clientX - rect.left;
+      setTimelineDragStart(clickX);
+    }
+  };
+
+  const handleTimelineTextMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDraggingTimeline || !selectedText || !timelineRef.current) return;
+
+    const rect = timelineRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * duration;
+    const newStartTime = Math.max(0, Math.min(duration - selectedText.duration, x));
+
+      setTextOverlays(prev => prev.map(t =>
+      t.id === selectedText.id ? { ...t, startTime: newStartTime } : t
+      ));
+  }, [isDraggingTimeline, selectedText, duration]);
+
+  const handleTimelineTextMouseUp = useCallback(() => {
+    if (isDraggingTimeline) {
+      setIsDraggingTimeline(false);
+      saveToHistory();
+    }
+  }, [isDraggingTimeline, saveToHistory]);
+
+  // Add event listeners
+  useEffect(() => {
+    window.addEventListener('mousemove', handleVideoTextMouseMove);
+    window.addEventListener('mouseup', handleVideoTextMouseUp);
+    window.addEventListener('mousemove', handleTimelineTextMouseMove);
+    window.addEventListener('mouseup', handleTimelineTextMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleVideoTextMouseMove);
+      window.removeEventListener('mouseup', handleVideoTextMouseUp);
+      window.removeEventListener('mousemove', handleTimelineTextMouseMove);
+      window.removeEventListener('mouseup', handleTimelineTextMouseUp);
+    };
+  }, [handleVideoTextMouseMove, handleVideoTextMouseUp, handleTimelineTextMouseMove, handleTimelineTextMouseUp]);
+
+  // Handle text resize
+  const handleResizeMouseDown = (e: React.MouseEvent, text: TextOverlay) => {
+    e.stopPropagation();
+    setIsResizing(true);
+    setSelectedText(text);
+    setResizeStart({
+      width: text.width,
+      height: text.height
+    });
+  };
+
+  // Handle add text
+  const handleAddText = useCallback((text: string) => {
+    if (!text.trim()) return;
+
+    const newText: TextOverlay = {
+      id: `text-${Date.now()}`,
+      text: text.trim(),
+      position: { x: 50, y: 50 },
+      fontSize: 24,
+      color: '#ffffff',
+      rotation: 0,
+      startTime: currentTime,
+      duration: 5,
+      width: 20,
+      height: 10,
+      fontFamily: 'Arial',
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      textDecoration: 'none',
+      borderWidth: 0,
+      borderColor: '#000000',
+      backgroundColor: 'transparent',
+      opacity: 1
+    };
+
+    setTextOverlays(prev => [...prev, newText]);
+    setShowTextEditor(false);
+    saveToHistory();
+  }, [currentTime, saveToHistory]);
+
+  // Handle text edit
+  const handleTextEdit = (text: TextOverlay) => {
+    setSelectedText(text);
+    setShowTextEditor(true);
+  };
+
+  // Handle text update
+  const handleTextUpdate = (updatedText: string) => {
+    if (!selectedText) return;
+
+    setTextOverlays(prev => prev.map(t =>
+      t.id === selectedText.id ? { 
+        ...t, 
+        text: updatedText,
+        fontFamily: t.fontFamily || 'Arial',
+        fontWeight: t.fontWeight || 'normal',
+        fontStyle: t.fontStyle || 'normal',
+        textDecoration: t.textDecoration || 'none',
+        borderWidth: t.borderWidth || 0,
+        borderColor: t.borderColor || '#000000',
+        backgroundColor: t.backgroundColor || 'transparent',
+        opacity: t.opacity || 1
+      } : t
+    ));
+    setShowTextEditor(false);
+    setSelectedText(null);
+    saveToHistory();
+  };
+
+  // Format time display
+  const formatTime = (time: number) => {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // Update handleSaveClick to gather instructions, including the original file reference
+  const handleSaveClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setLoading(true); // Indicate processing start
+    setError(null);
+
+    // Gather all necessary data for processing
+    const instructions: EditInstructions = {
+      segments: segments, 
+      audioTracks: audioTracks,
+      textOverlays: textOverlays,
+      duration: duration,
+      videoVolume: videoVolume,
+      originalVideoFile: videoFile // Include reference to the base video file
+    };
+
+    try {
+      // Call the onSave prop passed from Vibits.tsx with the instructions
+      onSave(instructions)
+        .then(() => {
+          setLoading(false);
+          // toast.success('Video processing started!'); // Feedback given in Vibits.tsx
+        })
+        .catch((err) => {
+          console.error("Error initiating video save:", err);
+          setError('Failed to start video processing. Please try again.');
+          setLoading(false);
+        });
+    } catch (err) {
+      console.error("Error in handleSaveClick:", err);
+      setError('An unexpected error occurred.');
+      setLoading(false);
+    }
+  };
+
+  // Handle delete segment
+  const handleDelete = useCallback(() => {
+    if (!activeSegment) return;
+
+    // Don't allow deleting if it's the only segment
+    if (segments.length <= 1) {
+      setError('Cannot delete the only segment');
+      return;
+    }
+
+    setSegments(prev => {
+      const newSegments = prev.filter(s => s.id !== activeSegment);
+      // Set active segment to the previous segment or the first one
+      const nextActiveIndex = Math.max(
+        0,
+        prev.findIndex(s => s.id === activeSegment) - 1
+      );
+      setActiveSegment(newSegments[nextActiveIndex].id);
+      return newSegments;
+    });
+    
+    saveToHistory();
+  }, [activeSegment, segments.length, saveToHistory]);
+
+  // Add handleDeleteText function
+  const handleDeleteText = useCallback((textId: string) => {
+    setTextOverlays(prev => prev.filter(t => t.id !== textId));
+    setSelectedText(null);
+    setShowTextEditor(false);
+    saveToHistory();
+  }, [saveToHistory]);
+
+  // Add audio control handlers
+  const handleVolumeChange = (value: number) => {
+    setVideoVolume(value);
+    if (videoRef.current) {
+      videoRef.current.volume = value;
+    }
+  };
+
+  const handleAudioDetach = () => {
+    setIsAudioDetached(!isAudioDetached);
+    if (videoRef.current) {
+      videoRef.current.muted = !isAudioDetached;
+    }
+  };
+
+  // Add these new handlers before the return statement
+  const handleSegmentDragStart = (e: React.MouseEvent, segment: VideoSegment) => {
+    e.stopPropagation();
+    setIsDraggingSegment(true);
+    setDraggedSegment(segment);
+    setDragStartX(e.clientX);
+    setDragStartTime(segment.startTime);
+  };
+
+  const handleTimelineDrag = useCallback((e: MouseEvent) => {
+    if (!isDraggingSegment || !draggedSegment || !timelineRef.current) return;
+
+    const rect = timelineRef.current.getBoundingClientRect();
+    const deltaX = e.clientX - dragStartX;
+    const deltaTime = (deltaX / rect.width) * duration;
+    const newStartTime = Math.max(0, dragStartTime + deltaTime);
+    const segmentDuration = draggedSegment.endTime - draggedSegment.startTime;
+    
+    if (newStartTime + segmentDuration <= duration) {
+      setSegments(prev => prev.map(s => 
+        s.id === draggedSegment.id 
+          ? { 
+              ...s, 
+              startTime: newStartTime,
+              endTime: newStartTime + segmentDuration
+            }
+          : s
+      ));
+    }
+  }, [isDraggingSegment, draggedSegment, dragStartX, dragStartTime, duration]);
+
+  const handleTimelineDragEnd = useCallback(() => {
+    if (isDraggingSegment) {
+      setIsDraggingSegment(false);
+      setDraggedSegment(null);
+      saveToHistory();
+    }
+  }, [isDraggingSegment, saveToHistory]);
+
+  // Add these useEffect hooks after the existing ones
+  useEffect(() => {
+    window.addEventListener('mousemove', handleTimelineDrag);
+    window.addEventListener('mouseup', handleTimelineDragEnd);
+    return () => {
+      window.removeEventListener('mousemove', handleTimelineDrag);
+      window.removeEventListener('mouseup', handleTimelineDragEnd);
+    };
+  }, [handleTimelineDrag, handleTimelineDragEnd]);
+
+  // Add this function before the return statement
+  const getAudioTrackPosition = (trackIndex: number) => {
+    const TRACK_HEIGHT = 20; // Height of each audio track in percentage
+    const MAX_TRACKS = 4; // Maximum number of visible tracks
+    const bottomPosition = Math.min(trackIndex * TRACK_HEIGHT, (MAX_TRACKS - 1) * TRACK_HEIGHT);
+    return bottomPosition;
+  };
+
+  // Add touch event handlers
+  const handleVideoTextTouchStart = (e: React.TouchEvent, text: TextOverlay) => {
+    e.stopPropagation();
+    setIsDraggingVideo(true);
+    setSelectedText(text);
+    const touch = e.touches[0];
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setVideoTextDragStart({
+      x: touch.clientX - (text.position.x * rect.width / 100),
+      y: touch.clientY - (text.position.y * rect.height / 100)
+    });
+  };
+
+  const handleVideoTextTouchMove = (e: TouchEvent) => {
+    if (!isDraggingVideo || !selectedText) return;
+
+    const videoContainer = document.querySelector('.video-container');
+    if (!videoContainer) return;
+
+    const touch = e.touches[0];
+    const rect = videoContainer.getBoundingClientRect();
+    const newX = ((touch.clientX - videoTextDragStart.x) / rect.width) * 100;
+    const newY = ((touch.clientY - videoTextDragStart.y) / rect.height) * 100;
+
+    setTextOverlays((prevOverlays: TextOverlay[]) => prevOverlays.map((overlay: TextOverlay) =>
+      overlay.id === selectedText.id
+        ? { ...overlay, position: { 
+            x: Math.max(0, Math.min(100, newX)), 
+            y: Math.max(0, Math.min(100, newY)) 
+          }}
+        : overlay
+    ));
+  };
+
+  const handleTimelineTextTouchStart = (e: React.TouchEvent, text: TextOverlay) => {
+    e.stopPropagation();
+    setIsDraggingTimeline(true);
+    setSelectedText(text);
+    const touch = e.touches[0];
+    const rect = timelineRef.current?.getBoundingClientRect();
+    if (rect) {
+      const touchX = touch.clientX - rect.left;
+      setTimelineDragStart(touchX);
+    }
+  };
+
+  const handleTimelineTextTouchMove = (e: TouchEvent) => {
+    if (!isDraggingTimeline || !selectedText || !timelineRef.current) return;
+
+    const touch = e.touches[0];
+    const rect = timelineRef.current.getBoundingClientRect();
+    const newX = ((touch.clientX - rect.left) / rect.width) * duration;
+    const newStartTime = Math.max(0, Math.min(duration - selectedText.duration, newX));
+
+    setTextOverlays((prevOverlays: TextOverlay[]) => prevOverlays.map((overlay: TextOverlay) =>
+      overlay.id === selectedText.id ? { ...overlay, startTime: newStartTime } : overlay
+    ));
+  };
+
+  const handleTouchEnd = () => {
+    setIsDraggingVideo(false);
+    setIsDraggingTimeline(false);
+    setSelectedText(null);
+  };
+
+  // Add touch event listeners
+  useEffect(() => {
+    window.addEventListener('touchmove', handleVideoTextTouchMove);
+    window.addEventListener('touchmove', handleTimelineTextTouchMove);
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', handleTouchEnd);
+
+    return () => {
+      window.removeEventListener('touchmove', handleVideoTextTouchMove);
+      window.removeEventListener('touchmove', handleTimelineTextTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [handleVideoTextTouchMove, handleTimelineTextTouchMove, handleTouchEnd]);
+
+  // Add these handlers after the existing touch handlers
+
+  const handleSegmentTouchStart = (e: React.TouchEvent, segment: VideoSegment) => {
+    e.stopPropagation();
+    setIsDraggingSegment(true);
+    setDraggedSegment(segment);
+    const touch = e.touches[0];
+    setDragStartX(touch.clientX);
+    setDragStartTime(segment.startTime);
+  };
+
+  const handleTimelineTouchMove = (e: TouchEvent) => {
+    if (!isDraggingSegment || !draggedSegment || !timelineRef.current) return;
+
+    const touch = e.touches[0];
+    const rect = timelineRef.current.getBoundingClientRect();
+    const deltaX = touch.clientX - dragStartX;
+    const deltaTime = (deltaX / rect.width) * duration;
+    const newStartTime = Math.max(0, dragStartTime + deltaTime);
+    const segmentDuration = draggedSegment.endTime - draggedSegment.startTime;
+    
+    if (newStartTime + segmentDuration <= duration) {
+      setSegments(prev => prev.map(s => 
+        s.id === draggedSegment.id 
+          ? { 
+              ...s, 
+              startTime: newStartTime,
+              endTime: newStartTime + segmentDuration
+            }
+          : s
+      ));
+    }
+  };
+
+  const handleTimelineTouchEnd = () => {
+    if (isDraggingSegment) {
+      setIsDraggingSegment(false);
+      setDraggedSegment(null);
+      saveToHistory();
+    }
+  };
+
+  // Add touch event listeners in useEffect
+  useEffect(() => {
+    window.addEventListener('touchmove', handleTimelineTouchMove);
+    window.addEventListener('touchend', handleTimelineTouchEnd);
+    window.addEventListener('touchcancel', handleTimelineTouchEnd);
+
+    return () => {
+      window.removeEventListener('touchmove', handleTimelineTouchMove);
+      window.removeEventListener('touchend', handleTimelineTouchEnd);
+      window.removeEventListener('touchcancel', handleTimelineTouchEnd);
+    };
+  }, [handleTimelineTouchMove, handleTimelineTouchEnd]);
+
   return (
-    <Box 
-      sx={{ 
-        width: '100%', 
-        height: '100%', 
-        display: 'flex', 
-        flexDirection: 'column',
-        bgcolor: '#000000',
-        color: 'white'
-      }}
-      role="region"
-      aria-label="Video Editor"
-    >
+    <Box sx={{ 
+      width: '100vw', 
+      height: '100vh', 
+      display: 'flex', 
+      flexDirection: 'column',
+      bgcolor: '#000000',
+      color: 'white',
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      zIndex: 1300,
+      overflowY: 'auto'
+    }}>
       {/* Top Bar */}
-      <Box 
-        sx={{ 
-          p: 2, 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          borderBottom: '1px solid rgba(255,255,255,0.1)'
-        }}
-        role="toolbar"
-        aria-label="Editor Controls"
-      >
-        <IconButton 
-          onClick={onCancel} 
-          sx={{ color: 'white' }}
-          aria-label="Back"
-        >
+      <Box sx={{ 
+        p: 2, 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        borderBottom: '1px solid rgba(255,255,255,0.1)',
+        bgcolor: '#1a1a1a'
+      }}>
+        <IconButton onClick={onCancel} sx={{ color: 'white' }}>
           <BackIcon />
         </IconButton>
-        <Typography variant="h6" role="timer">
-          {formatTime(currentTime)} / {formatTime(duration)}
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
+          <VibitIcon sx={{ width: 32, height: 32 }} />
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Typography variant="h6">
+            {formatTime(currentTime)} / {formatTime(duration)}
+          </Typography>
           <IconButton 
             onClick={handleUndo} 
-            sx={{ color: 'white' }}
-            aria-label="Undo"
-            disabled={historyIndex < 0}
+            disabled={currentHistoryIndex <= 0}
+            sx={{ 
+              color: 'white',
+              '&.Mui-disabled': {
+                color: 'rgba(255,255,255,0.3)'
+              }
+            }}
           >
             <UndoIcon />
           </IconButton>
-          <Button
-            variant="contained"
-            onClick={handleSave}
-            disabled={loading}
-            startIcon={loading ? <CircularProgress size={20} /> : <Save />}
-            sx={{
-              bgcolor: '#8e44ad',
-              '&:hover': {
-                bgcolor: '#6c3483'
-              },
+          <IconButton 
+            onClick={handleRedo}
+            disabled={currentHistoryIndex >= history.length - 1}
+            sx={{ 
+              color: 'white',
               '&.Mui-disabled': {
-                bgcolor: 'rgba(142, 68, 173, 0.5)'
+                color: 'rgba(255,255,255,0.3)'
               }
             }}
-            aria-label={loading ? 'Processing video' : 'Upload video'}
           >
-            {loading ? 'Processing...' : 'Upload'}
+            <RedoIcon />
+          </IconButton>
+          <Button
+            variant="contained"
+            onClick={handleSaveClick}
+            disabled={loading || uploading}
+            startIcon={loading ? <CircularProgress size={20} /> : <Save />}
+            color="primary"
+            sx={{ mr: 1 }}
+          >
+            {loading ? 'Starting...' : 'Upload'}
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={onCancel}
+            sx={{ 
+              color: 'white',
+              borderColor: 'white',
+              '&:hover': {
+                borderColor: 'white',
+                backgroundColor: 'rgba(255,255,255,0.1)'
+              }
+            }}
+          >
+            Cancel
           </Button>
         </Box>
       </Box>
 
       {/* Main Video Area */}
-      <Box 
-        sx={{ flex: 1, position: 'relative', bgcolor: '#000000' }}
-        role="region"
-        aria-label="Video Preview"
-      >
-        <video
-          ref={videoRef}
-          src={videoFile ? URL.createObjectURL(videoFile) : ''}
-          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-          onTimeUpdate={() => videoRef.current && setCurrentTime(videoRef.current.currentTime)}
-          onLoadedMetadata={() => videoRef.current && setDuration(videoRef.current.duration)}
-          aria-label="Video being edited"
-        />
-        {renderStickers()}
-        {renderTextOverlays()}
-        <canvas ref={canvasRef} style={{ display: 'none' }} aria-hidden="true" />
-        {/* Playhead line overlay */}
-        {isPlayheadVisible && (
-          <Box
-            sx={{
-              position: 'absolute',
-              left: '50%',
-              top: 0,
-              bottom: 0,
-              width: '2px',
-              backgroundColor: '#8e44ad',
-              zIndex: 2
+      <Box sx={{ 
+        flex: 1, 
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: '#000000'
+      }}>
+        {/* Video Player */}
+        <Box 
+          className="video-container"
+          sx={{ 
+            flex: 1,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            p: 2,
+            position: 'relative'
+          }}
+        >
+          <video
+            ref={videoRef}
+            style={{ 
+              maxWidth: '100%',
+              maxHeight: 'calc(100vh - 300px)',
+              objectFit: 'contain'
             }}
           />
-        )}
-      </Box>
+          {textOverlays.map(text => (
+            <div
+              key={text.id}
+              style={{
+                position: 'absolute',
+                left: `${text.position.x}%`,
+                top: `${text.position.y}%`,
+                transform: `rotate(${text.rotation}deg)`,
+                color: text.color,
+                fontSize: `${text.fontSize}px`,
+                cursor: isDraggingVideo ? 'grabbing' : 'grab',
+                userSelect: 'none',
+                width: `${text.width}%`,
+                height: `${text.height}%`,
+                border: selectedText?.id === text.id ? '1px solid #4a90e2' : 'none',
+                fontFamily: text.fontFamily,
+                fontWeight: text.fontWeight,
+                fontStyle: text.fontStyle,
+                textDecoration: text.textDecoration,
+                WebkitTextStroke: text.borderWidth ? `${text.borderWidth}px ${text.borderColor}` : 'none',
+                backgroundColor: text.backgroundColor,
+                opacity: text.opacity,
+                padding: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: selectedText?.id === text.id ? 2 : 1
+              }}
+              onMouseDown={(e) => handleVideoTextMouseDown(e, text)}
+              onDoubleClick={() => handleTextEdit(text)}
+              onTouchStart={(e) => handleVideoTextTouchStart(e, text)}
+            >
+              {text.text}
+              {selectedText?.id === text.id && (
+                <>
+                  <div
+                    className="resize-handle"
+                    style={{
+                      position: 'absolute',
+                      right: -5,
+                      bottom: -5,
+                      width: 10,
+                      height: 10,
+                      background: '#4a90e2',
+                      cursor: 'nwse-resize'
+                    }}
+                    onMouseDown={(e) => handleResizeMouseDown(e, text)}
+                  />
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteText(text.id);
+                    }}
+                    sx={{
+                      position: 'absolute',
+                      top: -20,
+                      right: -20,
+                      backgroundColor: 'error.main',
+                      color: 'white',
+                      '&:hover': {
+                        backgroundColor: 'error.dark'
+                      },
+                      width: 24,
+                      height: 24,
+                      '& .MuiSvgIcon-root': {
+                        fontSize: 16
+                      }
+                    }}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </>
+              )}
+            </div>
+          ))}
+          <canvas ref={canvasRef} style={{ display: 'none' }} />
+        </Box>
 
-      {/* Timeline */}
-      <Box sx={{ bgcolor: '#1a1a1a', p: 2 }}>
-        <Box
-          ref={timelineRef}
-          sx={{
-            position: 'relative',
-            height: 100,
-            bgcolor: '#2a2a2a',
-            borderRadius: 1,
-            overflow: 'hidden',
-            cursor: 'pointer',
-            mb: 2
-          }}
-          onClick={handleTimelineClick}
-        >
-          {/* Frame thumbnails */}
+        {/* Timeline */}
+        <Box sx={{ 
+          bgcolor: '#1a1a1a', 
+          p: 2,
+          borderTop: '1px solid rgba(255,255,255,0.1)'
+        }}>
+          {/* Controls */}
           <Box sx={{ 
-            display: 'flex', 
-            height: '100%',
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            top: 0,
-            bottom: 0
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            mb: 2
           }}>
-            {frames.map((frame, index) => (
-              <Box
-                key={index}
-                sx={{
-                  width: `${(0.5 / duration) * 100}%`,
-                  height: '100%',
-                  flexShrink: 0
-                }}
-              >
-                <img
-                  src={frame.thumbnail}
-                  alt={`Frame ${index}`}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover'
+            <IconButton onClick={handlePlayPause} sx={{ color: 'white' }}>
+              {isPlaying ? <Pause /> : <PlayArrow />}
+            </IconButton>
+            
+            {/* Add audio control buttons */}
+            <IconButton 
+              onClick={handleAudioDetach}
+              sx={{ 
+                color: 'white',
+                bgcolor: isAudioDetached ? 'error.main' : 'transparent'
+              }}
+            >
+              {isAudioDetached ? <VolumeOff /> : <VolumeUp />}
+            </IconButton>
+            
+            {!isAudioDetached && (
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center',
+                width: 100,
+                mx: 1
+              }}>
+                <Slider
+                  value={videoVolume}
+                  onChange={(_, value) => handleVolumeChange(value as number)}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  sx={{ 
+                    color: 'white',
+                    '& .MuiSlider-thumb': {
+                      width: 16,
+                      height: 16
+                    }
                   }}
                 />
               </Box>
-            ))}
+            )}
+
+            <IconButton onClick={handleSplit} sx={{ color: 'white' }}>
+              <SplitIcon />
+            </IconButton>
+            <IconButton onClick={handleCut} sx={{ color: 'white' }}>
+              <CutIcon />
+            </IconButton>
+            <IconButton onClick={() => additionalVideoInputRef.current?.click()} sx={{ color: 'white' }}>
+              <AddIcon />
+            </IconButton>
+            <IconButton onClick={() => setShowTextEditor(true)} sx={{ color: 'white' }}>
+              <TextIcon />
+            </IconButton>
+            <IconButton 
+              onClick={handleDelete} 
+              sx={{ 
+                color: 'white',
+                '&.Mui-disabled': {
+                  color: 'rgba(255,255,255,0.3)'
+                }
+              }}
+              disabled={!activeSegment || segments.length <= 1}
+            >
+              <DeleteIcon />
+            </IconButton>
           </Box>
 
-          {/* Trim region */}
+          {/* Timeline Frames */}
           <Box
+            ref={timelineRef}
             sx={{
-              position: 'absolute',
-              left: `${(trimStart / duration) * 100}%`,
-              width: `${((trimEnd - trimStart) / duration) * 100}%`,
+              height: 90,
+              bgcolor: '#2a2a2a',
+              borderRadius: 1,
+              overflow: 'hidden',
+              cursor: 'pointer',
+              position: 'relative'
+            }}
+            onClick={handleTimelineClick}
+          >
+            {/* Combined Timeline for Video and Audio */}
+            <Box sx={{ 
+              position: 'relative',
               height: '100%',
-              bgcolor: 'rgba(142, 68, 173, 0.3)',
-              border: '2px solid #8e44ad',
-              zIndex: 1
-            }}
-          >
-            {/* Left trim handle */}
+              width: '100%'
+            }}>
+              {/* Video Segments */}
+            {segments.map(segment => (
+              <TimelineSegment
+                key={segment.id}
+                segment={segment}
+                duration={duration}
+                isActive={segment.id === activeSegment}
+                frames={frames}
+                onSelect={setActiveSegment}
+                  onDragStart={handleSegmentDragStart}
+                  onTouchStart={handleSegmentTouchStart}
+              />
+            ))}
+
+              {/* Audio Segments - Stacked on the timeline */}
+              {audioTracks.map((track, index) => (
+                <Box
+                  key={track.id}
+                  sx={{
+                    position: 'absolute',
+                    left: `${(track.startTime / duration) * 100}%`,
+                    width: `${(track.duration / duration) * 100}%`,
+                    height: '20%', // Fixed height for each audio track
+                    bottom: `${getAudioTrackPosition(index)}%`, // Stack tracks from bottom
+                    bgcolor: selectedAudioTrack?.id === track.id ? 'primary.main' : 'primary.dark',
+                    opacity: 0.7,
+                    cursor: 'grab',
+                    '&:hover': {
+                      opacity: 1,
+                      bgcolor: 'primary.main'
+                    },
+                    '&:active': {
+                      cursor: 'grabbing'
+                    },
+                    borderTop: '2px solid rgba(255,255,255,0.5)',
+                    zIndex: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0 4px'
+                  }}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setIsAudioDragging(true);
+                    setSelectedAudioTrack(track);
+                    setDragStartX(e.clientX);
+                    setDragStartTime(track.startTime);
+                  }}
+                  onTouchStart={(e) => {
+                    e.stopPropagation();
+                    setIsAudioDragging(true);
+                    setSelectedAudioTrack(track);
+                    setDragStartX(e.touches[0].clientX);
+                    setDragStartTime(track.startTime);
+                  }}
+                >
+                  <Typography variant="caption" sx={{ 
+                    color: 'white', 
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    userSelect: 'none',
+                    fontSize: '0.7rem',
+                    maxWidth: '80%'
+                  }}>
+                    {track.name}
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAudioTracks(prev => prev.filter(t => t.id !== track.id));
+                      if (selectedAudioTrack?.id === track.id) {
+                        setSelectedAudioTrack(null);
+                      }
+                    }}
+                    sx={{
+                      padding: '2px',
+                      color: 'white',
+                      '&:hover': {
+                        bgcolor: 'rgba(255,255,255,0.1)'
+                      }
+                    }}
+                  >
+                    <DeleteIcon sx={{ fontSize: '0.8rem' }} />
+                  </IconButton>
+                </Box>
+              ))}
+            </Box>
+
+            {/* Playhead */}
             <Box
               sx={{
                 position: 'absolute',
-                left: -6,
+                left: `${(currentTime / duration) * 100}%`,
                 top: 0,
                 bottom: 0,
-                width: 12,
-                bgcolor: '#8e44ad',
-                cursor: 'ew-resize',
-                '&:hover': {
-                  bgcolor: '#6c3483'
-                }
-              }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                const handleMouseMove = (moveEvent: MouseEvent) => {
-                  handleTrimStart(moveEvent as any);
-                };
-                const handleMouseUp = () => {
-                  document.removeEventListener('mousemove', handleMouseMove);
-                  document.removeEventListener('mouseup', handleMouseUp);
-                };
-                document.addEventListener('mousemove', handleMouseMove);
-                document.addEventListener('mouseup', handleMouseUp);
+                width: 2,
+                bgcolor: '#ff0000',
+                zIndex: 3,
+                transform: 'translateX(-50%)',
+                pointerEvents: 'none'
               }}
             />
-            {/* Right trim handle */}
-            <Box
-              sx={{
-                position: 'absolute',
-                right: -6,
-                top: 0,
-                bottom: 0,
-                width: 12,
-                bgcolor: '#8e44ad',
-                cursor: 'ew-resize',
-                '&:hover': {
-                  bgcolor: '#6c3483'
-                }
-              }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                const handleMouseMove = (moveEvent: MouseEvent) => {
-                  handleTrimEnd(moveEvent as any);
-                };
-                const handleMouseUp = () => {
-                  document.removeEventListener('mousemove', handleMouseMove);
-                  document.removeEventListener('mouseup', handleMouseUp);
-                };
-                document.addEventListener('mousemove', handleMouseMove);
-                document.addEventListener('mouseup', handleMouseUp);
-              }}
-            />
+
+            {/* Time Labels */}
+            <Box sx={{
+              position: 'absolute',
+              top: -24,
+              left: 0,
+              right: 0,
+              display: 'flex',
+              color: 'white',
+              fontSize: '12px'
+            }}>
+              {segments.map(segment => (
+                <Box
+                  key={segment.id}
+                  sx={{
+                    position: 'absolute',
+                    left: `${(segment.startTime / duration) * 100}%`,
+                    transform: 'translateX(-50%)'
+                  }}
+                >
+                  {formatTime(segment.startTime)}
+                </Box>
+              ))}
+            </Box>
           </Box>
 
-          {/* Playhead */}
-          <Box
-            sx={{
-              position: 'absolute',
-              left: `${(currentTime / duration) * 100}%`,
-              top: 0,
-              bottom: 0,
-              width: 2,
-              bgcolor: '#8e44ad',
-              zIndex: 2
-            }}
-          />
-        </Box>
+          {/* Audio Controls */}
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 2,
+            mb: 2
+          }}>
+            <IconButton 
+              onClick={() => audioInputRef.current?.click()}
+              sx={{ color: 'white' }}
+            >
+              <AudioFileIcon />
+            </IconButton>
+            {/* Add Cut and Split buttons */}
+            {selectedAudioTrack && (
+              <>
+                <IconButton 
+                  onClick={() => {
+                    if (!selectedAudioTrack) return;
+                    
+                    // Cut audio at current time
+                    const cutTime = currentTime;
+                    if (cutTime <= selectedAudioTrack.startTime || cutTime >= selectedAudioTrack.startTime + selectedAudioTrack.duration) {
+                      return;
+                    }
 
-        {/* Time indicators */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', px: 1 }}>
-          <Typography variant="caption" sx={{ color: 'white' }}>
-            {formatTime(trimStart)}
-          </Typography>
-          <Typography variant="caption" sx={{ color: 'white' }}>
-            {formatTime(trimEnd)}
-          </Typography>
-        </Box>
+                    const remainingTracks = [
+                      {
+                        ...selectedAudioTrack,
+                        id: `audio-${Date.now()}-1`,
+                        duration: Math.max(selectedAudioTrack.startTime, cutTime - 0.5) - selectedAudioTrack.startTime
+                      },
+                      {
+                        ...selectedAudioTrack,
+                        id: `audio-${Date.now()}-2`,
+                        startTime: Math.min(selectedAudioTrack.startTime + selectedAudioTrack.duration, cutTime + 0.5),
+                        duration: selectedAudioTrack.startTime + selectedAudioTrack.duration - Math.min(selectedAudioTrack.startTime + selectedAudioTrack.duration, cutTime + 0.5)
+                      }
+                    ];
 
-        {/* Controls */}
-        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 2 }}>
-          <Button
-            variant="contained"
-            onClick={() => {
-              if (videoRef.current) {
-                videoRef.current.currentTime = trimStart;
-              }
+                    setAudioTracks(prev => [
+                      ...prev.filter(t => t.id !== selectedAudioTrack.id),
+                      ...remainingTracks
+                    ]);
+                    setSelectedAudioTrack(remainingTracks[0]);
+                  }}
+                  sx={{ color: 'white' }}
+                >
+                  <CutIcon />
+                </IconButton>
+                <IconButton 
+                  onClick={() => {
+                    if (!selectedAudioTrack) return;
+                    
+                    // Split audio at current time
+                    const splitTime = currentTime;
+                    if (splitTime <= selectedAudioTrack.startTime || splitTime >= selectedAudioTrack.startTime + selectedAudioTrack.duration) {
+                      return;
+                    }
+
+                    const newTracks = [
+                      {
+                        ...selectedAudioTrack,
+                        id: `audio-${Date.now()}-1`,
+                        duration: splitTime - selectedAudioTrack.startTime
+                      },
+                      {
+                        ...selectedAudioTrack,
+                        id: `audio-${Date.now()}-2`,
+                        startTime: splitTime,
+                        duration: selectedAudioTrack.startTime + selectedAudioTrack.duration - splitTime
+                      }
+                    ];
+
+                    setAudioTracks(prev => [
+                      ...prev.filter(t => t.id !== selectedAudioTrack.id),
+                      ...newTracks
+                    ]);
+                    setSelectedAudioTrack(newTracks[0]);
+                  }}
+                  sx={{ color: 'white' }}
+                >
+                  <SplitIcon />
+                </IconButton>
+                <IconButton 
+                  onClick={() => {
+                    if (!selectedAudioTrack) return;
+                    setAudioTracks(prev => prev.filter(t => t.id !== selectedAudioTrack.id));
+                    setSelectedAudioTrack(null);
+                  }}
+                  sx={{ color: 'white' }}
+                >
+                  <DeleteIcon />
+                </IconButton>
+              </>
+            )}
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={async (e) => {
+                const files = e.target.files;
+                if (!files || files.length === 0) return;
+
+                try {
+                  for (const file of Array.from(files)) {
+                  const audioUrl = URL.createObjectURL(file);
+                  const audio = new Audio(audioUrl);
+                  
+                  await new Promise((resolve) => {
+                    audio.onloadedmetadata = resolve;
+                    audio.load();
+                  });
+
+                  const newTrack: AudioTrack = {
+                      id: `audio-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                    file,
+                    name: file.name,
+                    startTime: currentTime,
+                    duration: audio.duration,
+                    volume: 1,
+                    isMuted: false
+                  };
+
+                  setAudioTracks(prev => [...prev, newTrack]);
+                  audioElements.current[newTrack.id] = audio;
+                  URL.revokeObjectURL(audioUrl);
+                  }
+
+                  // Reset the input value to allow adding more files
+                  if (audioInputRef.current) {
+                    audioInputRef.current.value = '';
+                  }
+                } catch (error) {
+                  console.error('Error adding audio:', error);
+                  setError('Failed to add audio track(s)');
+                }
+              }}
+              style={{ display: 'none' }}
+              ref={audioInputRef}
+              multiple={true}
+            />
+            {selectedAudioTrack && (
+              <>
+                <IconButton 
+                  onClick={() => {
+                    setAudioTracks(prev => prev.map(t =>
+                      t.id === selectedAudioTrack.id ? { ...t, isMuted: !t.isMuted } : t
+                    ));
+                  }}
+                  sx={{ color: 'white' }}
+                >
+                  {selectedAudioTrack.isMuted ? <VolumeOff /> : <VolumeUp />}
+                </IconButton>
+                <Box sx={{ width: 100 }}>
+                  <Slider
+                    value={selectedAudioTrack.volume}
+                    onChange={(_, value) => {
+                      setAudioTracks(prev => prev.map(t =>
+                        t.id === selectedAudioTrack.id ? { ...t, volume: value as number } : t
+                      ));
+                      if (audioElements.current[selectedAudioTrack.id]) {
+                        audioElements.current[selectedAudioTrack.id].volume = value as number;
+                      }
+                    }}
+                    min={0}
+                    max={1}
+                    step={0.1}
+                    sx={{ 
+                      color: 'white',
+                      '& .MuiSlider-thumb': {
+                        width: 12,
+                        height: 12,
+                      }
+                    }}
+                  />
+                </Box>
+              </>
+            )}
+          </Box>
+
+          {/* Text Timeline */}
+          <Box 
+            sx={{ 
+              height: 60, 
+              bgcolor: '#2a2a2a', 
+              borderRadius: 1, 
+              position: 'relative', 
+              mb: 2,
+              overflowX: 'auto',
+              overflowY: 'hidden'
             }}
           >
-            Play Selection
-          </Button>
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={() => {
-              // Save the trimmed portion
-              if (videoFile) {
-                onSave(videoFile);
-              }
-            }}
-            disabled={!videoFile}
-          >
-            Save
-          </Button>
+            <Box sx={{ 
+              position: 'relative', 
+              height: '100%', 
+              width: '100%',
+              minWidth: '100%'
+            }}>
+              {textOverlays.map(text => (
+                <Box
+                  key={text.id}
+                  sx={{
+                    position: 'absolute',
+                    left: `${(text.startTime / duration) * 100}%`,
+                    width: `${(text.duration / duration) * 100}%`,
+                    height: '100%',
+                    bgcolor: selectedText?.id === text.id ? 'primary.main' : 'primary.dark',
+                    opacity: 0.7,
+                    cursor: isDraggingTimeline ? 'grabbing' : 'grab',
+                    display: 'flex',
+                    alignItems: 'center',
+                    px: 1,
+                    '&:hover': {
+                      opacity: 1,
+                      bgcolor: 'primary.main'
+                    }
+                  }}
+                  onMouseDown={(e) => handleTimelineTextMouseDown(e, text)}
+                  onTouchStart={(e) => handleTimelineTextTouchStart(e, text)}
+                >
+                  <Typography variant="caption" sx={{ 
+                    color: 'white', 
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    userSelect: 'none'
+                  }}>
+                    {text.text}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          </Box>
         </Box>
       </Box>
 
-      {/* Bottom Toolbar */}
-      <Box 
-        sx={{ 
-          bgcolor: '#1a1a1a', 
-          p: 2,
-          display: 'flex',
-          justifyContent: 'space-around',
-          borderTop: '1px solid rgba(255,255,255,0.1)'
-        }}
-        role="toolbar"
-        aria-label="Editing Tools"
-      >
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'white' }}>
-          <IconButton 
-            onClick={() => setShowTextEditor(true)} 
-            sx={{ color: 'white' }}
-            aria-label="Add Text"
-          >
-            <TextIcon />
-          </IconButton>
-          <Typography variant="caption">Text</Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'white' }}>
-          <IconButton 
-            onClick={() => additionalVideoInputRef.current?.click()}
-            sx={{ color: 'white' }}
-            aria-label="Add Video"
-          >
-            <AddIcon />
-          </IconButton>
-          <Typography variant="caption">Add</Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'white' }}>
-          <IconButton 
-            onClick={handleSplit}
-            sx={{ color: 'white' }}
-            aria-label="Split Video"
-          >
-            <SplitIcon />
-          </IconButton>
-          <Typography variant="caption">Split</Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'white' }}>
-          <IconButton 
-            onClick={handleCut}
-            sx={{ color: 'white' }}
-            aria-label="Cut Video"
-          >
-            <CutIcon />
-          </IconButton>
-          <Typography variant="caption">Cut</Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'white' }}>
-          <IconButton 
-            onClick={() => setShowFilters(true)}
-            sx={{ color: 'white' }}
-            aria-label="Apply Filters"
-          >
-            <FilterIcon />
-          </IconButton>
-          <Typography variant="caption">Filters</Typography>
-        </Box>
-      </Box>
-
-      {/* Dialogs */}
+      {/* Text Editor Dialog */}
       <Dialog 
         open={showTextEditor} 
-        onClose={() => setShowTextEditor(false)}
-        aria-labelledby="text-editor-title"
+        onClose={() => {
+          setShowTextEditor(false);
+          setSelectedText(null);
+        }}
+        maxWidth="sm"
+        fullWidth
       >
-        <DialogTitle id="text-editor-title">Add Text</DialogTitle>
+        <DialogTitle sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center' 
+        }}>
+          {selectedText ? 'Edit Text' : 'Add Text'}
+          {selectedText && (
+            <IconButton
+              color="error"
+              onClick={() => handleDeleteText(selectedText.id)}
+              size="small"
+            >
+              <DeleteIcon />
+            </IconButton>
+          )}
+        </DialogTitle>
         <Box sx={{ p: 2 }}>
           <TextField
             fullWidth
             placeholder="Enter text..."
+            defaultValue={selectedText?.text || ''}
             onKeyPress={(e: React.KeyboardEvent<HTMLInputElement>) => {
               if (e.key === 'Enter') {
                 const input = e.target as HTMLInputElement;
-                handleAddText(input.value);
+                if (selectedText) {
+                  handleTextUpdate(input.value);
+                } else {
+                  handleAddText(input.value);
+                }
                 input.value = '';
               }
             }}
-            aria-label="Text to add"
+            sx={{ mb: 2 }}
           />
+          {selectedText && (
+            <>
+              <Typography gutterBottom>Font Family</Typography>
+              <Select
+                fullWidth
+                value={selectedText.fontFamily}
+                onChange={(e) => {
+                  setTextOverlays(prev => prev.map(t =>
+                    t.id === selectedText.id ? { ...t, fontFamily: e.target.value } : t
+                  ));
+                }}
+                sx={{ mb: 2 }}
+              >
+                <MenuItem value="Arial">Arial</MenuItem>
+                <MenuItem value="Times New Roman">Times New Roman</MenuItem>
+                <MenuItem value="Courier New">Courier New</MenuItem>
+                <MenuItem value="Georgia">Georgia</MenuItem>
+                <MenuItem value="Verdana">Verdana</MenuItem>
+                <MenuItem value="Impact">Impact</MenuItem>
+              </Select>
+
+              <Typography gutterBottom>Font Style</Typography>
+              <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                <Button
+                  variant={selectedText.fontWeight === 'bold' ? 'contained' : 'outlined'}
+                  onClick={() => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id 
+                        ? { ...t, fontWeight: t.fontWeight === 'bold' ? 'normal' : 'bold' }
+                        : t
+                    ));
+                  }}
+                >
+                  B
+                </Button>
+                <Button
+                  variant={selectedText.fontStyle === 'italic' ? 'contained' : 'outlined'}
+                  onClick={() => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id
+                        ? { ...t, fontStyle: t.fontStyle === 'italic' ? 'normal' : 'italic' }
+                        : t
+                    ));
+                  }}
+                >
+                  I
+                </Button>
+                <Button
+                  variant={selectedText.textDecoration === 'underline' ? 'contained' : 'outlined'}
+                  onClick={() => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id
+                        ? { ...t, textDecoration: t.textDecoration === 'underline' ? 'none' : 'underline' }
+                        : t
+                    ));
+                  }}
+                >
+                  U
+                </Button>
+              </Box>
+
+              <Typography gutterBottom>Text Color</Typography>
+              <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                <input
+                  type="color"
+                  value={selectedText.color}
+                  onChange={(e) => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id ? { ...t, color: e.target.value } : t
+                    ));
+                  }}
+                />
+              </Box>
+
+              <Typography gutterBottom>Text Border</Typography>
+              <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'center' }}>
+                <Slider
+                  value={selectedText.borderWidth}
+                  min={0}
+                  max={5}
+                  step={0.5}
+                  onChange={(_, value) => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id ? { ...t, borderWidth: value as number } : t
+                    ));
+                  }}
+                  sx={{ flex: 1 }}
+                />
+                <input
+                  type="color"
+                  value={selectedText.borderColor}
+                  onChange={(e) => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id ? { ...t, borderColor: e.target.value } : t
+                    ));
+                  }}
+                />
+              </Box>
+
+              <Typography gutterBottom>Background Color</Typography>
+              <Box sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center' }}>
+                <input
+                  type="color"
+                  value={selectedText.backgroundColor === 'transparent' ? '#000000' : selectedText.backgroundColor}
+                  onChange={(e) => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id ? { ...t, backgroundColor: e.target.value } : t
+                    ));
+                  }}
+                />
+                <Button
+                  variant={selectedText.backgroundColor === 'transparent' ? 'contained' : 'outlined'}
+                  onClick={() => {
+                    setTextOverlays(prev => prev.map(t =>
+                      t.id === selectedText.id
+                        ? { ...t, backgroundColor: t.backgroundColor === 'transparent' ? '#000000' : 'transparent' }
+                        : t
+                    ));
+                  }}
+                >
+                  Transparent
+                </Button>
+              </Box>
+
+              <Typography gutterBottom>Opacity</Typography>
+              <Slider
+                value={selectedText.opacity}
+                min={0.1}
+                max={1}
+                step={0.1}
+                onChange={(_, value) => {
+                  setTextOverlays(prev => prev.map(t =>
+                    t.id === selectedText.id ? { ...t, opacity: value as number } : t
+                  ));
+                }}
+                valueLabelDisplay="auto"
+                sx={{ mb: 2 }}
+              />
+
+              <Typography gutterBottom>Duration (seconds)</Typography>
+              <Slider
+                value={selectedText.duration}
+                min={1}
+                max={30}
+                onChange={(_, value) => {
+                  setTextOverlays(prev => prev.map(t =>
+                    t.id === selectedText.id ? { ...t, duration: value as number } : t
+                  ));
+                }}
+                valueLabelDisplay="auto"
+                sx={{ mb: 2 }}
+              />
+
+              <Typography gutterBottom>Font Size</Typography>
+              <Slider
+                value={selectedText.fontSize}
+                min={12}
+                max={72}
+                onChange={(_, value) => {
+                  setTextOverlays(prev => prev.map(t =>
+                    t.id === selectedText.id ? { ...t, fontSize: value as number } : t
+                  ));
+                }}
+                valueLabelDisplay="auto"
+              />
+            </>
+          )}
         </Box>
       </Dialog>
 
-      <Dialog 
-        open={showFilters} 
-        onClose={() => setShowFilters(false)}
-        aria-labelledby="filter-picker-title"
-      >
-        <DialogTitle id="filter-picker-title">Choose Filter</DialogTitle>
-        <Box sx={{ p: 2 }}>
-          <FormControl fullWidth>
-            <Select
-              value={selectedFilter}
-              onChange={(e) => setSelectedFilter(e.target.value)}
-              aria-label="Select filter"
-            >
-              {filters.map((filter) => (
-                <MenuItem key={filter.value} value={filter.value}>
-                  {filter.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Box>
-      </Dialog>
-
-      {error && (
-        <Alert 
-          severity="error" 
-          sx={{ 
-            position: 'absolute', 
-            top: 16, 
-            left: 16, 
-            right: 16,
-            zIndex: 9999
-          }}
-          role="alert"
-        >
-          {error}
-        </Alert>
-      )}
-
+      {/* Hidden file inputs */}
       <input
         type="file"
         accept="video/*"
         onChange={handleAddVideo}
         style={{ display: 'none' }}
         ref={additionalVideoInputRef}
+        multiple={true}
       />
+      <input
+        type="file"
+        accept="audio/*"
+        onChange={async (e) => {
+          const files = e.target.files;
+          if (!files || files.length === 0) return;
+
+          try {
+            for (const file of Array.from(files)) {
+              const audioUrl = URL.createObjectURL(file);
+              const audio = new Audio(audioUrl);
+              
+              await new Promise((resolve) => {
+                audio.onloadedmetadata = resolve;
+                audio.load();
+              });
+
+              const newTrack: AudioTrack = {
+                id: `audio-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                file,
+                name: file.name,
+                startTime: currentTime,
+                duration: audio.duration,
+                volume: 1,
+                isMuted: false
+              };
+
+              setAudioTracks(prev => [...prev, newTrack]);
+              audioElements.current[newTrack.id] = audio;
+              URL.revokeObjectURL(audioUrl);
+            }
+
+            // Reset the input value to allow adding more files
+            if (audioInputRef.current) {
+              audioInputRef.current.value = '';
+            }
+          } catch (error) {
+            console.error('Error adding audio:', error);
+            setError('Failed to add audio track(s)');
+          }
+        }}
+        style={{ display: 'none' }}
+        ref={audioInputRef}
+        multiple={true}
+      />
+
+      {/* Upload Progress Dialog */}
+      {loading && (
+        <Dialog open={loading} maxWidth="sm" fullWidth>
+          <DialogContent>
+            <Typography variant="h6" gutterBottom>
+              Uploading Video...
+            </Typography>
+            <LinearProgress 
+              variant="determinate" 
+              value={loading ? 0 : 100} 
+              sx={{ height: 10, borderRadius: 5 }}
+            />
+            <Typography variant="body2" align="center" sx={{ mt: 1, mb: 2 }}>
+              {Math.round(loading ? 0 : 100)}%
+            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+              <Button
+                variant="contained"
+                color="error"
+                onClick={onCancel}
+              >
+                Cancel Upload
+              </Button>
+            </Box>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {error && (
+        <Alert severity="error" sx={{ position: 'absolute', top: 16, left: 16, right: 16 }}>
+          {error}
+        </Alert>
+      )}
     </Box>
   );
 };
