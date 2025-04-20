@@ -230,29 +230,56 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
   const [isDraggingTimeline, setIsDraggingTimeline] = useState(false);
   const [timelineDragStart, setTimelineDragStart] = useState(0);
 
+  // Add a new state for frame generation loading
+  const [isGeneratingFrames, setIsGeneratingFrames] = useState(false);
+  const [frameGenerationError, setFrameGenerationError] = useState<string | null>(null);
+
   // Initialize video and history when file is provided
   useEffect(() => {
-    if (!videoFile || !videoRef.current) return;
+    if (!videoFile || !videoRef.current) {
+      console.log("VideoEditor Effect: No videoFile or videoRef");
+      // Reset state if videoFile becomes null/undefined
+      if (!videoFile) {
+        setSegments([]);
+        setFrames([]);
+        setDuration(0);
+        setCurrentTime(0);
+        setActiveSegment(null);
+        // Reset history if needed
+      }
+      return;
+    }
+
+    console.log("VideoEditor Effect: Initializing with file:", videoFile.name);
+    setLoading(true); // Use main loading state for initial setup
+    setError(null); // Clear previous errors
+    setFrames([]); // Clear old frames
 
     const video = videoRef.current;
-    const url = URL.createObjectURL(videoFile);
-    video.src = url;
+    let objectUrl = ''; // Keep track of URL for revocation
 
     const handleLoad = () => {
+      console.log(`Video metadata loaded for ${videoFile.name}. Duration: ${video.duration}`);
+      if (video.duration === Infinity || video.duration === 0 || isNaN(video.duration)) {
+        console.error("Video duration is invalid:", video.duration);
+        setError("Could not read video duration. The file might be corrupt or incompatible.");
+        setLoading(false);
+        return;
+      }
       setDuration(video.duration);
-      // Initialize first segment
       const initialSegment: VideoSegment = {
-        id: 'initial',
+        id: 'initial-' + Date.now(), // More unique ID
         startTime: 0,
         endTime: video.duration,
         file: videoFile,
-        isMuted: false,
-        volume: 1
+        isMuted: video.muted, // Reflect initial muted state
+        volume: video.volume
       };
+      console.log("Setting initial segment:", initialSegment);
       setSegments([initialSegment]);
       setActiveSegment(initialSegment.id);
       
-      // Initialize history with initial state
+      // Initialize history
       const initialState: EditorState = {
         segments: [initialSegment],
         activeSegment: initialSegment.id,
@@ -263,60 +290,231 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
       setHistory([initialState]);
       setCurrentHistoryIndex(0);
       
-      generateFrames();
+      // Don't call generateFrames immediately. Trigger it after a short delay.
+      console.log("Scheduling generateFrames...");
+      setIsGeneratingFrames(true); // Show loader immediately
+      setFrameGenerationError(null); // Clear previous frame errors
+      const frameGenTimeout = setTimeout(() => {
+          generateFrames().catch(err => {
+               console.error("Error caught after generateFrames finished:", err);
+               setFrameGenerationError(`Preview generation failed: ${err.message || String(err)}`);
+               setIsGeneratingFrames(false);
+          });
+      }, 100); // Short delay (e.g., 100ms) to let state settle
+
+      setLoading(false); // Main loading is done once metadata is processed
+      console.log("Initial segment and state set. Frame generation scheduled.");
     };
 
-    video.addEventListener('loadeddata', handleLoad);
+    const handleError = (e: Event | string) => {
+      console.error("Video loading error:", e);
+      const message = typeof e === 'string' ? e : (e.target as HTMLVideoElement)?.error?.message || "Unknown video error";
+      setError(`Failed to load video: ${message}`);
+      setLoading(false);
+    };
 
+    // Cleanup previous state if video file changes
+    video.removeEventListener('loadeddata', handleLoad); // Ensure no old listeners
+    video.removeEventListener('error', handleError);
+    if (video.src && video.src.startsWith('blob:')) {
+      console.log("Revoking previous object URL:", video.src);
+      URL.revokeObjectURL(video.src);
+    }
+    video.src = ''; // Clear src before setting new one
+    video.removeAttribute('src');
+    video.load(); // Reset video element state
+
+    console.log(`Creating object URL for ${videoFile.name}`);
+    objectUrl = URL.createObjectURL(videoFile);
+    video.src = objectUrl;
+    
+    console.log("Adding loadeddata and error listeners");
+    video.addEventListener('loadeddata', handleLoad);
+    video.addEventListener('error', handleError);
+
+    // Some browsers might need load() called after src assignment
+    video.load(); 
+
+    // Cleanup function
     return () => {
+      console.log(`Cleaning up video effect for: ${videoFile?.name}`);
       video.removeEventListener('loadeddata', handleLoad);
-      URL.revokeObjectURL(url);
+      video.removeEventListener('error', handleError);
+      if (objectUrl) {
+        console.log("Revoking object URL on cleanup:", objectUrl);
+        URL.revokeObjectURL(objectUrl);
+      }
+      // Reset video source on cleanup
+      if (videoRef.current) {
+          videoRef.current.src = '';
+          videoRef.current.removeAttribute('src');
+          videoRef.current.load();
+      }
     };
   }, [videoFile]);
 
   // Basic frame generation
   const generateFrames = useCallback(async () => {
-    if (!videoRef.current || !videoFile) return;
+    const video = videoRef.current;
+    const sourceFile = segments[0]?.file || videoFile;
+
+    if (!video || !sourceFile) {
+      console.error("generateFrames: Video element or source file not available.");
+      setError("Cannot generate preview: Video source missing.");
+      return;
+    }
+
+    // Check if video has valid duration and metadata
+    if (!video.videoWidth || !video.videoHeight || video.duration === Infinity || isNaN(video.duration) || video.duration === 0) {
+       console.error("generateFrames: Video metadata not ready or invalid", {
+           width: video.videoWidth,
+           height: video.videoHeight,
+           duration: video.duration,
+           readyState: video.readyState,
+       });
+       // Don't set error here, maybe loadeddata just hasn't fired fully yet
+       // Let's wait for the main effect to handle this.
+       // setError("Cannot generate preview: Video metadata not ready.");
+       return;
+    }
+    
+    // Reset state specific to this attempt
+    setFrames([]); // Clear frames before starting
+    setFrameGenerationError(null);
+    // setIsGeneratingFrames(true); // Already set before calling
+    console.log("Starting frame generation process...");
+    
+    const generatedFrames: TimelineFrame[] = [];
+    let success = true;
+    let tempVideo: HTMLVideoElement | null = null; // Keep reference for cleanup
+    let tempUrl = '';
 
     try {
-      const video = videoRef.current;
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      
-      if (!context) return;
+        tempVideo = document.createElement('video');
+        // Add null check right after creation if paranoid, though unlikely to fail
+        if (!tempVideo) throw new Error("Failed to create temporary video element.");
+        
+        tempUrl = URL.createObjectURL(sourceFile);
+        tempVideo.src = tempUrl;
+        tempVideo.muted = true;
+        tempVideo.preload = 'metadata';
+        tempVideo.setAttribute('playsinline', 'true');
 
-      canvas.width = 160;
-      canvas.height = 90;
-
-      const frameCount = 20;
-      const interval = video.duration / frameCount;
-      const newFrames: TimelineFrame[] = [];
-
-      for (let i = 0; i < frameCount; i++) {
-        const time = i * interval;
-        video.currentTime = time;
-
-        await new Promise<void>((resolve) => {
-          const handleSeeked = () => {
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            newFrames.push({
-              thumbnail: canvas.toDataURL('image/jpeg'),
-              time: time
-            });
-            video.removeEventListener('seeked', handleSeeked);
-            resolve();
-          };
-          video.addEventListener('seeked', handleSeeked);
+        // Use a variable for the promise to ensure tempVideo exists in scope
+        const currentTempVideo = tempVideo; 
+        await new Promise<void>((resolve, reject) => { 
+            // Add null check for safety inside callbacks
+            if (!currentTempVideo) return reject(new Error("Temp video element lost"));
+            currentTempVideo.onloadedmetadata = () => {
+                console.log('Temp video metadata loaded for frame gen');
+                resolve();
+            };
+            currentTempVideo.onerror = (e) => {
+                console.error("Error loading temp video metadata:", e);
+                reject(new Error("Failed to load temporary video for frame generation."));
+            };
+            currentTempVideo.load();
         });
-      }
+        
+        // Check after metadata load, tempVideo must exist here if promise resolved
+        if (!tempVideo.duration || tempVideo.duration === Infinity || isNaN(tempVideo.duration)) {
+            throw new Error("Temp video duration invalid.");
+        }
 
-      video.currentTime = 0;
-      setFrames(newFrames);
-    } catch (error) {
-      console.error('Error generating frames:', error);
-      setError('Failed to generate video preview');
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d', { alpha: false });
+        if (!context) { throw new Error("No canvas context."); }
+
+        // Use tempVideo directly here, known to be non-null if previous steps passed
+        canvas.width = 160;
+        const aspectRatio = tempVideo.videoWidth / tempVideo.videoHeight;
+        canvas.height = Math.round(canvas.width / aspectRatio);
+        if (isNaN(canvas.height) || canvas.height <= 0) canvas.height = 90;
+
+        console.log(`Frame gen setup: ${canvas.width}x${canvas.height}, Duration: ${tempVideo.duration.toFixed(2)}s`);
+
+        const isLikelyMobile = window.innerWidth < 768;
+        const frameCount = isLikelyMobile ? 8 : 20;
+        console.log(`Generating ${frameCount} frames (Mobile: ${isLikelyMobile})`);
+
+        const interval = tempVideo.duration / frameCount;
+        if (interval <= 0) { throw new Error(`Invalid interval: ${interval}`); }
+
+        for (let i = 0; i < frameCount; i++) {
+            const time = Math.min(i * interval, tempVideo.duration - 0.1);
+            console.log(`Generating frame ${i + 1}/${frameCount} at time ${time.toFixed(2)}s`);
+            
+            // tempVideo guaranteed non-null if loop is reached
+            tempVideo.currentTime = time;
+
+            try {
+                 // Use another variable to capture current non-null tempVideo for callbacks
+                const videoForFrame = tempVideo; 
+                await new Promise<void>((resolve, reject) => {
+                    const seekTimeout = setTimeout(() => reject(new Error(`Seek timeout at ${time.toFixed(2)}s`)), 5000);
+                    
+                    const onSeeked = () => {
+                      clearTimeout(seekTimeout);
+                      // Null check inside callback
+                      if (!videoForFrame) return reject(new Error("Video element lost during seek")); 
+                      videoForFrame.removeEventListener('seeked', onSeeked);
+                      videoForFrame.removeEventListener('error', onSeekError);
+                      console.log(`  -> Seeked to ${time.toFixed(2)}s`);
+                      try {
+                          if (canvas.width > 0 && canvas.height > 0 && videoForFrame.videoWidth > 0) {
+                              // Draw using the checked variable
+                              context.drawImage(videoForFrame, 0, 0, canvas.width, canvas.height);
+                              generatedFrames.push({
+                                  thumbnail: canvas.toDataURL('image/jpeg'),
+                                  time: time
+                              });
+                              console.log(`  -> Frame ${i + 1} drawn.`);
+                              resolve();
+                          } else {
+                              reject(new Error(`Invalid canvas/video dims at frame ${i + 1}`));
+                          }
+                      } catch (drawError) {
+                          console.error(`  -> Error drawing frame ${i + 1}:`, drawError);
+                          reject(drawError);
+                      }
+                    };
+                    
+                    const onSeekError = (e: Event | string) => {
+                        clearTimeout(seekTimeout);
+                         // Null check inside callback
+                        if (!videoForFrame) return reject(new Error("Video element lost during seek error"));
+                        videoForFrame.removeEventListener('seeked', onSeeked);
+                        videoForFrame.removeEventListener('error', onSeekError);
+                        console.error(`  -> Seek error at time ${time}:`, e);
+                        reject(new Error(`Video seek error at ${time.toFixed(2)}s`));
+                    };
+                    
+                    // Null check before adding listener
+                    if (!videoForFrame) return reject(new Error("Cannot add listeners to null video element"));
+                    videoForFrame.addEventListener('seeked', onSeeked, { once: true });
+                    videoForFrame.addEventListener('error', onSeekError, { once: true });
+                });
+            } catch (seekOrDrawError: any) {
+                console.error(`Failed to process frame ${i + 1} at time ${time.toFixed(2)}s:`, seekOrDrawError);
+                // Decide whether to stop or continue
+                // For now, let's stop on error to avoid cascading issues
+                throw new Error(`Failed to process frame ${i + 1}: ${seekOrDrawError.message}`); 
+            }
+        }
+        console.log("Frame generation loop completed successfully.");
+
+    } catch (genError: any) {
+        console.error('Error during frame generation process:', genError);
+        setFrameGenerationError(`Failed to generate preview: ${genError.message || String(genError)}`);
+        success = false;
+    } finally {
+        if (tempUrl) URL.revokeObjectURL(tempUrl); // Clean up temp URL
+        // Ensure tempVideo element is cleaned up if needed (usually garbage collected)
+        setFrames(generatedFrames); // Update state with whatever was generated
+        setIsGeneratingFrames(false);
+        console.log(`Frame generation finished. ${generatedFrames.length} frames generated. Success: ${success}`);
     }
-  }, [videoFile]);
+  }, [segments, videoFile, setFrames, setFrameGenerationError, setIsGeneratingFrames]);
 
   // Handle timeline click
   const handleTimelineClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1342,10 +1540,32 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
               borderRadius: 1,
               overflow: 'hidden',
               cursor: 'pointer',
-              position: 'relative'
+              position: 'relative' 
             }}
             onClick={handleTimelineClick}
           >
+            {/* Frame Generation Loader */}          
+            {isGeneratingFrames && (
+                <Box sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                    zIndex: 10,
+                    textAlign: 'center'
+                }}>
+                    <CircularProgress size={30} sx={{ color: 'white' }} />
+                    <Typography variant="caption" sx={{ color: 'white', display: 'block', mt: 1 }}>
+                        Generating preview...
+                    </Typography>
+                </Box>
+            )}
+            
             {/* Combined Timeline for Video and Audio */}
             <Box sx={{ 
               position: 'relative',
@@ -2019,6 +2239,36 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
         <Alert severity="error" sx={{ position: 'absolute', top: 16, left: 16, right: 16 }}>
           {error}
         </Alert>
+      )}
+
+      {/* Frame Generation Error Message */}
+      {!isGeneratingFrames && frameGenerationError && (
+        <Box sx={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(40, 0, 0, 0.8)',
+          zIndex: 10,
+          textAlign: 'center',
+          p: 1
+        }}>
+          <Typography variant="caption" sx={{ color: 'error.light' }}>
+            {frameGenerationError}
+          </Typography>
+          <Button 
+            size="small" 
+            variant="outlined" 
+            onClick={generateFrames}
+            sx={{ mt: 1, color: 'white', borderColor: 'rgba(255,255,255,0.5)' }}
+          >
+            Retry
+          </Button>
+        </Box>
       )}
     </Box>
   );

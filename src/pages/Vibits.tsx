@@ -39,7 +39,10 @@ import {
   getDoc,
   setDoc,
   where,
-  arrayUnion
+  arrayUnion,
+  onSnapshot,
+  QuerySnapshot,
+  DocumentData
 } from 'firebase/firestore';
 import { 
   getStorage, 
@@ -74,6 +77,8 @@ interface Video {
   resolutions?: string[];
   thumbnailUrl?: string;
   commentsList?: Comment[];
+  status: string;
+  error?: string;
 }
 
 interface Comment {
@@ -1121,6 +1126,65 @@ const Vibits: React.FC = () => {
       </Box>
     </Drawer>
   );
+
+  // Firestore Listener for Processing Videos
+  useEffect(() => {
+    if (!currentUser) return;
+
+    console.log("Setting up Firestore listener for processing videos...");
+
+    const q = query(
+      collection(db, "videos"),
+      where("userId", "==", currentUser.uid), // Only listen to the current user's videos
+      where("status", "in", ["processing", "submitted"]) // Listen for videos being processed
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot: QuerySnapshot<DocumentData>) => {
+      console.log(`Listener detected ${snapshot.docChanges().length} changes.`);
+      snapshot.docChanges().forEach((change) => {
+        const videoId = change.doc.id;
+        const videoData = change.doc.data();
+
+        if (change.type === "modified") {
+          console.log(`Video ${videoId} modified. New status: ${videoData.status}`);
+          setVideos(prevVideos => 
+            prevVideos.map(video => {
+              if (video.id === videoId) {
+                console.log(`Updating local state for ${videoId} with URL: ${videoData.url}`);
+                return {
+                  ...video,
+                  status: videoData.status, // Update status
+                  url: videoData.url || '', // Update with final URL
+                  error: videoData.error || null, // Add error if present
+                  resolution: videoData.resolution || video.resolution // Update resolution if provided
+                };
+              }
+              return video;
+            })
+          );
+
+          if (videoData.status === "completed") {
+            toast.success('Video processing finished!');
+            setProcessing(false); // Update global processing state if needed
+          } else if (videoData.status === "failed") {
+            toast.error(`Video processing failed: ${videoData.error || 'Unknown error'}`);
+            setProcessing(false);
+          }
+        }
+        // Handle added/removed if necessary, though unlikely for this query
+      });
+    }, (error) => {
+        console.error("Error in Firestore listener:", error);
+        toast.error("Error listening for video updates.");
+    });
+
+    // Cleanup listener on component unmount
+    return () => {
+        console.log("Cleaning up Firestore listener.");
+        unsubscribe();
+    };
+
+  }, [currentUser]); // Rerun if user changes
 
   if (loading) {
     return (
