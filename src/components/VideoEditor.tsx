@@ -426,7 +426,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
         if (!context) { throw new Error("No canvas context."); }
 
         // Use tempVideo directly here, known to be non-null if previous steps passed
-        canvas.width = 160;
+      canvas.width = 160;
         const aspectRatio = tempVideo.videoWidth / tempVideo.videoHeight;
         canvas.height = Math.round(canvas.width / aspectRatio);
         if (isNaN(canvas.height) || canvas.height <= 0) canvas.height = 90;
@@ -440,7 +440,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
         const interval = tempVideo.duration / frameCount;
         if (interval <= 0) { throw new Error(`Invalid interval: ${interval}`); }
 
-        for (let i = 0; i < frameCount; i++) {
+      for (let i = 0; i < frameCount; i++) {
             const time = Math.min(i * interval, tempVideo.duration - 0.1);
             console.log(`Generating frame ${i + 1}/${frameCount} at time ${time.toFixed(2)}s`);
             
@@ -465,11 +465,11 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
                               // Draw using the checked variable
                               context.drawImage(videoForFrame, 0, 0, canvas.width, canvas.height);
                               generatedFrames.push({
-                                  thumbnail: canvas.toDataURL('image/jpeg'),
-                                  time: time
-                              });
+              thumbnail: canvas.toDataURL('image/jpeg'),
+              time: time
+            });
                               console.log(`  -> Frame ${i + 1} drawn.`);
-                              resolve();
+            resolve();
                           } else {
                               reject(new Error(`Invalid canvas/video dims at frame ${i + 1}`));
                           }
@@ -1540,7 +1540,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ videoFile, onSave, onCancel }
               borderRadius: 1,
               overflow: 'hidden',
               cursor: 'pointer',
-              position: 'relative' 
+              position: 'relative'
             }}
             onClick={handleTimelineClick}
           >

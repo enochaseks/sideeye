@@ -14,16 +14,19 @@ import {
   ListItemAvatar,
   Avatar,
   Link as MuiLink,
-  useTheme
+  useTheme,
+  CircularProgress
 } from '@mui/material';
 import { Notifications as NotificationsIcon } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
 import { useNotifications, Notification } from '../contexts/NotificationContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { formatDistanceToNow } from 'date-fns';
+import { useAuth } from '../contexts/AuthContext';
 
 export const NotificationIcon: React.FC = () => {
-  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
+  const { notifications, unreadCount, markAsRead, markAllAsRead, loading } = useNotifications();
+  const { currentUser } = useAuth();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const theme = useTheme();
@@ -41,26 +44,59 @@ export const NotificationIcon: React.FC = () => {
     if (!notification.isRead) {
       await markAsRead(notification.id);
     }
-    let navigateTo = '/';
-    if (notification.type === 'follow') {
-      navigateTo = `/profile/${notification.senderId}`;
-    } else if (notification.type === 'like' || notification.type === 'comment') {
-      navigateTo = `/post/${notification.postId}`;
-    } else if (notification.type === 'room_invite') {
-      navigateTo = `/side-room/${notification.roomId}`;
+
+    let navigateTo = '/notifications'; // Default fallback
+
+    switch (notification.type) {
+      case 'like':
+      case 'comment':
+      case 'mention':
+      case 'repost':
+        if (notification.postId) {
+          // Assuming /post/:id for now 
+          navigateTo = `/post/${notification.postId}`;
+        }
+        break;
+      case 'vibit_like':
+      case 'vibit_comment':
+      case 'vibit_mention':
+        if (notification.postId) { // postId seems to store the video/vibit ID here
+          navigateTo = `/vibit/${notification.postId}`;
+        }
+        break;
+      case 'follow':
+        if (notification.senderId) {
+          navigateTo = `/profile/${notification.senderId}`;
+        }
+        break;
+      case 'room_invite':
+      case 'room_invitation':
+      case 'room_removal':
+        if (notification.roomId) {
+          navigateTo = `/side-room/${notification.roomId}`;
+        }
+        break;
+      default:
+        console.warn(`Unhandled notification type for navigation: ${notification.type}`);
+        // Keep default navigateTo = '/notifications'
     }
-    handleClose();
+
+    handleClose(); // Close the menu first
+    console.log(`Navigating to: ${navigateTo} from icon for type: ${notification.type}`);
     navigate(navigateTo);
   };
 
   const handleMarkAllRead = async () => {
-    await markAllAsRead();
+    if (currentUser?.uid) {
+      await markAllAsRead(currentUser.uid);
+    }
+    handleClose();
   };
 
   return (
     <>
       <IconButton
-        color="inherit"
+        color={unreadCount > 0 ? "error" : "inherit"}
         onClick={handleClick}
         sx={{
           position: 'relative',
@@ -92,60 +128,57 @@ export const NotificationIcon: React.FC = () => {
         <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6">Notifications</Typography>
           {unreadCount > 0 && (
-            <Button size="small" onClick={handleMarkAllRead}>
+            <Typography
+              variant="caption"
+              onClick={handleMarkAllRead}
+              sx={{ cursor: 'pointer', '&:hover': { textDecoration: 'underline' } }}
+            >
               Mark all as read
-            </Button>
+            </Typography>
           )}
         </Box>
         <Divider />
-        <List>
-          {notifications.length === 0 ? (
-            <MenuItem onClick={handleClose}>No new notifications</MenuItem>
-          ) : (
-            notifications.slice(0, 5).map((notification) => (
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+            <CircularProgress size={24} />
+          </Box>
+        ) : notifications.length === 0 ? (
+          <MenuItem onClick={handleClose}>
+            <Typography>No new notifications</Typography>
+          </MenuItem>
+        ) : (
+          <List sx={{ padding: 0 }}>
+            {notifications.slice(0, 10).map((notification) => (
               <MenuItem
                 key={notification.id}
                 onClick={() => handleNotificationClick(notification)}
                 sx={{
                   backgroundColor: notification.isRead ? 'transparent' : 'action.hover',
-                  textDecoration: 'none',
-                  color: 'inherit',
-                  '&:hover': {
-                    backgroundColor: 'action.selected',
-                  },
-                  mb: 1,
-                  borderBottom: '1px solid',
-                  borderColor: 'divider',
+                  whiteSpace: 'normal',
+                  py: 1.5
                 }}
+                component={Link}
+                to={
+                  notification.postId ? `/vibit/${notification.postId}` :
+                  notification.roomId ? `/side-room/${notification.roomId}` :
+                  notification.type === 'follow' ? `/profile/${notification.senderId}` :
+                  '#'
+                }
               >
-                <ListItemAvatar>
-                  <Avatar src={notification.senderAvatar} alt={notification.senderName} />
-                </ListItemAvatar>
-                <ListItemText
-                  primary={notification.content}
-                  secondary={formatDistanceToNow(notification.createdAt, { addSuffix: true })}
-                  sx={{
-                    '& .MuiListItemText-primary': {
-                      fontWeight: notification.isRead ? 'normal' : 'bold',
-                    },
-                  }}
-                />
+                <Box>
+                  <Typography variant="body2">{notification.content}</Typography>
+                  <Typography variant="caption" color="textSecondary">
+                    {formatDistanceToNow(notification.createdAt, { addSuffix: true })}
+                  </Typography>
+                </Box>
               </MenuItem>
-            ))
-          )}
-        </List>
+            ))}
+          </List>
+        )}
         <Divider />
-        <Box sx={{ p: 1 }}>
-          <Button
-            fullWidth
-            component={Link}
-            to="/notifications"
-            onClick={handleClose}
-            sx={{ textDecoration: 'none' }}
-          >
-            View All Notifications
-          </Button>
-        </Box>
+        <MenuItem component={Link} to="/notifications" onClick={handleClose}>
+          <Typography sx={{ textAlign: 'center', width: '100%' }}>View All Notifications</Typography>
+        </MenuItem>
       </Menu>
     </>
   );

@@ -1095,7 +1095,7 @@ const SideRoomComponent: React.FC = () => {
         batch.set(invitationRef, {
           userId: selectedUser.id,
           invitedBy: currentUser.uid,
-          inviterName: currentUser.displayName || 'Anonymous',
+          inviterName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone', // Adjusted fallback
           inviterAvatar: currentUser.photoURL || '',
           roomId,
           roomName: room.name,
@@ -1103,18 +1103,20 @@ const SideRoomComponent: React.FC = () => {
           status: 'pending'
         });
 
-        // Create notification
-        const notificationRef = doc(collection(db, 'users', selectedUser.id, 'notifications'));
+        // Create notification in the root /notifications collection
+        const notificationRef = doc(collection(db, 'notifications'));
+        const inviterName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone'; // Adjusted fallback
         batch.set(notificationRef, {
           type: 'room_invitation',
           roomId,
           roomName: room.name,
-          invitedBy: currentUser.uid,
-          inviterName: currentUser.displayName || 'Anonymous',
-          inviterAvatar: currentUser.photoURL || '',
+          senderId: currentUser.uid, // Added senderId
+          senderName: inviterName, // Use adjusted inviterName
+          senderAvatar: currentUser.photoURL || '', // Added senderAvatar
+          recipientId: selectedUser.id, // Added recipientId
           timestamp: serverTimestamp(),
-          status: 'unread',
-          message: `${currentUser.displayName || 'Someone'} invited you to join "${room.name}"`
+          isRead: false, // Use isRead for consistency
+          content: `${inviterName} invited you to join "${room.name}"` // Use adjusted inviterName
         });
       }
 
@@ -1146,17 +1148,20 @@ const SideRoomComponent: React.FC = () => {
         memberCount: increment(-1)
       });
 
-      // Create notification for removed member
-      const notificationRef = doc(collection(db, 'users', memberToRemove.userId, 'notifications'));
+      // Create notification in the root /notifications collection
+      const notificationRef = doc(collection(db, 'notifications'));
+      const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'the owner'; // Adjusted fallback
       await setDoc(notificationRef, {
         type: 'room_removal',
         roomId,
         roomName: room.name,
-        removedBy: currentUser.uid,
-        removerName: currentUser.displayName || 'Anonymous',
+        senderId: currentUser.uid, // Use senderId for consistency
+        senderName: senderName, // Use adjusted senderName
+        senderAvatar: currentUser.photoURL || '', // Added senderAvatar
+        recipientId: memberToRemove.userId, // Added recipientId
         timestamp: serverTimestamp(),
-        status: 'unread',
-        message: `You have been removed from "${room.name}"`
+        isRead: false, // Use isRead
+        content: `You have been removed from "${room.name}" by ${senderName}` // Use adjusted senderName
       });
 
       toast.success('Member removed successfully');

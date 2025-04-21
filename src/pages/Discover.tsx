@@ -55,7 +55,9 @@ import {
   arrayUnion,
   getDoc,
   DocumentSnapshot,
-  onSnapshot
+  onSnapshot,
+  runTransaction,
+  increment
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -312,14 +314,14 @@ const Discover: React.FC = () => {
         const notificationData = {
           type: 'follow',
           senderId: currentUser.uid,
-          senderName: currentUser.displayName || 'Anonymous',
+          senderName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone',
           senderAvatar: currentUser.photoURL || '',
           recipientId: userId,
-          content: `${currentUser.displayName || 'Someone'} started following you`,
+          content: `${currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone'} started following you`,
           createdAt: serverTimestamp(),
           isRead: false
         };
-        await addDoc(collection(db, 'users', userId, 'notifications'), notificationData);
+        await addDoc(collection(db, 'notifications'), notificationData);
 
         toast.success('Followed user');
       }
@@ -329,120 +331,159 @@ const Discover: React.FC = () => {
     }
   };
 
-  const handleVibitLike = async (videoId: string, authorId: string) => {
+  const handleVibitLike = async (videoId: string, authorIdFromProp: string) => {
     if (!currentUser || !db) return;
-    
-    try {
-      const videoRef = doc(db, 'videos', videoId);
-      const videoDoc = await getDoc(videoRef);
-      
-      if (!videoDoc.exists()) {
-        throw new Error('Video not found');
-      }
-      
-      const videoData = videoDoc.data();
-      const isLiked = videoData.likedBy?.includes(currentUser.uid);
-      
-      if (isLiked) {
-        // Unlike
-        await updateDoc(videoRef, {
-          likedBy: arrayRemove(currentUser.uid)
-        });
-      } else {
-        // Like
-        await updateDoc(videoRef, {
-          likedBy: arrayUnion(currentUser.uid)
-        });
+    console.log(`Discover: handleVibitLike triggered for videoId: ${videoId}`);
+    const videoRef = doc(db, 'videos', videoId);
+    const userId = currentUser.uid;
+    const notificationCollectionRef = collection(db, 'notifications');
 
-        // Create notification for video owner
-        if (authorId !== currentUser.uid) {
-          const notificationData = {
+    try {
+      let videoAuthorId: string | null = null;
+      await runTransaction(db, async (transaction) => {
+        const videoDoc = await transaction.get(videoRef);
+        if (!videoDoc.exists()) {
+          throw new Error("Video not found");
+        }
+        const videoData = videoDoc.data();
+        videoAuthorId = videoData.userId;
+        let likedBy = videoData.likedBy || [];
+
+        if (likedBy.includes(userId)) {
+          console.log('[Transaction] Discover: Unliking vibit...');
+          likedBy = likedBy.filter((uid: string) => uid !== userId);
+          transaction.update(videoRef, { likedBy: likedBy, likes: likedBy.length });
+        } else {
+          console.log('[Transaction] Discover: Liking vibit...');
+          likedBy = [...likedBy, userId];
+          transaction.update(videoRef, { likedBy: likedBy, likes: likedBy.length });
+        }
+      });
+      console.log('Discover: Vibit like transaction successful.');
+
+      // Create notification only if the user just liked it AND it's not their own video
+      const videoDocAfter = await getDoc(videoRef);
+      if (videoDocAfter.exists()) {
+        const videoData = videoDocAfter.data();
+        const likedBy = videoData.likedBy || [];
+        if (likedBy.includes(userId) && videoAuthorId && videoAuthorId !== userId) { 
+          console.log('Discover: Creating vibit like notification...');
+          const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
+          const notificationPayload = {
             type: 'vibit_like',
-            senderId: currentUser.uid,
-            senderName: currentUser.displayName || 'Anonymous',
+            senderId: userId,
+            senderName: senderName,
             senderAvatar: currentUser.photoURL || '',
-            recipientId: authorId,
-            videoId: videoId,
-            content: `${currentUser.displayName || 'Someone'} liked your vibit`,
+            recipientId: videoAuthorId,
+            postId: videoId,
+            content: `${senderName} liked your vibit`,
             createdAt: serverTimestamp(),
             isRead: false
           };
-          await addDoc(collection(db, 'users', authorId, 'notifications'), notificationData);
+          await addDoc(notificationCollectionRef, notificationPayload);
+          console.log('Discover: Vibit like notification created.');
         }
       }
+
     } catch (error) {
-      console.error('Error toggling vibit like:', error);
+      console.error('Discover: Error toggling vibit like:', error);
       toast.error('Failed to update like status');
     }
   };
 
-  const handleVibitComment = async (videoId: string, content: string, authorId: string) => {
-    if (!currentUser || !db) return;
+  const handleVibitComment = async (videoId: string, content: string) => {
+    if (!currentUser || !db || !content.trim()) return;
+    console.log(`Discover: handleVibitComment triggered for videoId: ${videoId}`);
+    
+    const videoRef = doc(db, 'videos', videoId);
+    const commentsCollectionRef = collection(db, `videos/${videoId}/comments`);
+    const userId = currentUser.uid;
+    const notificationCollectionRef = collection(db, 'notifications');
+    let newCommentRefId: string | null = null;
+    let videoAuthorId: string | null = null;
 
     try {
-      const videoRef = doc(db, 'videos', videoId);
-      const videoDoc = await getDoc(videoRef);
-      const videoData = videoDoc.data();
+       // Update comment count in a transaction
+      await runTransaction(db, async (transaction) => {
+        const videoDoc = await transaction.get(videoRef);
+        if (!videoDoc.exists()) {
+          throw new Error("Video not found");
+        }
+        console.log('[Transaction] Discover: Incrementing vibit comment count...');
+        videoAuthorId = videoDoc.data().userId;
+        const currentComments = videoDoc.data().comments || 0; 
+        transaction.update(videoRef, { comments: increment(currentComments + 1) });
+      });
 
+      // Add the comment document outside the transaction
+      console.log('Discover: Adding vibit comment document...');
       const commentData = {
-        content,
-        authorId: currentUser.uid,
+        content: content.trim(),
+        authorId: userId,
         authorName: currentUser.displayName || 'Anonymous',
         authorAvatar: currentUser.photoURL || '',
         timestamp: serverTimestamp() as Timestamp,
         likes: 0
       };
+      const newCommentRef = await addDoc(commentsCollectionRef, commentData);
+      newCommentRefId = newCommentRef.id;
+      console.log('Discover: Vibit comment document added.');
 
-      await updateDoc(videoRef, {
-        comments: arrayUnion(commentData)
-      });
-
-      // Create notification for video owner
-      if (authorId !== currentUser.uid) {
-        const notificationData = {
+      // Create notification for video owner (if not self)
+      if (videoAuthorId && videoAuthorId !== userId) { 
+        console.log('Discover: Creating vibit comment notification...');
+        const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
+        const notificationPayload = {
           type: 'vibit_comment',
-          senderId: currentUser.uid,
-          senderName: currentUser.displayName || 'Anonymous',
+          senderId: userId,
+          senderName: senderName,
           senderAvatar: currentUser.photoURL || '',
-          recipientId: authorId,
-          videoId: videoId,
-          content: `${currentUser.displayName || 'Someone'} commented on your vibit: "${content}"`,
+          recipientId: videoAuthorId,
+          postId: videoId,
+          commentId: newCommentRefId,
+          content: `${senderName} commented on your vibit: "${content.trim()}"`,
           createdAt: serverTimestamp(),
           isRead: false
         };
-        await addDoc(collection(db, 'users', authorId, 'notifications'), notificationData);
-      }
+        await addDoc(notificationCollectionRef, notificationPayload);
+        console.log('Discover: Vibit comment notification created.');
 
-      // Check for mentions in comment
-      const mentions = content.match(/@(\w+)/g);
-      if (mentions) {
-        const uniqueMentions = Array.from(new Set(mentions));
-        for (const mention of uniqueMentions) {
-          const username = mention.slice(1);
-          const userQuery = firestoreQuery(collection(db, 'users'), where('username', '==', username), limit(1));
-          const userDocs = await getDocs(userQuery);
-          
-          if (!userDocs.empty) {
-            const mentionedUser = userDocs.docs[0];
-            if (mentionedUser.id !== currentUser.uid && mentionedUser.id !== authorId) {
-              const notificationData = {
-                type: 'vibit_mention',
-                senderId: currentUser.uid,
-                senderName: currentUser.displayName || 'Anonymous',
-                senderAvatar: currentUser.photoURL || '',
-                recipientId: mentionedUser.id,
-                videoId: videoId,
-                content: `${currentUser.displayName || 'Someone'} mentioned you in a vibit comment: "${content}"`,
-                createdAt: serverTimestamp(),
-                isRead: false
-              };
-              await addDoc(collection(db, 'users', mentionedUser.id, 'notifications'), notificationData);
+        // --- Mention Notification Logic --- 
+        console.log('Discover: Checking for mentions in vibit comment...');
+        const mentionRegex = /@(\w+)/g;
+        const mentions = content.match(mentionRegex);
+        if (mentions) {
+          for (const mention of mentions) {
+            const username = mention.substring(1);
+            const userQuery = firestoreQuery(collection(db, 'users'), where('username', '==', username), limit(1));
+            const userSnapshot = await getDocs(userQuery);
+            if (!userSnapshot.empty) {
+              const mentionedUser = userSnapshot.docs[0];
+              if (mentionedUser.id !== userId && mentionedUser.id !== videoAuthorId) { 
+                console.log(`Discover: Creating vibit mention notification for ${username}...`);
+                const mentionSenderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
+                const mentionNotificationPayload = {
+                  type: 'vibit_mention',
+                  senderId: userId,
+                  senderName: mentionSenderName,
+                  senderAvatar: currentUser.photoURL || '',
+                  recipientId: mentionedUser.id,
+                  postId: videoId,
+                  commentId: newCommentRefId,
+                  content: `${mentionSenderName} mentioned you in a vibit comment: "${content.trim()}"`,
+                  createdAt: serverTimestamp(),
+                  isRead: false
+                };
+                await addDoc(notificationCollectionRef, mentionNotificationPayload);
+                console.log(`Discover: Vibit mention notification created for ${username}.`);
+              }
             }
           }
-        }
+        } // --- End Mention Logic ---
       }
+
     } catch (error) {
-      console.error('Error adding vibit comment:', error);
+      console.error('Discover: Error adding vibit comment:', error);
       toast.error('Failed to add comment');
     }
   };

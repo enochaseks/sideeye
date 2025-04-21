@@ -23,11 +23,13 @@ import {
   Notifications as NotificationsIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { useNotifications } from '../contexts/NotificationContext';
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const { currentUser, logout } = useAuth();
+  const { unreadCount } = useNotifications();
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -107,16 +109,16 @@ const Navbar: React.FC = () => {
             {currentUser ? (
               <>
                 <IconButton
-                  color="inherit"
+                  color={unreadCount > 0 ? "error" : "inherit"}
                   onClick={() => navigate('/notifications')}
-                  sx={{ 
+                  sx={{
                     color: 'text.primary',
                     '&:hover': {
                       backgroundColor: 'rgba(0, 0, 0, 0.04)',
                     },
                   }}
                 >
-                  <Badge badgeContent={0} color="error">
+                  <Badge badgeContent={unreadCount} color="error">
                     <NotificationsIcon />
                   </Badge>
                 </IconButton>

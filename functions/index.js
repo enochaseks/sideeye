@@ -9,6 +9,7 @@
 
 // Use v2 imports consistently
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore"); // Import v2 Firestore trigger
 const admin = require("firebase-admin");
 const Shotstack = require("shotstack-sdk"); 
 const functions = require("firebase-functions"); // Still needed for config
@@ -348,3 +349,79 @@ exports.processShotstackWebhook = onRequest(async (request, response) => { // Ch
     response.status(500).send("Internal Server Error processing webhook.");
   }
 });
+
+// --- NEW FUNCTION: Send Email Notification on Notification Creation ---
+
+// Listens for new documents added to /notifications/:documentId and sends an
+// email using the Trigger Email extension based on the recipient's email
+// stored in the /users collection.
+// --- UPDATED TO V2 SYNTAX --- 
+exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId}", async (event) => {
+      // Use event.data?.data() to get the data in v2
+      const snapshot = event.data;
+      if (!snapshot) {
+        console.log("No data associated with the event");
+        return;
+      }
+      const notificationData = snapshot.data();
+
+      if (!notificationData) {
+        console.log("No data associated with the event snapshot");
+        return;
+      }
+
+      const recipientId = notificationData.recipientId;
+      const notificationContent = notificationData.content;
+      const notificationType = notificationData.type || "notification"; // Default type
+
+      if (!recipientId) {
+        console.log("Notification missing recipientId");
+        return;
+      }
+
+      console.log(`Notification created for recipient: ${recipientId}`);
+
+      try {
+        // Fetch the recipient's user document from the 'users' collection
+        const userRef = db.collection("users").doc(recipientId);
+        const userDoc = await userRef.get();
+
+        if (!userDoc.exists) {
+          console.log(`User document not found for recipientId: ${recipientId}`);
+          return;
+        }
+
+        const userData = userDoc.data();
+        // IMPORTANT: Make sure the field name 'email' matches how you store it
+        const recipientEmail = userData?.email;
+
+        if (!recipientEmail) {
+          console.log(`Email not found for user: ${recipientId}`);
+          return;
+        }
+
+        console.log(`Found email: ${recipientEmail} for user: ${recipientId}`);
+
+        // Prepare email data for the Trigger Email extension
+        const mailData = {
+          to: [recipientEmail], // Extension expects an array
+          message: {
+            subject: `New ${notificationType} from SideEye!`,
+            text: notificationContent,
+            // You can also add an HTML version
+            // html: `<p>${notificationContent}</p><p>Visit SideEye to see more!</p>`,
+          },
+        };
+
+        // Add the email document to the 'mail' collection
+        // (Ensure this collection name matches your Trigger Email extension config)
+        await db.collection("mail").add(mailData);
+
+        console.log(`Email queued successfully for ${recipientEmail}`);
+        return null; // Indicate successful processing
+
+      } catch (error) {
+        console.error("Error fetching user data or queuing email:", error);
+        return null; // Avoid retrying indefinitely for this kind of error
+      }
+    });

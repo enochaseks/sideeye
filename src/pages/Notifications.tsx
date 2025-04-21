@@ -1,138 +1,176 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Container,
-  Typography,
   List,
   ListItem,
-  ListItemText,
   ListItemAvatar,
   Avatar,
+  ListItemText,
+  Typography,
   IconButton,
   Box,
-  Paper,
+  CircularProgress,
   Divider,
-  Button
 } from '@mui/material';
-import { Delete as DeleteIcon } from '@mui/icons-material';
-import { useNotifications, Notification } from '../contexts/NotificationContext';
-import { useNavigate } from 'react-router-dom';
+import { Close as CloseIcon, Favorite as FavoriteIcon, Comment as CommentIcon, PersonAdd as PersonAddIcon, Notifications as NotificationsIcon } from '@mui/icons-material';
+import { useNotifications } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../services/firebase';
-import { formatTimestamp } from '../utils/dateUtils';
+import { formatDistanceToNow } from 'date-fns';
+import { useNavigate, Link } from 'react-router-dom';
+import { Notification } from '../contexts/NotificationContext';
 
-const NotificationPage: React.FC = () => {
-  const { notifications, markAsRead, deleteNotification, markAllAsRead } = useNotifications();
+const formatTimestamp = (date: Date): string => {
+  if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+    return 'Invalid date';
+  }
+  return formatDistanceToNow(date, { addSuffix: true });
+};
+
+const NotificationsPage: React.FC = () => {
+  const { notifications, unreadCount, markAllAsRead, markAsRead, deleteNotification, loading } = useNotifications();
+  const { currentUser } = useAuth();
   const navigate = useNavigate();
 
-  const handleNotificationClick = async (notification: Notification) => {
+  useEffect(() => {
+  }, [unreadCount]);
+
+  const handleMarkAllReadClick = () => {
+    if (currentUser?.uid) {
+      markAllAsRead(currentUser.uid);
+    }
+  };
+
+  const handleNotificationClick = (notification: Notification) => {
     if (!notification.isRead) {
-      await markAsRead(notification.id);
+      markAsRead(notification.id);
     }
-    let navigateTo = '/';
-    if (notification.type === 'follow') {
-      navigateTo = `/profile/${notification.senderId}`;
-    } else if (notification.type === 'like' || notification.type === 'comment') {
-      navigateTo = `/post/${notification.postId}`;
-    } else if (notification.type === 'room_invite') {
-      navigateTo = `/side-room/${notification.roomId}`;
+
+    let navigateTo = '/notifications'; // Default fallback
+
+    switch (notification.type) {
+      case 'like':
+      case 'comment':
+      case 'mention':
+      case 'repost': // Assuming reposts link to the post
+        if (notification.postId) {
+          // TODO: Check if this should be /post/:id or /vibit/:id based on context
+          // Assuming /post/:id for now based on Feed/Profile context
+          navigateTo = `/post/${notification.postId}`;
+        }
+        break;
+      case 'vibit_like':
+      case 'vibit_comment':
+      case 'vibit_mention':
+        if (notification.postId) { // postId seems to store the video/vibit ID here
+          navigateTo = `/vibit/${notification.postId}`;
+        }
+        break;
+      case 'follow':
+        if (notification.senderId) {
+          navigateTo = `/profile/${notification.senderId}`;
+        }
+        break;
+      case 'room_invite':
+      case 'room_invitation':
+      case 'room_removal':
+        if (notification.roomId) {
+          navigateTo = `/side-room/${notification.roomId}`;
+        }
+        break;
+      // Add other notification types if necessary
+      default:
+        console.warn(`Unhandled notification type for navigation: ${notification.type}`);
+        // Keep default navigateTo = '/notifications'
     }
+    
+    console.log(`Navigating to: ${navigateTo} for notification type: ${notification.type}`);
     navigate(navigateTo);
   };
 
-  const handleDelete = async (event: React.MouseEvent, notificationId: string) => {
-    event.stopPropagation();
-    await deleteNotification(notificationId);
+  const handleDelete = (event: React.MouseEvent, notificationId: string) => {
+    event.stopPropagation(); // Prevent ListItem click
+    deleteNotification(notificationId);
   };
 
-  const getNotificationIcon = (type: Notification['type']) => {
-    switch (type) {
-      case 'follow':
-        return '👥';
-      case 'like':
-        return '❤️';
-      case 'comment':
-        return '💬';
-      case 'tag':
-        return '#️⃣';
-      case 'mention':
-        return '@️';
-      case 'room_invite':
-        return '🚪';
-      default:
-        return '📢';
-    }
-  };
+  if (loading) {
+    return (
+      <Container maxWidth="sm" sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <CircularProgress />
+      </Container>
+    );
+  }
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
-      <Paper elevation={0} sx={{ p: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-          <Typography variant="h4" component="h1">
-            Notifications
-          </Typography>
-          {notifications.some(n => !n.isRead) && (
-            <Button onClick={() => markAllAsRead()}>
-              Mark all as read
-            </Button>
-          )}
-        </Box>
-
-        <List>
-          {notifications.length === 0 ? (
-            <Box sx={{ textAlign: 'center', py: 4 }}>
-              <Typography variant="body1" color="text.secondary">
-                No notifications yet
-              </Typography>
-            </Box>
-          ) : (
-            notifications.map((notification, index) => (
-              <React.Fragment key={notification.id}>
-                {index > 0 && <Divider />}
-                <ListItem
-                  button
-                  onClick={() => handleNotificationClick(notification)}
-                  sx={{
-                    backgroundColor: notification.isRead ? 'transparent' : 'action.hover',
-                    '&:hover': {
-                      backgroundColor: 'action.hover',
-                    },
-                    mb: 1,
-                    borderRadius: 1,
-                  }}
-                >
-                  <ListItemAvatar>
-                    <Avatar sx={{ bgcolor: 'primary.main' }}>
-                      {getNotificationIcon(notification.type)}
-                    </Avatar>
-                  </ListItemAvatar>
-                  <ListItemText
-                    primary={
-                      <Typography
-                        variant="body1"
-                        sx={{
-                          fontWeight: notification.isRead ? 'normal' : 'bold',
-                        }}
-                      >
-                        {notification.content}
-                      </Typography>
-                    }
-                    secondary={formatTimestamp(notification.createdAt)}
-                  />
-                  <IconButton
-                    edge="end"
-                    onClick={(e) => handleDelete(e, notification.id)}
-                    sx={{ ml: 2 }}
-                  >
-                    <DeleteIcon />
+    <Container maxWidth="sm" sx={{ mt: 4, mb: 4 }}>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+        <Typography variant="h5" component="h1">
+          Notifications
+        </Typography>
+        {notifications.length > 0 && unreadCount > 0 && (
+           <Typography variant="caption" color="textSecondary" onClick={handleMarkAllReadClick} sx={{cursor: 'pointer', '&:hover': {textDecoration: 'underline'}}}>
+             Mark all as read
+           </Typography>
+        )}
+      </Box>
+      {notifications.length === 0 ? (
+        <Typography textAlign="center" color="textSecondary">
+          No notifications yet.
+        </Typography>
+      ) : (
+        <List sx={{ bgcolor: 'background.paper', borderRadius: 2 }}>
+          {notifications.map((notification, index) => (
+            <React.Fragment key={notification.id}>
+              <ListItem
+                alignItems="flex-start"
+                onClick={() => handleNotificationClick(notification)}
+                sx={{
+                  cursor: 'pointer',
+                  backgroundColor: notification.isRead ? 'transparent' : 'action.hover',
+                  '&:hover': {
+                    backgroundColor: 'action.selected',
+                  },
+                }}
+                secondaryAction={
+                  <IconButton edge="end" aria-label="delete" onClick={(e) => handleDelete(e, notification.id)}>
+                    <CloseIcon fontSize="small" />
                   </IconButton>
-                </ListItem>
-              </React.Fragment>
-            ))
-          )}
+                }
+              >
+                <ListItemAvatar sx={{ mr: 1 }}>
+                  <Link 
+                    to={`/profile/${notification.senderId}`} 
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ textDecoration: 'none' }} 
+                  >
+                    <Avatar
+                      alt={notification.senderName || 'User'}
+                      src={notification.senderAvatar || undefined}
+                      sx={{ bgcolor: !notification.senderAvatar ? 'primary.main' : undefined, width: 40, height: 40 }}
+                    >
+                      {!notification.senderAvatar && notification.senderName ? notification.senderName.charAt(0).toUpperCase() : null}
+                    </Avatar>
+                  </Link>
+                </ListItemAvatar>
+                <ListItemText
+                  primary={
+                    <Typography component="span" variant="body2" color="text.primary">
+                      {notification.content || 'Notification content missing.'}
+                    </Typography>
+                  }
+                  secondary={
+                    <Typography component="span" variant="caption" color="text.secondary">
+                      {formatTimestamp(notification.createdAt)}
+                    </Typography>
+                  }
+                />
+              </ListItem>
+              {index < notifications.length - 1 && <Divider variant="inset" component="li" />}
+            </React.Fragment>
+          ))}
         </List>
-      </Paper>
+      )}
     </Container>
   );
 };
 
-export default NotificationPage; 
+export default NotificationsPage; 

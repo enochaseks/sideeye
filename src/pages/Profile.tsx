@@ -51,7 +51,7 @@ import {
   Lock
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment, limit, writeBatch, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, increment, limit, writeBatch, Timestamp, runTransaction } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { formatTimestamp } from '../utils/dateUtils';
 import { User, UserProfile, SideRoom, UserSideRoom } from '../types/index';
@@ -59,6 +59,7 @@ import { Link, useParams, useNavigate, Link as RouterLink } from 'react-router-d
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
 import { toast } from 'react-hot-toast';
+import VibitIcon from '../components/VibitIcon';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -1104,181 +1105,220 @@ const Profile: React.FC = () => {
 
   const handleLike = async (postId: string) => {
     if (!currentUser || !db) return;
-    
-    try {
-      const postRef = doc(db, 'posts', postId);
-      const postDoc = await getDoc(postRef);
-      
-      if (!postDoc.exists()) {
-        throw new Error('Post not found');
-      }
-      
-      const postData = postDoc.data();
-      const isLiked = postData.likedBy?.includes(currentUser.uid);
-      
-      if (isLiked) {
-        // Unlike
-        await updateDoc(postRef, {
-          likedBy: arrayRemove(currentUser.uid)
-        });
-      } else {
-        // Like
-        await updateDoc(postRef, {
-          likedBy: arrayUnion(currentUser.uid)
-        });
+    console.log(`Profile: handleLike triggered for postId: ${postId}`);
+    const postRef = doc(db, 'posts', postId);
+    const userId = currentUser.uid;
+    const notificationCollectionRef = collection(db, 'notifications');
 
-        // Create notification for post owner
-        if (postData.authorId !== currentUser.uid) {
-          const notificationData = {
-            type: 'like',
-            senderId: currentUser.uid,
-            senderName: currentUser.displayName || 'Anonymous',
-            senderAvatar: currentUser.photoURL || '',
-            recipientId: postData.authorId,
-            postId: postId,
-            content: `${currentUser.displayName || 'Someone'} liked your post`,
-            createdAt: serverTimestamp(),
-            isRead: false
-          };
-          await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const postDoc = await transaction.get(postRef);
+        if (!postDoc.exists()) {
+          throw new Error("Post not found");
         }
+        const postData = postDoc.data();
+        let likedBy = postData.likedBy || [];
+
+        if (likedBy.includes(userId)) {
+          // Unlike
+          console.log('[Transaction] Profile: Unliking...');
+          likedBy = likedBy.filter((uid: string) => uid !== userId);
+          transaction.update(postRef, { likedBy: likedBy, likes: likedBy.length });
+        } else {
+          // Like
+          console.log('[Transaction] Profile: Liking...');
+          likedBy = [...likedBy, userId];
+          transaction.update(postRef, { likedBy: likedBy, likes: likedBy.length });
+        }
+      });
+      console.log('Profile: Like transaction successful.');
+
+      // Create notification after successful transaction
+      const postDocAfter = await getDoc(postRef);
+      if (postDocAfter.exists()) {
+          const postData = postDocAfter.data();
+          const likedBy = postData.likedBy || [];
+          if (likedBy.includes(userId) && postData.authorId !== userId) { // Check if liked and not own post
+              console.log('Profile: Creating like notification...');
+              const notificationPayload = {
+                  type: 'like',
+                  senderId: userId,
+                  senderName: currentUser.displayName || 'Anonymous',
+                  senderAvatar: currentUser.photoURL || '',
+                  recipientId: postData.authorId,
+                  postId: postId,
+                  content: `${currentUser.displayName || 'Someone'} liked your post`,
+                  createdAt: serverTimestamp(),
+                  isRead: false
+              };
+              await addDoc(notificationCollectionRef, notificationPayload);
+              console.log('Profile: Like notification created.');
+          }
       }
+
     } catch (error) {
-      console.error('Error toggling like:', error);
+      console.error('Profile: Error toggling like:', error);
       toast.error('Failed to update like');
     }
   };
 
   const handleRepost = async (postId: string) => {
     if (!currentUser || !db) return;
-    
-    try {
-      const postRef = doc(db, 'posts', postId);
-      const postDoc = await getDoc(postRef);
-      
-      if (!postDoc.exists()) {
-        throw new Error('Post not found');
-      }
-      
-      const postData = postDoc.data();
-      const isReposted = postData.repostedBy?.includes(currentUser.uid);
-      
-      if (isReposted) {
-        // Unrepost
-        await updateDoc(postRef, {
-          repostedBy: arrayRemove(currentUser.uid),
-          reposts: increment(-1)
-        });
-      } else {
-        // Repost
-        await updateDoc(postRef, {
-          repostedBy: arrayUnion(currentUser.uid),
-          reposts: increment(1)
-        });
+    console.log(`Profile: handleRepost triggered for postId: ${postId}`);
+    const postRef = doc(db, 'posts', postId);
+    const userId = currentUser.uid;
+    const notificationCollectionRef = collection(db, 'notifications');
 
-        // Create notification for post owner
-        if (postData.authorId !== currentUser.uid) {
-          const notificationData = {
-            type: 'repost',
-            senderId: currentUser.uid,
-            senderName: currentUser.displayName || 'Anonymous',
-            senderAvatar: currentUser.photoURL || '',
-            recipientId: postData.authorId,
-            postId: postId,
-            content: `${currentUser.displayName || 'Someone'} reposted your post`,
-            createdAt: serverTimestamp(),
-            isRead: false
-          };
-          await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+    try {
+       await runTransaction(db, async (transaction) => {
+        const postDoc = await transaction.get(postRef);
+        if (!postDoc.exists()) {
+            throw new Error("Post not found");
         }
+        const postData = postDoc.data();
+        let repostedBy = postData.repostedBy || [];
+
+        if (repostedBy.includes(userId)) {
+            // Unrepost
+            console.log('[Transaction] Profile: Unreposting...');
+            repostedBy = repostedBy.filter((uid: string) => uid !== userId);
+            transaction.update(postRef, { repostedBy: repostedBy, reposts: repostedBy.length });
+        } else {
+            // Repost
+            console.log('[Transaction] Profile: Reposting...');
+            repostedBy = [...repostedBy, userId];
+            transaction.update(postRef, { repostedBy: repostedBy, reposts: repostedBy.length });
+        }
+       });
+       console.log('Profile: Repost transaction successful.');
+
+      // Create notification after successful transaction
+      const postDocAfter = await getDoc(postRef);
+      if (postDocAfter.exists()) {
+          const postData = postDocAfter.data();
+          const repostedBy = postData.repostedBy || [];
+           if (repostedBy.includes(userId) && postData.authorId !== userId) { // Check if reposted and not own post
+              console.log('Profile: Creating repost notification...');
+              const notificationPayload = {
+                  type: 'repost',
+                  senderId: userId,
+                  senderName: currentUser.displayName || 'Anonymous',
+                  senderAvatar: currentUser.photoURL || '',
+                  recipientId: postData.authorId,
+                  postId: postId,
+                  content: `${currentUser.displayName || 'Someone'} reposted your post`,
+                  createdAt: serverTimestamp(),
+                  isRead: false
+              };
+              await addDoc(notificationCollectionRef, notificationPayload);
+              console.log('Profile: Repost notification created.');
+           }
       }
+
     } catch (error) {
-      console.error('Error toggling repost:', error);
+      console.error('Profile: Error toggling repost:', error);
       toast.error('Failed to update repost');
     }
   };
 
   const handleAddComment = async (postId: string, comment: string) => {
     if (!currentUser || !comment.trim() || !db) return;
+    console.log(`Profile: handleAddComment triggered for postId: ${postId}`);
     
+    const postRef = doc(db, 'posts', postId);
+    const commentsCollectionRef = collection(db, `posts/${postId}/comments`);
+    const userId = currentUser.uid;
+    const notificationCollectionRef = collection(db, 'notifications');
+    let newCommentRefId: string | null = null; // To store the new comment ID
+
     try {
-      const postRef = doc(db, 'posts', postId);
-      const postDoc = await getDoc(postRef);
-      
-      if (!postDoc.exists()) {
-        throw new Error('Post not found');
-      }
-      
-      const postData = postDoc.data();
-      
-      // Add comment
-      const commentRef = await addDoc(collection(db, `posts/${postId}/comments`), {
-        content: comment.trim(),
-        userId: currentUser.uid,
-        username: currentUser.displayName || 'Anonymous',
-        userPhotoURL: currentUser.photoURL || '',
-        timestamp: serverTimestamp()
-      });
-
-      // Update post comment count
-      await updateDoc(postRef, {
-        comments: increment(1)
-      });
-
-      // Create notification for post owner
-      if (postData.authorId !== currentUser.uid) {
-        const notificationData = {
-          type: 'comment',
-          senderId: currentUser.uid,
-          senderName: currentUser.displayName || 'Anonymous',
-          senderAvatar: currentUser.photoURL || '',
-          recipientId: postData.authorId,
-          postId: postId,
-          commentId: commentRef.id,
-          content: `${currentUser.displayName || 'Someone'} commented on your post: "${comment.trim()}"`,
-          createdAt: serverTimestamp(),
-          isRead: false
-        };
-        await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
-      }
-
-      // Check for mentions in comment
-      const mentionRegex = /@(\w+)/g;
-      const mentions = comment.match(mentionRegex);
-      
-      if (mentions) {
-        for (const mention of mentions) {
-          const username = mention.substring(1); // Remove @ symbol
-          const userQuery = query(
-            collection(db, 'users'),
-            where('username', '==', username),
-            limit(1)
-          );
-          const userSnapshot = await getDocs(userQuery);
-          
-          if (!userSnapshot.empty) {
-            const mentionedUser = userSnapshot.docs[0];
-            if (mentionedUser.id !== currentUser.uid && mentionedUser.id !== postData.authorId) {
-              const notificationData = {
-                type: 'mention',
-                senderId: currentUser.uid,
-                senderName: currentUser.displayName || 'Anonymous',
-                senderAvatar: currentUser.photoURL || '',
-                recipientId: mentionedUser.id,
-                postId: postId,
-                commentId: commentRef.id,
-                content: `${currentUser.displayName || 'Someone'} mentioned you in a comment: "${comment.trim()}"`,
-                createdAt: serverTimestamp(),
-                isRead: false
-              };
-              await addDoc(collection(db, 'users', mentionedUser.id, 'notifications'), notificationData);
-            }
-          }
+      await runTransaction(db, async (transaction) => {
+        const postDoc = await transaction.get(postRef);
+        if (!postDoc.exists()) {
+            throw new Error("Post not found");
         }
+        // Note: We can't add a document to a subcollection *inside* a transaction easily.
+        // A common pattern is to update a counter in the transaction and add the comment doc outside.
+        // Or, generate the comment ID beforehand.
+        
+        // Let's update the count in the transaction
+        console.log('[Transaction] Profile: Incrementing comment count...');
+        const currentComments = postDoc.data().comments || 0;
+        transaction.update(postRef, { comments: currentComments + 1 });
+      });
+
+      // Add the comment document outside the transaction
+      console.log('Profile: Adding comment document...');
+      const commentData = {
+          content: comment.trim(),
+          userId: userId,
+          username: currentUser.displayName || 'Anonymous',
+          userPhotoURL: currentUser.photoURL || '',
+          timestamp: serverTimestamp()
+      };
+      const newCommentRef = await addDoc(commentsCollectionRef, commentData);
+      newCommentRefId = newCommentRef.id; // Store the ID
+      console.log('Profile: Comment document added.');
+
+      // Fetch post data again to create notification
+      const postDocAfter = await getDoc(postRef);
+      if (postDocAfter.exists()) {
+          const postData = postDocAfter.data();
+          if (postData.authorId !== userId) { // Check not own post
+              console.log('Profile: Creating comment notification...');
+              const notificationPayload = {
+                  type: 'comment',
+                  senderId: userId,
+                  senderName: currentUser.displayName || 'Anonymous',
+                  senderAvatar: currentUser.photoURL || '',
+                  recipientId: postData.authorId,
+                  postId: postId,
+                  commentId: newCommentRefId, // Use the generated comment ID
+                  content: `${currentUser.displayName || 'Someone'} commented on your post: "${comment.trim()}"`,
+                  createdAt: serverTimestamp(),
+                  isRead: false
+              };
+              await addDoc(notificationCollectionRef, notificationPayload);
+              console.log('Profile: Comment notification created.');
+
+              // --- Mention Notification Logic (Needs to be outside transaction too) --- 
+              console.log('Profile: Checking for mentions...');
+              const mentionRegex = /@(\w+)/g;
+              const mentions = comment.match(mentionRegex);
+              if (mentions) {
+                for (const mention of mentions) {
+                  const username = mention.substring(1);
+                  const userQuery = query(collection(db, 'users'), where('username', '==', username), limit(1));
+                  const userSnapshot = await getDocs(userQuery);
+                  if (!userSnapshot.empty) {
+                    const mentionedUser = userSnapshot.docs[0];
+                    if (mentionedUser.id !== userId && mentionedUser.id !== postData.authorId) {
+                       console.log(`Profile: Creating mention notification for ${username}...`);
+                       const mentionNotificationPayload = {
+                          type: 'mention',
+                          senderId: userId,
+                          senderName: currentUser.displayName || 'Anonymous',
+                          senderAvatar: currentUser.photoURL || '',
+                          recipientId: mentionedUser.id,
+                          postId: postId,
+                          commentId: newCommentRefId, // Use the generated comment ID
+                          content: `${currentUser.displayName || 'Someone'} mentioned you in a comment: "${comment.trim()}"`,
+                          createdAt: serverTimestamp(),
+                          isRead: false
+                       };
+                       await addDoc(notificationCollectionRef, mentionNotificationPayload);
+                       console.log(`Profile: Mention notification created for ${username}.`);
+                    }
+                  }
+                }
+              } // --- End Mention Logic ---
+          }
       }
+
     } catch (error) {
-      console.error('Error adding comment:', error);
+      console.error('Profile: Error adding comment:', error);
       toast.error('Failed to add comment');
+      // Consider decrementing comment count if comment add failed after transaction
     }
   };
 

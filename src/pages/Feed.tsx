@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Container, Box, Typography, CircularProgress, Alert, Paper, List, ListItem, ListItemAvatar, ListItemText, ListItemSecondaryAction, IconButton, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, AppBar, Toolbar, Divider, Tabs, Tab } from '@mui/material';
 import { useNavigate, Link } from 'react-router-dom';
 import CreatePostDialog from '../components/CreatePostDialog';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, Timestamp, getDocs, DocumentData, documentId, writeBatch } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, getDoc, increment, Timestamp, getDocs, DocumentData, documentId, writeBatch, runTransaction } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from '../services/firebase';
 import { UserProfile, PostData, Comment } from '../types';
@@ -383,50 +383,111 @@ const Feed: React.FC = () => {
 
   const handleLike = async (postId: string) => {
     if (!db || !currentUser) return;
-    
-    try {
-      const postRef = doc(db, 'posts', postId);
-      const postDoc = await getDoc(postRef);
-      
-      if (!postDoc.exists()) {
-        throw new Error('Post not found');
-      }
-      
-      const postData = postDoc.data();
-      const isLiked = postData.likedBy?.includes(currentUser.uid);
-      const currentLikes = postData.likes || 0;
-      
-      if (isLiked) {
-        // Unlike
-        await updateDoc(postRef, {
-          likedBy: arrayRemove(currentUser.uid),
-          likes: Math.max(0, currentLikes - 1)
-        });
-      } else {
-        // Like
-        await updateDoc(postRef, {
-          likedBy: arrayUnion(currentUser.uid),
-          likes: currentLikes + 1
-        });
+    console.log(`handleLike triggered for postId: ${postId} by user: ${currentUser.uid}`);
 
-        // Create notification for post owner
-        if (postData.authorId !== currentUser.uid) {
-          const notificationData = {
-            type: 'like',
-            senderId: currentUser.uid,
-            senderName: currentUser.displayName || 'Anonymous',
-            senderAvatar: currentUser.photoURL || '',
-            recipientId: postData.authorId,
-            postId: postId,
-            content: `${currentUser.displayName || 'Someone'} liked your post`,
-            createdAt: serverTimestamp(),
-            isRead: false
-          };
-          await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+    const postRef = doc(db, 'posts', postId);
+    const notificationCollectionRef = collection(db, 'notifications');
+    const userId = currentUser.uid;
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        console.log('[Transaction] Getting post document...');
+        const postDoc = await transaction.get(postRef);
+
+        if (!postDoc.exists()) {
+          console.error('[Transaction] Post document not found!');
+          throw new Error("Post not found");
         }
+
+        const postData = postDoc.data();
+        let likedBy = postData.likedBy || [];
+        let notificationData = null;
+
+        if (likedBy.includes(userId)) {
+          // Unlike
+          console.log('[Transaction] User already liked. Unliking...');
+          likedBy = likedBy.filter((uid: string) => uid !== userId);
+          transaction.update(postRef, {
+            likedBy: likedBy,
+            likes: likedBy.length // Calculate count directly
+          });
+          console.log('[Transaction] Unlike update prepared.');
+        } else {
+          // Like
+          console.log('[Transaction] User has not liked yet. Liking...');
+          likedBy = [...likedBy, userId];
+          transaction.update(postRef, {
+            likedBy: likedBy,
+            likes: likedBy.length // Calculate count directly
+          });
+          console.log('[Transaction] Like update prepared.');
+
+          // Prepare notification only if liking and not own post
+          if (postData.authorId !== userId) {
+            notificationData = {
+              type: 'like',
+              senderId: userId,
+              senderName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone',
+              senderAvatar: currentUser.photoURL || '',
+              recipientId: postData.authorId,
+              postId: postId,
+              content: `${currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone'} liked your post`,
+              createdAt: serverTimestamp(), // Use serverTimestamp within transaction for consistency? Check docs.
+              isRead: false
+            };
+            console.log('[Transaction] Notification data prepared.');
+          }
+        }
+      }); // Transaction ends here
+
+      console.log('Transaction completed successfully.');
+
+      // Add notification outside the transaction *after* it succeeds
+      // We need to re-fetch postData potentially, or pass necessary info out.
+      // Let's fetch needed data again for simplicity here.
+      const postDocAfter = await getDoc(postRef);
+      if (postDocAfter.exists()) {
+        const postDataAfter = postDocAfter.data();
+        if (postDataAfter.authorId !== userId && !postDataAfter.likedBy?.includes(userId)) {
+          // Check if the user *just* liked it (they are in the array now)
+          // This logic is a bit complex, ideally pass `notificationData` out
+          // Alternative: We only prepare notificationData if it *wasn't* liked before transaction
+          // Re-evaluating: addDoc cannot be inside transaction, so let's prepare it before
+          
+          // Simplified: Assume if transaction succeeded for a LIKE, we should notify
+          // We need a flag or the prepared data from the transaction scope.
+          // Let's refine the logic slightly:
+          
+          // Re-run transaction logic lightly to decide notification
+          const postDoc = await getDoc(postRef);
+          if (postDoc.exists()) {
+             const postData = postDoc.data();
+             const likedBy = postData.likedBy || [];
+             if (likedBy.includes(userId) && postData.authorId !== userId) { // User now likes it, and it's not their post
+                 console.log('Creating notification for post owner (post-transaction)...');
+                 const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
+                 const notificationPayload = {
+                     type: 'like',
+                     senderId: userId,
+                     senderName: senderName,
+                     senderAvatar: currentUser.photoURL || '',
+                     recipientId: postData.authorId,
+                     postId: postId,
+                     content: `${senderName} liked your post`,
+                     createdAt: serverTimestamp(),
+                     isRead: false
+                 };
+                 await addDoc(notificationCollectionRef, notificationPayload);
+                 console.log('Notification created successfully (post-transaction).');
+             }
+          }
+        }
+      } else {
+        console.log('Not creating notification (user unliked or liked own post).');
       }
+
     } catch (error) {
-      console.error('Error toggling like:', error);
+      console.error('Error in like transaction or notification creation:', error);
       toast.error('Failed to update like');
     }
   };
@@ -490,18 +551,19 @@ const Feed: React.FC = () => {
         
         // Create notification for post owner
         if (originalPost.authorId !== currentUser.uid) {
+          const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
           const notificationData = {
             type: 'repost',
             senderId: currentUser.uid,
-            senderName: currentUser.displayName || 'Anonymous',
+            senderName: senderName,
             senderAvatar: currentUser.photoURL || '',
             recipientId: originalPost.authorId,
             postId: postId,
-            content: `${currentUser.displayName || 'Someone'} reposted your post`,
+            content: `${senderName} reposted your post`,
             createdAt: serverTimestamp(),
             isRead: false
           };
-          await addDoc(collection(db, 'users', originalPost.authorId, 'notifications'), notificationData);
+          await addDoc(collection(db, 'notifications'), notificationData);
         }
         
         toast.success('Post reposted!');
@@ -538,18 +600,19 @@ const Feed: React.FC = () => {
 
       // Create notification for post owner
       if (postData && postData.authorId !== currentUser.uid) {
+        const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
         const notificationData = {
           type: 'comment',
           senderId: currentUser.uid,
-          senderName: currentUser.displayName || 'Anonymous',
+          senderName: senderName,
           senderAvatar: currentUser.photoURL || '',
           recipientId: postData.authorId,
           postId: postId,
-          content: `${currentUser.displayName || 'Someone'} commented on your post: "${content}"`,
+          content: `${senderName} commented on your post: "${content}"`,
           createdAt: serverTimestamp(),
           isRead: false
         };
-        await addDoc(collection(db, 'users', postData.authorId, 'notifications'), notificationData);
+        await addDoc(collection(db, 'notifications'), notificationData);
       }
 
       // Check for mentions in comment
@@ -564,18 +627,19 @@ const Feed: React.FC = () => {
           if (!userDocs.empty) {
             const mentionedUser = userDocs.docs[0];
             if (postData && mentionedUser.id !== currentUser.uid && mentionedUser.id !== postData.authorId) {
+              const mentionSenderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
               const notificationData = {
                 type: 'mention',
                 senderId: currentUser.uid,
-                senderName: currentUser.displayName || 'Anonymous',
+                senderName: mentionSenderName,
                 senderAvatar: currentUser.photoURL || '',
                 recipientId: mentionedUser.id,
                 postId: postId,
-                content: `${currentUser.displayName || 'Someone'} mentioned you in a comment: "${content}"`,
+                content: `${mentionSenderName} mentioned you in a comment: "${content}"`,
                 createdAt: serverTimestamp(),
                 isRead: false
               };
-              await addDoc(collection(db, 'users', mentionedUser.id, 'notifications'), notificationData);
+              await addDoc(collection(db, 'notifications'), notificationData);
             }
           }
         }
