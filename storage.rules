@@ -57,6 +57,20 @@ service firebase.storage {
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Rules for Marketplace Product Media
+    match /products/{userId}/{fileName} {
+      // Allow public reads for marketplace items
+      allow read: if true;
+      // Allow create only by the authenticated user matching the userId path segment
+      // Check for reasonable size (10MB) and image/video content types
+      allow create: if request.auth != null 
+                     && request.auth.uid == userId
+                     && request.resource.size < 10 * 1024 * 1024
+                     && (request.resource.contentType.matches('image/.*') || request.resource.contentType.matches('video/.*'));
+      // Allow delete only by the user who uploaded it
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Default deny all other access
     match /{allPaths=**} {
       allow read, write: if false;

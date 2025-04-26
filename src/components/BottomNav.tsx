@@ -12,10 +12,10 @@ import {
   TrendingUp as TrendingUpIcon,
   Add as AddIcon,
   Person as PersonIcon,
+  Store as StoreIcon,
 } from '@mui/icons-material';
 import CreatePostDialog from './CreatePostDialog';
 import { useAuth } from '../contexts/AuthContext';
-import VibitIcon from './VibitIcon';
 
 const BottomNav: React.FC = () => {
   const navigate = useNavigate();
@@ -85,9 +85,9 @@ const BottomNav: React.FC = () => {
           icon={<MeetingRoomIcon />}
         />
         <BottomNavigationAction
-          label="Vibits"
-          value="/vibits"
-          icon={<VibitIcon />}
+          label="Marketplace"
+          value="/marketplace"
+          icon={<StoreIcon />}
         />
         <BottomNavigationAction
           label="Profile"

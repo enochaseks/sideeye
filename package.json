@@ -22,6 +22,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
     "@types/file-saver": "^2.0.7",
+    "agora-rtc-sdk-ng": "^4.23.2",
     "algoliasearch": "^5.23.3",
     "assert": "^2.1.0",
     "bcryptjs": "^2.4.3",

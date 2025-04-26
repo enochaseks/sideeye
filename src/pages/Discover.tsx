@@ -33,7 +33,8 @@ import {
   Message as MessageIcon,
   People as PeopleIcon,
   Favorite as FavoriteIcon,
-  Comment as CommentIcon
+  Comment as CommentIcon,
+  Store as StoreIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -62,7 +63,6 @@ import {
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
-import VibitIcon from '../components/VibitIcon';
 import { formatTimestamp } from '../utils/dateUtils';
 
 interface UserProfile {
@@ -767,7 +767,7 @@ const Discover: React.FC = () => {
         >
           <Tab icon={<PeopleIcon />} label="People" />
           <Tab icon={<GroupIcon />} label="Rooms" />
-          <Tab icon={<VibitIcon />} label="Vibits" />
+          <Tab icon={<StoreIcon />} label="Marketplace" />
         </Tabs>
       </Box>
       
@@ -969,87 +969,16 @@ const Discover: React.FC = () => {
       
       {activeTab === 2 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Vibits Section */}
+          {/* Marketplace Section */}
           <Paper>
             <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="h6" component="h2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <VibitIcon color="primary" /> Vibits
+              <Typography variant="h6" component="h2">
+                Marketplace
               </Typography>
             </Box>
-            
-            {videos.length === 0 ? (
-              <Box sx={{ p: 4, textAlign: 'center' }}>
-                <Typography variant="h6" color="text.secondary">
-                  No videos found
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  Check back later or upload your own!
-                </Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  sx={{ mt: 2 }}
-                  onClick={() => navigate('/vibits')}
-                  startIcon={<VibitIcon />}
-                >
-                  Go to Vibits
-                </Button>
-              </Box>
-            ) : (
-              <Grid container spacing={2} sx={{ p: 2 }}>
-                {videos.map((video) => (
-                  <Grid item xs={12} sm={6} md={4} key={video.id}>
-                    <Card key={video.id} sx={{ position: 'relative' }}>
-                      <CardMedia
-                        component="video"
-                        image={video.thumbnailUrl || video.url}
-                        sx={{
-                          height: { xs: 'auto', sm: 200 },
-                          width: '100%',
-                          aspectRatio: '16/9',
-                          objectFit: 'cover',
-                          backgroundColor: 'black',
-                          '@media (max-width: 600px)': {
-                            height: 'auto',
-                            maxHeight: '60vh',
-                            objectFit: 'contain'
-                          }
-                        }}
-                        controls
-                        preload="metadata"
-                        playsInline
-                        muted
-                        loop
-                        poster={video.thumbnailUrl}
-                      />
-                      <Box sx={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        p: 1,
-                        background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-                        color: 'white'
-                      }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <Typography variant="subtitle2">@{video.username}</Typography>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                              <FavoriteIcon fontSize="small" />
-                              <Typography variant="caption" sx={{ ml: 0.5 }}>{video.likes}</Typography>
-                            </Box>
-                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                              <CommentIcon fontSize="small" />
-                              <Typography variant="caption" sx={{ ml: 0.5 }}>{video.comments}</Typography>
-                            </Box>
-                          </Box>
-                        </Box>
-                      </Box>
-                    </Card>
-                  </Grid>
-                ))}
-              </Grid>
-            )}
+            <List>
+              {/* Marketplace content will be added here */}
+            </List>
           </Paper>
         </Box>
       )}

@@ -24,7 +24,7 @@ import Discover from './pages/Discover';
 import Messages from './pages/Messages';
 import { Toaster } from 'react-hot-toast';
 import SideRoomList from './components/SideRooms/SideRoomList';
-import SideRoomComponent from './components/SideRooms/SideRoomComponent';
+import SideRoomComponent from './components/SideRooms/SideRoomComponent'; // Corrected the import path
 import Chat from './pages/Chat';
 import SafetyPage from './pages/SafetyPage';
 import SecurityPage from './pages/SecurityPage';
@@ -50,9 +50,10 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Debug from './pages/Debug';
 import CookieConsent from './components/CookieConsent';
 import BottomNav from './components/BottomNav';
-import Vibits from './pages/Vibits';
 import './App.css';
 import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
+import Marketplace from './pages/Marketplace';
+import AddProduct from './pages/AddProduct';
 
 const BottomNavWrapper: React.FC = () => {
   const { currentUser } = useAuth();
@@ -89,11 +90,6 @@ const AppContent: React.FC = () => {
               <Feed />
             </ProtectedRoute>
           } />
-          <Route path="/vibits" element={
-            <ProtectedRoute requireEmailVerification requireDeviceSetup>
-              <Vibits />
-            </ProtectedRoute>
-          } />
           <Route path="/profile/:userId" element={
             <ProtectedRoute requireEmailVerification requireDeviceSetup>
               <Profile />
@@ -109,6 +105,20 @@ const AppContent: React.FC = () => {
               <SecurityPage />
             </ProtectedRoute>
           } />
+          
+          {/* Marketplace Route (Protected) */}
+          <Route path="/marketplace" element={
+            <ProtectedRoute requireEmailVerification requireDeviceSetup>
+              <Marketplace />
+            </ProtectedRoute>
+          } />
+          {/* Add Product Route (Protected) */}
+          <Route path="/marketplace/add" element={
+            <ProtectedRoute requireEmailVerification requireDeviceSetup>
+              <AddProduct />
+            </ProtectedRoute>
+          } />
+          {/* End Marketplace Routes */}
           
           {/* Other protected routes */}
           <Route path="/search" element={<ProtectedRoute><SearchResults /></ProtectedRoute>} />

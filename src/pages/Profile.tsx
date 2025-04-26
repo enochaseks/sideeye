@@ -59,7 +59,6 @@ import { Link, useParams, useNavigate, Link as RouterLink } from 'react-router-d
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
 import { toast } from 'react-hot-toast';
-import VibitIcon from '../components/VibitIcon';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -128,6 +127,18 @@ interface Video {
     content: string;
     timestamp: any;
   }[];
+}
+
+// Add interface for MarketplaceItem
+interface MarketplaceItem {
+  id: string;
+  title: string;
+  description: string;
+  price: number;
+  images: string[];
+  sellerId: string;
+  createdAt: any;
+  status: 'available' | 'sold' | 'pending';
 }
 
 function TabPanel(props: TabPanelProps) {
@@ -376,6 +387,8 @@ const Profile: React.FC = () => {
   const [showFollowRequestsDialog, setShowFollowRequestsDialog] = useState(false);
   const navigate = useNavigate();
   const [isProcessing, setIsProcessing] = useState(false);
+  // Add state for marketplace items
+  const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
   
   const userId = targetUserId || currentUser?.uid || '';
 
@@ -1891,6 +1904,28 @@ const Profile: React.FC = () => {
     }
   };
 
+  // Add useEffect to fetch marketplace items
+  useEffect(() => {
+    if (!db || !targetUserId) return;
+
+    const marketplaceRef = collection(db, 'marketplace');
+    const q = query(
+      marketplaceRef,
+      where('sellerId', '==', targetUserId),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as MarketplaceItem[];
+      setMarketplaceItems(items);
+    });
+
+    return () => unsubscribe();
+  }, [db, targetUserId]);
+
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -2069,7 +2104,7 @@ const Profile: React.FC = () => {
                   }}
                 >
                   <Tab label="Posts" />
-                  <Tab label="Vibits" />
+                  <Tab label="Marketplace" />
                   <Tab label="Side Rooms" />
                   <Tab label="Liked Posts" />
                   {currentUser?.uid === userId && <Tab label="Deleted Items" />}
@@ -2122,25 +2157,68 @@ const Profile: React.FC = () => {
               <Box sx={{ textAlign: 'center', py: 4 }}>
                 <LockIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 2 }} />
                 <Typography variant="h6" color="text.secondary">
-                  This account's videos are private
+                  This account's marketplace items are private
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  Follow this account to see their videos
+                  Follow this account to see their marketplace items
                 </Typography>
               </Box>
-            ) : videos.length === 0 ? (
-              <Typography>No videos uploaded yet</Typography>
+            ) : marketplaceItems.length === 0 ? (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <Typography variant="body1" color="text.secondary">
+                  No items listed in the marketplace
+                </Typography>
+                {currentUser?.uid === targetUserId && (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    component={RouterLink}
+                    to="/marketplace/add"
+                    sx={{ mt: 2 }}
+                  >
+                    Add Item
+                  </Button>
+                )}
+              </Box>
             ) : (
-              <Box sx={{ 
-                display: 'grid', 
-                gridTemplateColumns: { 
-                  xs: '1fr', 
-                  sm: '1fr 1fr', 
-                  md: '1fr 1fr 1fr' 
-                }, 
-                gap: 2 
-              }}>
-                {videos.map(renderVideoCard)}
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 2 }}>
+                {marketplaceItems.map((item) => (
+                  <Card key={item.id}>
+                    <CardMedia
+                      component="img"
+                      height="200"
+                      image={item.images[0]}
+                      alt={item.title}
+                      sx={{ objectFit: 'cover' }}
+                    />
+                    <CardContent>
+                      <Typography variant="h6" noWrap>{item.title}</Typography>
+                      <Typography variant="h6" color="primary" sx={{ mt: 1 }}>
+                        ${item.price.toFixed(2)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }} noWrap>
+                        {item.description}
+                      </Typography>
+                      <Chip
+                        label={item.status}
+                        color={item.status === 'available' ? 'success' : item.status === 'pending' ? 'warning' : 'default'}
+                        size="small"
+                        sx={{ mt: 1 }}
+                      />
+                    </CardContent>
+                    <CardActions>
+                      <Button
+                        size="small"
+                        component={RouterLink}
+                        to={`/marketplace/${item.id}`}
+                        variant="contained"
+                        fullWidth
+                      >
+                        View Details
+                      </Button>
+                    </CardActions>
+                  </Card>
+                ))}
               </Box>
             )}
           </TabPanel>

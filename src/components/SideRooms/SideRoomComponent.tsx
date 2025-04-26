@@ -1,2466 +1,1013 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, ChangeEvent } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { db, auth } from '../../services/firebase';
-import { 
-  doc, 
-  getDoc, 
-  updateDoc, 
-  arrayUnion, 
-  arrayRemove, 
-  runTransaction,
-  onSnapshot,
-  FirestoreError,
-  collection,
-  query,
-  orderBy,
-  limit,
-  addDoc,
-  serverTimestamp,
-  getDocs,
-  where,
-  writeBatch,
-  deleteDoc,
-  Firestore,
-  increment,
-  FieldValue,
-  Timestamp,
-  setDoc,
-  startAfter,
-  QueryDocumentSnapshot
+import { db } from '../../services/firebase'; // Assuming firebase services are setup
+import {
+    doc,
+    getDoc,
+    updateDoc,
+    arrayUnion,
+    arrayRemove,
+    runTransaction,
+    onSnapshot,
+    FirestoreError,
+    collection,
+    query,
+    orderBy,
+    limit,
+    addDoc,
+    serverTimestamp,
+    getDocs,
+    where,
+    writeBatch,
+    deleteDoc,
+    increment,
+    FieldValue, // Ensure FieldValue is imported
+    Timestamp,
+    setDoc,
+    startAfter,
+    QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
-  Box,
-  Typography,
-  Button,
-  Avatar,
-  Chip,
-  CircularProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
-  Alert,
-  IconButton,
-  Tooltip,
-  Divider,
-  List,
-  ListItem,
-  ListItemAvatar,
-  ListItemText,
-  Paper,
-  InputBase,
-  Menu,
-  MenuItem,
-  ListItemIcon,
-  FormControlLabel,
-  Switch,
-  Autocomplete,
-  Slider,
-  Stack,
-  InputAdornment,
-  Link as MuiLink,
-  Select,
-  FormControl,
-  InputLabel,
-  FormHelperText,
-  Grid
+    Box, Typography, Button, Avatar, Chip, CircularProgress, Dialog,
+    DialogTitle, DialogContent, DialogActions, TextField, Alert, IconButton,
+    Tooltip, Divider, List, ListItem, ListItemAvatar, ListItemText, Paper,
+    Menu, MenuItem, ListItemIcon, InputAdornment, Grid, ListItemSecondaryAction
+    // Removed unused MUI imports like InputBase, Switch, Autocomplete, Slider, etc. if not needed
 } from '@mui/material';
-import { 
-  ExitToApp, 
-  Lock, 
-  Group, 
-  LocalFireDepartment, 
-  Chat,
-  MoreVert,
-  Send,
-  Edit,
-  Delete,
-  PersonAdd,
-  Search,
-  Close,
-  Videocam,
-  VideocamOff,
-  QrCode,
-  Palette,
-  Upload as UploadIcon,
-  Image as ImageIcon,
-  Delete as DeleteIcon,
-  FiberManualRecord,
-  Stop,
-  ContentCopy,
-  Visibility,
-  Share as ShareIcon,
-  LiveTv,
-  PhoneAndroid as PhoneAndroidIcon
+import {
+    ExitToApp, Lock, Group, MoreVert, Send, Edit, Delete, PersonAdd,
+    Search, Close, Palette, Upload as UploadIcon, Image as ImageIcon,
+    ContentCopy, Share as ShareIcon, Mic, MicOff, VolumeUp, PersonRemove
 } from '@mui/icons-material';
-import type { SideRoom, RoomMember } from '../../types/index';
-import MuxStream from '../Stream/MuxStream';
+import type { SideRoom as BaseSideRoom, RoomMember, RoomStyle } from '../../types/index'; // Import base type and RoomStyle
 import RoomForm from './RoomForm';
 import _ from 'lodash';
-import ViewerPanel from './ViewerPanel';
-import { createLiveStream, deleteLiveStream, fetchWithCORS } from '../../api/mux';
+import AgoraRTC, { IAgoraRTCClient, ILocalAudioTrack } from 'agora-rtc-sdk-ng';
 
-interface Message {
-  id: string;
-  userId: string;
-  username: string;
-  avatar: string;
-  content: string;
-  timestamp: Date | { toDate: () => Date };
-  photoURL?: string;
-  displayName?: string;
-}
+// Configuration for STUN servers (Public Google servers)
+const iceServers = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        // Add TURN servers here if needed for NAT traversal issues
+    ],
+};
 
+// --- Interfaces ---
 interface User {
-  id: string;
-  username: string;
-  avatar: string;
-  uid?: string;
-  displayName?: string;
-  photoURL?: string;
+    id: string;
+    username: string;
+    avatar: string;
+    uid?: string;
+    displayName?: string;
+    photoURL?: string;
 }
 
 interface PresenceData {
-  userId: string;
-  username: string;
-  avatar: string;
-  lastSeen: number;
-  isOnline: boolean;
+    userId: string;
+    username: string;
+    avatar: string;
+    lastSeen: number | Timestamp | FieldValue;
+    isOnline: boolean;
+    isMuted?: boolean;
+    isSpeaking?: boolean;
+    displayName?: string;
+    photoURL?: string;
+    role?: 'owner' | 'viewer';
 }
 
-interface RoomStyle {
-  headerColor: string;
-  backgroundColor: string;
-  textColor: string;
-  accentColor: string;
-  font: string;
-  customCss: string;
-  headerGradient: boolean;
-  backgroundGradient: boolean;
-  glitterEffect: boolean;
-  headerFontSize: number;
-  stickers: string[];
-}
-
-interface RecordedStream {
-  id: string;
-  playbackId: string;
-  startedAt: Date;
-  endedAt?: Date;
-  duration?: number;
-  title?: string;
-}
-
-// Update font options
-const FONT_OPTIONS = [
-  { label: 'Default', value: 'inherit' },
-  { label: 'Arial', value: 'Arial, sans-serif' },
-  { label: 'Times New Roman', value: 'Times New Roman, serif' },
-  { label: 'Roboto', value: 'Roboto, sans-serif' },
-  { label: 'Open Sans', value: 'Open Sans, sans-serif' },
-  { label: 'Montserrat', value: 'Montserrat, sans-serif' },
-  { label: 'Playfair Display', value: 'Playfair Display, serif' },
-  { label: 'Comic Sans MS', value: 'Comic Sans MS, cursive' },
-  { label: 'Poppins', value: 'Poppins, sans-serif' },
-  { label: 'Dancing Script', value: 'Dancing Script, cursive' },
-  { label: 'Pacifico', value: 'Pacifico, cursive' },
-  { label: 'Quicksand', value: 'Quicksand, sans-serif' },
-  { label: 'Lato', value: 'Lato, sans-serif' },
-  { label: 'Raleway', value: 'Raleway, sans-serif' },
-  { label: 'Nunito', value: 'Nunito, sans-serif' },
-  { label: 'Source Sans Pro', value: 'Source Sans Pro, sans-serif' },
-  { label: 'Ubuntu', value: 'Ubuntu, sans-serif' },
-  { label: 'Oswald', value: 'Oswald, sans-serif' },
-  { label: 'Merriweather', value: 'Merriweather, serif' },
-  { label: 'Noto Sans', value: 'Noto Sans, sans-serif' }
-];
-
-// Add color presets including gradients
-const COLOR_PRESETS = [
-  { name: 'Default', value: '#ffffff' },
-  { name: 'Ocean Blue', value: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)' },
-  { name: 'Sunset', value: 'linear-gradient(135deg, #ff6b6b 0%, #556270 100%)' },
-  { name: 'Forest', value: 'linear-gradient(135deg, #134e5e 0%, #71b280 100%)' },
-  { name: 'Purple Rain', value: 'linear-gradient(135deg, #8e2de2 0%, #4a00e0 100%)' },
-  { name: 'Glitter Gold', value: 'linear-gradient(135deg, #f6d365 0%, #fda085 100%)' },
-  { name: 'Neon Pink', value: 'linear-gradient(135deg, #ff6b6b 0%, #ff8e8e 100%)' },
-  { name: 'Electric Blue', value: 'linear-gradient(135deg, #00c6ff 0%, #0072ff 100%)' },
-  { name: 'Mint Fresh', value: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' },
-  { name: 'Glitter Purple', value: 'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)' },
-  { name: 'Midnight', value: 'linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)' },
-  { name: 'Sunrise', value: 'linear-gradient(135deg, #ff512f 0%, #f09819 100%)' },
-  { name: 'Emerald', value: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)' },
-  { name: 'Rose', value: 'linear-gradient(135deg, #ff758c 0%, #ff7eb3 100%)' },
-  { name: 'Sky', value: 'linear-gradient(135deg, #56ccf2 0%, #2f80ed 100%)' },
-  { name: 'Autumn', value: 'linear-gradient(135deg, #f2994a 0%, #f2c94c 100%)' },
-  { name: 'Crystal', value: 'linear-gradient(135deg, #159957 0%, #155799 100%)' },
-  { name: 'Neon', value: 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)' },
-  { name: 'Royal', value: 'linear-gradient(135deg, #141e30 0%, #243b55 100%)' },
-  { name: 'Cotton Candy', value: 'linear-gradient(135deg, #ff9a9e 0%, #fad0c4 100%)' }
-];
-
-// Add sticker options
-const STICKER_OPTIONS = [
-  { name: 'Star', value: '⭐' },
-  { name: 'Heart', value: '❤️' },
-  { name: 'Fire', value: '🔥' },
-  { name: 'Sparkles', value: '✨' },
-  { name: 'Rocket', value: '🚀' },
-  { name: 'Party', value: '🎉' },
-  { name: 'Music', value: '🎵' },
-  { name: 'Gaming', value: '🎮' },
-  { name: 'Art', value: '🎨' },
-  { name: 'Sports', value: '⚽' },
-  { name: 'Food', value: '🍕' },
-  { name: 'Travel', value: '✈️' },
-  { name: 'Tech', value: '💻' },
-  { name: 'Nature', value: '🌿' },
-  { name: 'Weather', value: '☀️' }
-];
-
-// Update the imported SideRoom type to include the new properties
-declare module '../../types/index' {
-  interface SideRoom {
+// Extend base SideRoom type if needed, ensure it matches type/index
+interface SideRoom extends BaseSideRoom {
     style?: RoomStyle;
-    isRecording?: boolean;
-    recordedStreams?: RecordedStream[];
-    currentRecordingId?: string;
-    currentStreamId?: string;
-    mobileStreamKey?: string;
-    mobilePlaybackId?: string;
-    mobileStreamerId?: string;
-    isMobileStreaming?: boolean;
     viewers?: RoomMember[];
-  }
+    activeSpeakers?: string[];
+    mutedUsers?: Record<string, boolean>;
+    // isLive should be defined in BaseSideRoom
 }
+
+interface SignalingMessage {
+    type: 'offer' | 'answer' | 'candidate';
+    senderId: string;
+    data: any; // SDP or ICE candidate
+    timestamp?: FieldValue; // Optional as we add it on send
+}
+
+const APP_ID = 'eb21ad9cb5574991af1e8ba5dc712fb8'; // Your Agora App ID
 
 const SideRoomComponent: React.FC = () => {
-  const { roomId } = useParams();
-  const { currentUser, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
-  const [room, setRoom] = useState<SideRoom | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
-  const [password, setPassword] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [isLive, setIsLive] = useState(false);
-  const [showMembers, setShowMembers] = useState(false);
-  const [showChat, setShowChat] = useState(false);
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [showInviteDialog, setShowInviteDialog] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<User[]>([]);
-  const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
-  const [isInviting, setIsInviting] = useState(false);
-  const [presence, setPresence] = useState<PresenceData[]>([]);
-  const [isMobileStreaming, setIsMobileStreaming] = useState(false);
-  const [mobileStreamUrl, setMobileStreamUrl] = useState('');
-  const [showMobileStreamDialog, setShowMobileStreamDialog] = useState(false);
-  const [streamKey, setStreamKey] = useState('');
-  const [showStyleDialog, setShowStyleDialog] = useState(false);
-  const [roomStyle, setRoomStyle] = useState({
-    headerColor: room?.style?.headerColor || '#ffffff',
-    backgroundColor: room?.style?.backgroundColor || '#ffffff',
-    textColor: room?.style?.textColor || '#000000',
-    accentColor: room?.style?.accentColor || '#000000',
-    font: room?.style?.font || '',
-    customCss: room?.style?.customCss || '',
-    headerGradient: room?.style?.headerGradient || false,
-    backgroundGradient: room?.style?.backgroundGradient || false,
-    glitterEffect: room?.style?.glitterEffect || false,
-    headerFontSize: room?.style?.headerFontSize || 24,
-    stickers: room?.style?.stickers || []
-  });
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedStreams, setRecordedStreams] = useState<RecordedStream[]>([]);
-  const [showRecordingsDialog, setShowRecordingsDialog] = useState(false);
-  const [lastMessageDoc, setLastMessageDoc] = useState<QueryDocumentSnapshot | null>(null);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const MESSAGES_PER_PAGE = 25;
+    const { roomId } = useParams<{ roomId: string }>();
+    const { currentUser, loading: authLoading } = useAuth();
+    const navigate = useNavigate();
 
-  // Add new viewer-specific state
-  const [showViewerControls, setShowViewerControls] = useState(false);
-  const [viewerMode, setViewerMode] = useState<'chat' | 'stream' | 'info'>('stream');
+    // --- State ---
+    const [room, setRoom] = useState<SideRoom | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+    const [password, setPassword] = useState('');
+    const [showEditDialog, setShowEditDialog] = useState(false);
+    const [showInviteDialog, setShowInviteDialog] = useState(false);
+    const [showStyleDialog, setShowStyleDialog] = useState(false);
+    const [showShareDialog, setShowShareDialog] = useState(false);
+    const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+    const [presence, setPresence] = useState<PresenceData[]>([]);
+    const [roomStyle, setRoomStyle] = useState<RoomStyle | undefined>(undefined);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<User[]>([]);
+    const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
+    const [isInviting, setIsInviting] = useState(false);
+    const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+    const [isAudioConnected, setIsAudioConnected] = useState(false);
+    const [isMicMuted, setIsMicMuted] = useState(false);
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const [isMicAvailable, setIsMicAvailable] = useState(true);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const animationFrameRef = useRef<number | null>(null);
+    const speakingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const agoraClient = useRef<IAgoraRTCClient>(AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' }));
+    const [joined, setJoined] = useState(false);
+    const [localAudioTrack, setLocalAudioTrack] = useState<ILocalAudioTrack | null>(null);
+    const [remoteUsers, setRemoteUsers] = useState<any[]>([]);
 
-  // Add state for share dialog
-  const [showShareDialog, setShowShareDialog] = useState(false);
+    // --- Refs ---
+    const mountedRef = useRef(true);
+    const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
+    const signalingListeners = useRef<(() => void)[]>([]);
+    const remoteAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
-  const mountedRef = useRef(true);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const intersectionObserver = useRef<IntersectionObserver | null>(null);
+    // --- Memos ---
+    const isRoomOwner = useMemo(() => room?.ownerId === currentUser?.uid, [room?.ownerId, currentUser?.uid]);
+    const isViewer = useMemo(() => !!room?.viewers?.some(viewer => viewer.userId === currentUser?.uid), [room?.viewers, currentUser?.uid]);
+    const hasRoomAccess = isRoomOwner || isViewer;
+    const onlineParticipants = useMemo(() => presence.filter(p => p.isOnline), [presence]);
+    const ownerData = useMemo(() => room?.viewers?.find(v => v.role === 'owner'), [room?.viewers]);
 
-  const isRoomOwner = useMemo(() => room?.ownerId === currentUser?.uid, [room?.ownerId, currentUser?.uid]);
-  const isViewer = useMemo(() => room?.viewers?.some(viewer => viewer.userId === currentUser?.uid) || false, [room?.viewers, currentUser?.uid]);
-
-  // Combine owner and viewer checks
-  const hasRoomAccess = isRoomOwner || isViewer;
-
-  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const handleError = useCallback((err: unknown, defaultMessage: string) => {
-    console.error(defaultMessage, err);
-    if (mountedRef.current) {
-      if (err instanceof FirestoreError) {
-        setError(`Firestore error: ${err.message}`);
-      } else if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError(defaultMessage);
-      }
-    }
-  }, []);
-
-  const setupMessagesListener = () => {
-    if (!currentUser || !roomId || !db) return;
-
-    try {
-      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-      const q = query(
-        messagesRef, 
-        orderBy('timestamp', 'desc'), 
-        limit(MESSAGES_PER_PAGE)
-      );
-
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          setLastMessageDoc(snapshot.docs[snapshot.docs.length - 1]);
+    // --- Utility ---
+    const handleError = useCallback((err: unknown, context: string) => {
+        console.error(`Error (${context}):`, err);
+        const message = err instanceof Error ? err.message : `An unknown error occurred during ${context}.`;
+        if (mountedRef.current) {
+            setError(message);
+            toast.error(`Error: ${message}`); // Provide slightly more context in toast
         }
-        const newMessages = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          timestamp: doc.data().timestamp?.toDate() || new Date()
-        })).reverse();
-        
-        setMessages(prevMessages => {
-          // Deduplicate messages
-          const messageMap = new Map();
-          [...newMessages, ...prevMessages].forEach(msg => {
-            if (!messageMap.has(msg.id)) {
-              messageMap.set(msg.id, msg);
-            }
-          });
-          return Array.from(messageMap.values());
-        });
-      });
+    }, []);
 
-      return () => unsubscribe();
-    } catch (err) {
-      console.error('Error setting up message listener:', err);
-      setError('Failed to set up message listener');
-    }
-  };
+    // --- Presence Update ---
+    const updatePresence = useCallback(_.debounce(async () => {
+        if (!currentUser?.uid || !roomId || !mountedRef.current) return;
+        try {
+            const presenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
+            const presenceData: Partial<PresenceData> = {
+                userId: currentUser.uid,
+                username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+                avatar: currentUser.photoURL || '',
+                displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+                lastSeen: Date.now(),
+                isOnline: true,
+                role: isRoomOwner ? 'owner' : 'viewer',
+                isMuted: isMicMuted,
+                isSpeaking: isSpeaking // Add local speaking state
+            };
+            await setDoc(presenceRef, { ...presenceData, lastSeen: serverTimestamp() }, { merge: true });
+        } catch (err) { console.error('Presence update failed:', err); }
+    }, 2000), [currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, roomId, isRoomOwner, isMicMuted, isSpeaking]); // More specific dependencies
 
-  const loadMoreMessages = async () => {
-    if (!lastMessageDoc || isLoadingMore || !roomId || !db) return;
-
-    try {
-      setIsLoadingMore(true);
-      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-      
-      // Get the timestamp from the last message
-      const lastMessageTimestamp = lastMessageDoc.data().timestamp;
-      
-      // Create a query that uses the actual timestamp value
-      const q = query(
-        messagesRef,
-        orderBy('timestamp', 'desc'),
-        where('timestamp', '<', lastMessageTimestamp),
-        limit(MESSAGES_PER_PAGE)
-      );
-
-      const snapshot = await getDocs(q);
-      if (!snapshot.empty) {
-        setLastMessageDoc(snapshot.docs[snapshot.docs.length - 1]);
-        const moreMessages = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          timestamp: doc.data().timestamp?.toDate() || new Date()
-        })).reverse();
-
-        setMessages(prevMessages => {
-          const messageMap = new Map();
-          [...prevMessages, ...moreMessages].forEach(msg => {
-            if (!messageMap.has(msg.id)) {
-              messageMap.set(msg.id, msg);
-            }
-          });
-          return Array.from(messageMap.values());
-        });
-      }
-    } catch (err) {
-      console.error('Error loading more messages:', err);
-      toast.error('Failed to load more messages');
-    } finally {
-      setIsLoadingMore(false);
-    }
-  };
-
-  // Add intersection observer for infinite scroll
-  useEffect(() => {
-    if (!messagesEndRef.current) return;
-
-    intersectionObserver.current = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          loadMoreMessages();
+    // --- Signaling ---
+    const sendSignalingMessage = useCallback(async (recipientId: string, messageData: Omit<SignalingMessage, 'timestamp'>) => {
+        if (!roomId || !currentUser?.uid) return;
+        console.log(`Sending ${messageData.type} from ${currentUser.uid} to ${recipientId}`);
+        try {
+            // Corrected path: Add messages to a subcollection under the recipient's ID
+            const messagesPath = `sideRooms/${roomId}/signaling/${recipientId}/messages`;
+            const messagesCollectionRef = collection(db, messagesPath);
+            await addDoc(messagesCollectionRef, {
+                ...messageData,
+                timestamp: serverTimestamp()
+            });
+        } catch (err) {
+            handleError(err, `sending ${messageData.type} to ${recipientId}`);
         }
-      },
-      { threshold: 0.5 }
-    );
+    }, [roomId, currentUser?.uid, handleError]);
 
-    intersectionObserver.current.observe(messagesEndRef.current);
+    // --- WebRTC Core ---
+    const closePeerConnection = useCallback((peerId: string) => {
+        console.log(`Closing peer connection and cleaning up for ${peerId}`);
+         const pc = peerConnections.current[peerId];
+         if (pc) {
+             pc.onicecandidate = null;
+             pc.ontrack = null;
+             pc.onconnectionstatechange = null;
+             pc.close();
+             delete peerConnections.current[peerId];
+         }
+         const audioEl = remoteAudioRefs.current[peerId];
+         if (audioEl) {
+             audioEl.remove();
+             delete remoteAudioRefs.current[peerId];
+         }
+     }, []);
 
-    return () => {
-      if (intersectionObserver.current) {
-        intersectionObserver.current.disconnect();
-      }
-    };
-  }, [messagesEndRef.current, lastMessageDoc]);
+    const createPeerConnection = useCallback((peerId: string): RTCPeerConnection | null => {
+        if (!localStream || !currentUser?.uid || !roomId) return null;
+        if (peerConnections.current[peerId]) return peerConnections.current[peerId];
+        console.log(`Creating peer connection for ${peerId}`);
 
-  // Update presence data
-  const updatePresence = useCallback(
-    _.debounce(async () => {
-      if (!currentUser?.uid || !roomId) {
-        console.error('Presence update aborted: currentUser.uid or roomId is missing', { currentUser, roomId });
-        return;
-      }
-      try {
-        const presenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-        const presenceData = {
-          userId: currentUser.uid,
-          username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-          avatar: currentUser.photoURL || '',
-          displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-          lastSeen: serverTimestamp(),
-          isOnline: true,
-          role: isRoomOwner ? 'owner' : 'viewer'
+        const pc = new RTCPeerConnection(iceServers);
+
+        // Always add local audio track if not already present
+        const audioTracks = localStream.getAudioTracks();
+        if (audioTracks.length > 0 && !pc.getSenders().some(s => s.track && s.track.id === audioTracks[0].id)) {
+            console.log(`Adding local audio track to peer connection: ${audioTracks[0].id}`);
+            pc.addTrack(audioTracks[0], localStream);
+        }
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate && currentUser?.uid) {
+                console.log(`[WebRTC ${peerId}] Generated ICE candidate`);
+                sendSignalingMessage(peerId, {
+                    type: 'candidate',
+                    senderId: currentUser.uid,
+                    data: event.candidate.toJSON(),
+                });
+            }
         };
-        await setDoc(presenceRef, presenceData, { merge: true });
-      } catch (err) {
-        console.error('Presence Firestore write failed:', err, { currentUser, roomId });
-      }
-    }, 1000),
-    [currentUser, roomId, isRoomOwner]
-  );
 
-  // Add presence cleanup
-  useEffect(() => {
-    if (!currentUser || !roomId || !db) return;
+        pc.ontrack = (event) => {
+            console.log(`[WebRTC ${peerId}] Received remote track`);
+            if (event.streams && event.streams[0]) {
+                const remoteStream = event.streams[0];
+                let audioEl = remoteAudioRefs.current[peerId];
+                if (!audioEl) {
+                    audioEl = document.createElement('audio');
+                    audioEl.id = `remote-audio-${peerId}`;
+                    audioEl.autoplay = true;
+                    audioEl.controls = false;
+                    audioEl.style.display = 'none'; // Hide but keep in DOM
+                    remoteAudioRefs.current[peerId] = audioEl;
+                    document.getElementById('remote-audio-container')?.appendChild(audioEl);
+                }
+                audioEl.srcObject = remoteStream;
+                // Ensure audio can play (handle autoplay policies)
+                audioEl.play().catch(err => {
+                    console.warn('Remote audio play() failed:', err);
+                });
+            }
+        };
 
-    const presenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-    const cleanup = async () => {
-      try {
-        await setDoc(presenceRef, {
-          isOnline: false,
-          lastSeen: serverTimestamp()
-        }, { merge: true });
-      } catch (err) {
-        console.error('Error cleaning up presence:', err);
-      }
-    };
+        pc.onconnectionstatechange = () => {
+            console.log(`[WebRTC ${peerId}] Connection state: ${pc.connectionState}`);
+            if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+                closePeerConnection(peerId);
+            }
+        };
 
-    window.addEventListener('beforeunload', cleanup);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') {
-        cleanup();
-      } else {
-        updatePresence();
-      }
-    });
+        peerConnections.current[peerId] = pc;
+        return pc;
+    }, [localStream, currentUser?.uid, roomId, sendSignalingMessage, closePeerConnection]);
 
-    return () => {
-      window.removeEventListener('beforeunload', cleanup);
-      cleanup();
-    };
-  }, [currentUser, roomId]);
-
-  // Add local message cache
-  const [localMessageCache, setLocalMessageCache] = useState<Map<string, Message>>(new Map());
-
-  const addToLocalCache = (message: Message) => {
-    setLocalMessageCache(prev => {
-      const newCache = new Map(prev);
-      newCache.set(message.id, message);
-      // Keep cache size manageable
-      if (newCache.size > 100) {
-        const keys = Array.from(newCache.keys());
-        if (keys.length > 0) {
-          newCache.delete(keys[0]); // Delete oldest message
+    const handleOffer = useCallback(async (offerData: SignalingMessage) => {
+        const { senderId, data: offer } = offerData;
+        if (!currentUser?.uid || !localStream) {
+             console.warn(`[WebRTC ${senderId}] handleOffer called but currentUser or localStream is missing.`);
+             return;
         }
-      }
-      return newCache;
-    });
-  };
-
-  // Optimize message sending with optimistic updates
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!roomId || !currentUser || !newMessage.trim()) return;
-
-    const messageContent = newMessage.trim();
-    setNewMessage('');
-
-    const tempId = `temp-${Date.now()}`;
-    const tempMessage: Message = {
-      id: tempId,
-      userId: currentUser.uid,
-      username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-      avatar: currentUser.photoURL || '',
-      content: messageContent,
-      timestamp: new Date(),
-      displayName: currentUser.displayName || currentUser.email?.split('@')[0] || ''
-    };
-
-    // Optimistic update
-    setMessages(prev => [...prev, tempMessage]);
-
-    try {
-      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-      const messageData = {
-        userId: currentUser.uid,
-        username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-        avatar: currentUser.photoURL || '',
-        content: messageContent,
-        timestamp: serverTimestamp(),
-        displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-        // Add required fields for security rules
-        ownerId: room?.ownerId,
-        viewers: room?.viewers?.map(v => v.userId) || []
-      };
-
-      const docRef = await addDoc(messagesRef, messageData);
-      
-      // Update the temporary message with the real ID
-      setMessages(prev => 
-        prev.map(msg => 
-          msg.id === tempId 
-            ? { ...msg, id: docRef.id } 
-            : msg
-        )
-      );
-
-      addToLocalCache({ ...messageData, id: docRef.id, timestamp: new Date() });
-    } catch (err) {
-      // Revert optimistic update on error
-      setMessages(prev => prev.filter(msg => msg.id !== tempId));
-      handleError(err, 'Failed to send message');
-    }
-  };
-
-  const setupPresenceListener = () => {
-    if (!currentUser || !roomId || !db) return;
-
-    try {
-      const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-      const userPresenceRef = doc(presenceRef, currentUser.uid);
-      const roomRef = doc(db, 'sideRooms', roomId);
-
-      // Single source of truth for presence updates
-      let isUpdating = false;
-      let lastUpdateTime = 0;
-      const UPDATE_INTERVAL = 5000; // 5 seconds between updates
-
-      const updatePresence = async () => {
-        if (!currentUser?.uid || !roomId) {
-          console.error('Presence update aborted: currentUser.uid or roomId is missing', { currentUser, roomId });
-          return;
+        console.log(`[WebRTC ${senderId}] Received offer:`, offer);
+        const pc = createPeerConnection(senderId);
+        if (!pc) return;
+        // Ensure local audio track is added to the peer connection
+        const audioTracks = localStream.getAudioTracks();
+        if (audioTracks.length > 0 && !pc.getSenders().some(s => s.track && s.track.id === audioTracks[0].id)) {
+            pc.addTrack(audioTracks[0], localStream);
         }
-        if (isUpdating) return;
-        const now = Date.now();
-        if (now - lastUpdateTime < UPDATE_INTERVAL) return;
-        isUpdating = true;
-        lastUpdateTime = now;
         try {
-          // Use updateDoc instead of transaction to avoid version conflicts
-          const presenceSnapshot = await getDocs(presenceRef);
-          const currentActiveUsers = presenceSnapshot.docs.length;
-          // Update user's presence
-          const presenceData = {
-              userId: currentUser.uid,
-              username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-              avatar: currentUser.photoURL || '',
-              displayName: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-              lastSeen: serverTimestamp(),
-              isOnline: true,
-              role: isRoomOwner ? 'owner' : 'viewer'
-          };
-          // console.log('Writing presence (updateDoc):', { path: userPresenceRef.path, data: presenceData });
-          await setDoc(userPresenceRef, presenceData, { merge: true });
-            // Update room's active users count
-          await updateDoc(roomRef, {
-            activeUsers: currentActiveUsers,
-              lastActive: serverTimestamp()
-          });
-        } catch (error) {
-          console.error('Presence Firestore write failed (updateDoc):', error, { currentUser, roomId });
-        } finally {
-          isUpdating = false;
-        }
-      };
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            console.log(`[WebRTC ${senderId}] Set remote description (offer). Creating answer...`);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            console.log(`[WebRTC ${senderId}] Set local description (answer). Sending answer:`, answer);
+            await sendSignalingMessage(senderId, { type: 'answer', senderId: currentUser.uid, data: answer });
+        } catch (err) { handleError(err, `handling offer from ${senderId}`); }
+    }, [createPeerConnection, sendSignalingMessage, currentUser, handleError, localStream]);
 
-      // Set up cleanup
-      const cleanup = async () => {
+    const handleAnswer = useCallback(async (answerData: SignalingMessage) => {
+        const { senderId, data: answer } = answerData;
+        console.log(`[WebRTC ${senderId}] Received answer:`, answer);
+        const pc = peerConnections.current[senderId];
+        if (pc && pc.signalingState === 'have-local-offer') {
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                console.log(`[WebRTC ${senderId}] Set remote description (answer).`);
+            }
+            catch (err) { handleError(err, `setting answer from ${senderId}`); }
+        } else { console.warn(`[WebRTC ${senderId}] Received answer in unexpected state: ${pc?.signalingState}`); }
+    }, [handleError]);
+
+    const handleCandidate = useCallback(async (candidateData: SignalingMessage) => {
+        const { senderId, data: candidateJson } = candidateData;
+        const pc = peerConnections.current[senderId];
+        console.log(`[WebRTC ${senderId}] Received ICE candidate:`, candidateJson);
+        if (pc) {
+            try {
+                const candidate = new RTCIceCandidate(candidateJson);
+                if (pc.remoteDescription) {
+                    await pc.addIceCandidate(candidate);
+                    console.log(`[WebRTC ${senderId}] Added ICE candidate.`);
+                }
+                 else {
+                     console.warn(`[WebRTC ${senderId}] ICE candidate arrived before remote description set. Queueing/Ignoring for now.`);
+                      // TODO: Consider implementing a queue for candidates here
+                 }
+            } catch (err) {
+                 // Ignore common harmless errors, log others
+                 if (!`${err}`.includes("remote description is not set") && !`${err}`.includes("Error processing ICE candidate")) {
+                    handleError(err, `adding ICE candidate from ${senderId}`);
+                 }
+            }
+        } else { console.warn(`[WebRTC ${senderId}] Received candidate, but no PeerConnection found.`); }
+    }, [handleError]);
+
+    // --- Signaling Listener ---
+    const setupSignalingListener = useCallback(() => {
+        if (!roomId || !currentUser?.uid || signalingListeners.current.length > 0) return;
+        console.log(`Setting up signaling listener for user ${currentUser.uid}`);
+        // Corrected path: Listen to the messages subcollection under the current user's ID
+        const messagesPath = `sideRooms/${roomId}/signaling/${currentUser.uid}/messages`;
+        const userMessagesCollectionRef = collection(db, messagesPath);
+        const q = query(userMessagesCollectionRef, orderBy('timestamp', 'asc'));
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            snapshot.docChanges().forEach(async (change) => {
+                if (change.type === 'added') {
+                    // Ensure data exists before spreading
+                    const data = change.doc.data();
+                    if (!data) return;
+
+                    const message = { id: change.doc.id, ...data } as SignalingMessage & { id: string };
+                    const messageDocPath = `sideRooms/${roomId}/signaling/${currentUser.uid!}/messages/${message.id}`; // Corrected path for deletion
+
+                    try {
+                         if (message.type === 'offer') await handleOffer(message);
+                         else if (message.type === 'answer') await handleAnswer(message);
+                         else if (message.type === 'candidate') await handleCandidate(message);
+                         else console.warn("Unknown signaling message type:", message.type);
+                         // Delete the processed message from the correct path
+                         await deleteDoc(doc(db, messageDocPath));
+                    } catch (err) {
+                         handleError(err, `processing ${message.type} from ${message.senderId}`);
+                         // Attempt to delete even if processing failed, using the correct path
+                         await deleteDoc(doc(db, messageDocPath)).catch(delErr => console.error("Failed to delete message after error:", delErr));
+                    }
+                }
+            });
+        }, (err) => handleError(err, "listening to signaling"));
+        signalingListeners.current.push(unsubscribe);
+    }, [roomId, currentUser?.uid, handleError, handleOffer, handleAnswer, handleCandidate]); // Added handlers
+
+    const cleanupSignaling = useCallback(() => {
+        console.log("Cleaning up signaling listeners...");
+        signalingListeners.current.forEach(unsubscribe => unsubscribe());
+        signalingListeners.current = [];
+    }, []);
+
+    // Constants for audio analysis
+    const SPEAKING_THRESHOLD = 0.03; // Adjust based on testing
+    const DEBOUNCE_DELAY_MS = 300; // Prevents rapid toggling
+
+    // Setup audio analysis when stream is available
+    useEffect(() => {
+      if (!localStream) return;
+
+      const setupAudioAnalysis = () => {
         try {
-          // Remove user's presence
-          await deleteDoc(userPresenceRef);
-          // Update room's active users count
-          const presenceSnapshot = await getDocs(presenceRef);
-          const currentActiveUsers = presenceSnapshot.docs.length;
-          await updateDoc(roomRef, {
-              activeUsers: Math.max(0, currentActiveUsers - 1),
-              lastActive: serverTimestamp()
-          });
-        } catch (error) {
-          console.error('Error in cleanup:', error);
+          // Create audio context if not exists
+          if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          }
+
+          // Create analyser node
+          const analyser = audioContextRef.current.createAnalyser();
+          analyser.fftSize = 32;
+          analyserRef.current = analyser;
+
+          // Connect stream to analyser
+          const source = audioContextRef.current.createMediaStreamSource(localStream);
+          source.connect(analyser);
+
+          // Start analysis loop
+          analyzeAudio();
+        } catch (err) {
+          console.error('Audio analysis setup failed:', err);
         }
       };
 
-      // Set up periodic presence updates
-      const updateInterval = setInterval(updatePresence, UPDATE_INTERVAL);
-
-      // Handle page visibility changes
-      const handleVisibilityChange = () => {
-        if (document.visibilityState === 'hidden') {
-          cleanup();
-        } else {
-          updatePresence();
-        }
-      };
-
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      window.addEventListener('beforeunload', cleanup);
-
-      // Initial presence setup
-      updatePresence();
-
-      // Set up presence listener
-      const unsubscribe = onSnapshot(presenceRef, (snapshot) => {
-        const presenceData = snapshot.docs.map(doc => ({
-          userId: doc.id,
-          username: doc.data().displayName || doc.data().username || 'Anonymous',
-          avatar: doc.data().photoURL || doc.data().avatar || '',
-          lastSeen: doc.data().lastSeen?.toDate() || new Date(),
-          isOnline: true
-        }));
-        setPresence(presenceData);
-      });
+      setupAudioAnalysis();
 
       return () => {
-        clearInterval(updateInterval);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('beforeunload', cleanup);
-        cleanup();
-        unsubscribe();
+        // Cleanup
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+        }
+        if (speakingTimeoutRef.current) {
+          clearTimeout(speakingTimeoutRef.current);
+        }
       };
-    } catch (error) {
-      console.error('Error setting up presence listener:', error);
-      setError('Failed to set up presence listener');
-    }
-  };
+    }, [localStream]);
 
-  useEffect(() => {
-    if (authLoading) {
-      return;
-    }
+    const analyzeAudio = () => {
+      if (!analyserRef.current) return;
 
-    if (!currentUser) {
-      navigate('/login');
-      return;
-    }
+      const analyser = analyserRef.current;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(dataArray);
 
-    let roomUnsubscribe: (() => void) | undefined;
-    let messagesUnsubscribe: (() => void) | undefined;
-    let presenceUnsubscribe: (() => void) | undefined;
-
-    const setupRoomListener = async () => {
-      try {
-        if (!roomId || !db) return;
-        
-        const roomRef = doc(db, 'sideRooms', roomId);
-        roomUnsubscribe = onSnapshot(roomRef, 
-          async (doc) => {
-            if (doc.exists()) {
-              const roomData = doc.data() as SideRoom;
-              setRoom(roomData);
-              setLoading(false);
-
-              // Check if user is a viewer or owner
-              const isViewer = roomData.viewers?.some(viewer => viewer.userId === currentUser.uid);
-              const isOwner = roomData.ownerId === currentUser.uid;
-
-              if (isViewer || isOwner) {
-                // If user has access, set up listeners
-                setupMessagesListener();
-                setupPresenceListener();
-              } else {
-                // If not a viewer, unsubscribe from any existing listeners
-                if (messagesUnsubscribe) messagesUnsubscribe();
-                if (presenceUnsubscribe) presenceUnsubscribe();
-                messagesUnsubscribe = undefined;
-                presenceUnsubscribe = undefined;
-                setError('You need to be a viewer of this room to access its content');
-              }
-            } else {
-              setError('Room not found');
-              setLoading(false);
-            }
-          },
-          (error) => {
-            console.error('Error listening to room:', error);
-            setError('Failed to load room data');
-            setLoading(false);
-          }
-        );
-      } catch (error) {
-        console.error('Error setting up room listener:', error);
-        setError('Failed to load room');
-        setLoading(false);
+      // Calculate average volume
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
       }
-    };
+      const average = sum / dataArray.length / 255; // Normalize to 0-1
 
-    setupRoomListener();
-
-    return () => {
-      if (roomUnsubscribe) roomUnsubscribe();
-      if (messagesUnsubscribe) messagesUnsubscribe();
-      if (presenceUnsubscribe) presenceUnsubscribe();
-    };
-  }, [authLoading, currentUser, roomId, db, navigate]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const handleJoinRoom = useCallback(async () => {
-    if (!room || !currentUser || !roomId || isProcessing) return;
-
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-
-      await runTransaction(db, async (transaction) => {
-        const roomDoc = await transaction.get(roomRef);
-        if (!roomDoc.exists()) {
-          throw new Error('Room not found');
+      // Detect speaking with debouncing
+      const currentlySpeaking = average > SPEAKING_THRESHOLD;
+      
+      if (currentlySpeaking !== isSpeaking) {
+        if (speakingTimeoutRef.current) {
+          clearTimeout(speakingTimeoutRef.current);
         }
 
-        const roomData = roomDoc.data();
+        speakingTimeoutRef.current = setTimeout(() => {
+          setIsSpeaking(currentlySpeaking);
+          updatePresence(); // Update presence with new speaking state
+        }, DEBOUNCE_DELAY_MS);
+      }
+
+      // Continue analysis loop
+      animationFrameRef.current = requestAnimationFrame(analyzeAudio);
+    };
+
+    // Microphone connection detection
+    useEffect(() => {
+        let isMounted = true;
         
-        // Check if user is already a member or viewer
-        const isMember = roomData.members?.some((member: RoomMember) => member.userId === currentUser.uid);
-        const isViewer = roomData.viewers?.some((viewer: RoomMember) => viewer.userId === currentUser.uid);
+        async function checkMic() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const hasMic = devices.some(device => device.kind === 'audioinput');
+                if (isMounted) setIsMicAvailable(hasMic);
+            } catch (err) {
+                if (isMounted) setIsMicAvailable(false);
+            }
+        }
         
-        if (isMember || isViewer) {
-          throw new Error('You are already a member or viewer of this room');
+        checkMic();
+        navigator.mediaDevices.addEventListener('devicechange', checkMic);
+        
+        return () => {
+            isMounted = false;
+            navigator.mediaDevices.removeEventListener('devicechange', checkMic);
+        };
+    }, []);
+
+    // --- Add Placeholder Functions ---
+    const handleAdminMuteUser = useCallback((userId: string) => {
+        console.log("Admin mute/unmute user:", userId);
+        // TODO: Implement admin mute logic (e.g., send command via Firestore)
+        toast("Admin mute functionality not yet implemented.");
+    }, []);
+
+    const handleAdminRemoveUser = useCallback((participant: PresenceData) => {
+        console.log("Admin remove user:", participant.userId);
+        // TODO: Implement admin remove logic (e.g., update room members in Firestore)
+        toast("Admin remove functionality not yet implemented.");
+    }, []);
+
+    const handleShareRoom = useCallback(() => {
+        console.log("Share room clicked");
+        setShowShareDialog(true); // Assuming this state exists for the dialog
+    }, []);
+
+    const handleMenuClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
+        setAnchorEl(event.currentTarget);
+    }, []);
+
+    const handleMenuClose = useCallback(() => {
+        setAnchorEl(null);
+    }, []);
+
+    const handleEditRoom = useCallback(() => {
+        console.log("Edit room clicked");
+        setShowEditDialog(true);
+        handleMenuClose(); // Close menu after action
+    }, [handleMenuClose]); // Added handleMenuClose dependency
+
+    const handleStyleRoom = useCallback(() => {
+        console.log("Style room clicked");
+        setShowStyleDialog(true);
+        handleMenuClose(); // Close menu after action
+    }, [handleMenuClose]); // Added handleMenuClose dependency
+
+    const handleInviteMembers = useCallback(() => {
+        console.log("Invite members clicked");
+        setShowInviteDialog(true);
+        handleMenuClose(); // Close menu after action
+    }, [handleMenuClose]); // Added handleMenuClose dependency
+
+    const handleDeleteRoom = useCallback(async () => {
+        console.log("Delete room clicked");
+        handleMenuClose(); // Close menu first
+        if (!roomId || !isRoomOwner) return;
+        if (window.confirm('Are you sure you want to delete this room permanently? This cannot be undone.')) {
+            setIsProcessing(true);
+            try {
+                // TODO: Consider more robust cleanup (e.g., delete subcollections like presence, signaling)
+                await deleteDoc(doc(db, 'sideRooms', roomId));
+                toast.success('Room deleted successfully');
+                navigate('/side-rooms'); // Navigate away after deletion
+            } catch (err) {
+                handleError(err, 'deleting room');
+                setIsProcessing(false);
+            }
+            // No finally block needed to set isProcessing false if navigating away
+        }
+    }, [roomId, isRoomOwner, navigate, handleError, handleMenuClose]); // Added handleMenuClose dependency
+
+    const handleSearchUsers = useCallback(_.debounce(async (searchQueryParam: string) => {
+        if (!searchQueryParam.trim()) {
+            setSearchResults([]);
+            return;
+        }
+        console.log("Searching users:", searchQueryParam);
+        try {
+            const usersRef = collection(db, 'users');
+            const firestoreQuery = query(usersRef, where('username', '>=', searchQueryParam), where('username', '<=', searchQueryParam + '\uf8ff'), limit(10));
+            const querySnapshot = await getDocs(firestoreQuery);
+            const users = querySnapshot.docs
+                .map(doc => {
+                    const data = doc.data();
+                    return data ? { id: doc.id, ...data } as User : null;
+                })
+                .filter((user): user is User => user !== null);
+
+            setSearchResults(users.filter(u => u.id !== currentUser?.uid));
+        } catch (err) {
+            handleError(err, `searching users for query: ${searchQueryParam}`);
+            setSearchResults([]);
+        }
+    }, 300), [currentUser?.uid, handleError]);
+
+    const handleInviteSubmit = useCallback(async () => {
+        if (!roomId || !selectedUsers.length || isInviting) return;
+        console.log("Submitting invites for users:", selectedUsers.map(u => u.id));
+        setIsInviting(true);
+        try {
+            const roomRef = doc(db, 'sideRooms', roomId);
+            const batch = writeBatch(db);
+            selectedUsers.forEach(user => {
+                const viewerData: RoomMember = {
+                    userId: user.id,
+                    username: user.username,
+                    avatar: user.avatar || '',
+                    joinedAt: serverTimestamp(),
+                    role: 'viewer'
+                };
+                batch.update(roomRef, { viewers: arrayUnion(viewerData) });
+                // TODO: Optionally send a notification to the invited users
+            });
+            await batch.commit();
+            toast.success(`Invited ${selectedUsers.length} user(s).`);
+            setSelectedUsers([]);
+            setShowInviteDialog(false);
+        } catch (err) {
+            handleError(err, 'submitting invites');
+        } finally {
+            setIsInviting(false);
+        }
+    }, [roomId, selectedUsers, isInviting, handleError]); // Added dependencies
+
+    const handleEditSubmit = useCallback(async (updatedData: Partial<SideRoom>) => {
+        if (!roomId || !isRoomOwner) return;
+        console.log("Submitting room edits:", updatedData);
+        setIsProcessing(true);
+        try {
+            const roomRef = doc(db, 'sideRooms', roomId);
+            await updateDoc(roomRef, updatedData);
+            toast.success('Room updated successfully');
+            setShowEditDialog(false);
+        } catch (err) {
+            handleError(err, 'submitting room edits');
+        } finally {
+            if (mountedRef.current) { // Check mount status
+                 setIsProcessing(false);
+            }
+        }
+    }, [roomId, isRoomOwner, handleError]); // Added dependencies
+
+    // First declare all functions before they're used
+    const handleJoinAudio = useCallback(async () => {
+        if (isProcessing || !currentUser?.uid) return;
+        setIsProcessing(true);
+        
+        try {
+            // Request microphone permission
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: true,
+                video: false 
+            });
+            
+            // Setup audio analysis
+            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const analyser = audioContext.createAnalyser();
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(analyser);
+            
+            // Update state
+            setLocalStream(stream);
+            setIsAudioConnected(true);
+            setIsMicMuted(false);
+            
+            // Start analysis loop
+            const checkSpeaking = () => {
+                const data = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(data);
+                const isSpeaking = data.some(level => level > 30); // Volume threshold
+                setIsSpeaking(isSpeaking);
+                requestAnimationFrame(checkSpeaking);
+            };
+            checkSpeaking();
+            
+        } catch (err) {
+            console.error('Microphone access failed:', err);
+            toast.error('Could not access microphone');
+        } finally {
+            setIsProcessing(false);
+        }
+    }, [currentUser?.uid, isProcessing]);
+    
+    const handleLeaveAudio = useCallback(async () => {
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+            setLocalStream(null);
+        }
+        setIsAudioConnected(false);
+        setIsSpeaking(false);
+    }, [localStream]);
+
+    const handleToggleMute = useCallback(() => {
+        console.log("Toggling mute...");
+        setIsMicMuted(!isMicMuted);
+        // Implementation goes here
+    }, [isMicMuted]);
+
+    const handlePasswordSubmit = useCallback(() => {
+        console.log("Password submit clicked");
+        // Password validation and room joining logic
+    }, []);
+
+    const handleLeaveRoom = useCallback(async () => {
+        console.log("Leaving room...");
+        // Room leaving logic including audio cleanup
+    }, []);
+
+    // --- Data Listeners ---
+    useEffect(() => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+        // Only call handleLeaveAudio if audio is connected
+        if (isAudioConnected) {
+          handleLeaveAudio();
+        }
+      };
+    }, [handleLeaveAudio, isAudioConnected]);
+
+    // useEffect(() => { /* Room Listener - remains the same */ }, [/* ... */]); // Commented out placeholder
+
+    // --- Initial Room Data Fetching Effect ---
+    useEffect(() => {
+        if (!roomId || !currentUser || authLoading) {
+            // Don't fetch if missing prerequisites or auth is still loading
+            if (!authLoading) { // If auth is done but missing roomId/currentUser
+                setLoading(false); // Stop loading if we can't proceed
+                setError("Cannot load room: Missing room ID or user information.");
+            }
+            return; // Exit early
         }
 
-        // Add as viewer by default
-        const newViewer: RoomMember = {
-          userId: currentUser.uid,
-          username: currentUser.displayName || 'Anonymous',
-          avatar: currentUser.photoURL || '',
-          role: 'viewer' as const,
-          joinedAt: serverTimestamp()
+        setLoading(true); // Start loading process for this room
+        setError(null); // Clear previous errors
+
+        const roomRef = doc(db, 'sideRooms', roomId);
+
+        const unsubscribe = onSnapshot(roomRef, (docSnapshot) => {
+            if (!mountedRef.current) return; // Check if component is still mounted
+
+            if (docSnapshot.exists()) {
+                const roomData = { id: docSnapshot.id, ...docSnapshot.data() } as SideRoom;
+                setRoom(roomData);
+                setRoomStyle(roomData.style); // Update style state
+
+                // Determine access rights immediately based on fetched data
+                const isOwner = roomData.ownerId === currentUser.uid;
+                // Ensure viewers array exists before checking
+                const isViewer = roomData.viewers?.some(v => v.userId === currentUser.uid) ?? false;
+                const isPrivate = roomData.isPrivate ?? false; // Default to false if undefined
+
+                if (isPrivate && !isOwner && !isViewer) {
+                    // Room is private, user doesn't have access yet -> show password dialog
+                    setShowPasswordDialog(true);
+                    setLoading(false); // Stop loading, wait for password input
+                } else {
+                    // Room is public or user already has access -> show room content
+                    setShowPasswordDialog(false); // Ensure password dialog is hidden
+                    setLoading(false); // Stop loading, display room content
+                }
+            } else {
+                // Room not found
+                setError(`Room with ID "${roomId}" not found.`);
+                setRoom(null);
+                setLoading(false); // Stop loading
+                 // Optional: Consider navigating back to the list
+                 // navigate('/side-rooms');
+            }
+        }, (err) => {
+            // Error fetching room
+            if (mountedRef.current) {
+                handleError(err, "fetching room data");
+                setRoom(null);
+                setLoading(false); // Stop loading on error
+            }
+        });
+
+        // Cleanup function for the listener
+        return () => {
+            unsubscribe();
         };
 
-        // Update room with new viewer
-        transaction.update(roomRef, {
-          viewers: arrayUnion(newViewer),
-          viewerCount: increment(1),
-          activeUsers: increment(1),
-          lastActive: serverTimestamp()
-        });
-
-        // Create notification for the user
-        const notificationRef = doc(collection(db, 'users', currentUser.uid, 'notifications'));
-        await setDoc(notificationRef, {
-          type: 'room_join',
-          roomId,
-          roomName: room.name,
-          timestamp: serverTimestamp(),
-          status: 'unread',
-          message: `You have joined "${room.name}" as a viewer`
-        });
-      });
-
-      if (mountedRef.current) {
-        toast.success('Joined room successfully as a viewer');
-        setShowPasswordDialog(false);
-      }
-    } catch (err) {
-      console.error('Error joining room:', err);
-      if (err instanceof Error) {
-        toast.error(err.message);
-      } else {
-        toast.error('Failed to join room');
-      }
-      if (mountedRef.current) {
-        setShowPasswordDialog(false);
-      }
-    } finally {
-      if (mountedRef.current) {
-        setIsProcessing(false);
-      }
-    }
-  }, [room, currentUser, roomId, isProcessing, db, setShowPasswordDialog, setIsProcessing]);
-
-  const handlePasswordSubmit = useCallback(() => {
-    if (!room) {
-      toast.error('Room not found');
-      return;
-    }
-    
-    if (!password.trim()) {
-      toast.error('Please enter a password');
-      return;
-    }
-
-    if (password === room.password) {
-      handleJoinRoom();
-    } else {
-      toast.error('Incorrect password');
-    }
-  }, [room, password, handleJoinRoom]);
-
-  const handleLeaveRoom = async () => {
-    if (!db || !currentUser || !roomId || !room) return;
-
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-      
-      // Only handle presence cleanup for logged in users
-      if (currentUser) {
-        // Clean up presence
-        const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-        await deleteDoc(userPresenceRef);
-
-        // Create notification for the user
-        const notificationRef = doc(collection(db, 'users', currentUser.uid, 'notifications'));
-        await setDoc(notificationRef, {
-          type: 'room_leave',
-          roomId,
-          roomName: room.name,
-          timestamp: serverTimestamp(),
-          status: 'unread',
-          message: `You have left "${room.name}"`
-        });
-      }
-
-      toast.success('Left room successfully');
-      navigate('/side-rooms');
-    } catch (error) {
-      console.error('Error leaving room:', error);
-      toast.error('Failed to leave room');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleGoLive = async () => {
-    if (!room || !currentUser || !roomId) return;
-
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-      await updateDoc(roomRef, {
-        isLive: !room.isLive,
-        lastActivity: serverTimestamp()
-      });
-
-      setIsLive(!room.isLive);
-      toast.success(room.isLive ? 'Stopped live session' : 'Started live session');
-    } catch (err) {
-      handleError(err, 'Failed to update live status');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(event.currentTarget);
-  };
-
-  const handleMenuClose = () => {
-    setAnchorEl(null);
-  };
-
-  const handleEditRoom = () => {
-    handleMenuClose();
-    setShowEditDialog(true);
-  };
-
-  const handleEditSubmit = async (roomData: Partial<SideRoom>) => {
-    if (!room || !roomId || !currentUser || currentUser.uid !== room.ownerId) {
-      toast.error('You do not have permission to edit this room');
-      return;
-    }
-
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-      const userRoomRef = doc(db, 'users', currentUser.uid, 'sideRooms', roomId);
-
-      // Create a type for the update data
-      type UpdateData = Partial<Omit<SideRoom, 'lastActive' | 'updatedAt'>> & {
-        lastActive: FieldValue;
-        updatedAt: FieldValue;
-      };
-
-      // Prepare update data
-      const updateData: UpdateData = {
-        ...roomData,
-        updatedAt: serverTimestamp(),
-        lastActive: serverTimestamp()
-      };
-
-      // Remove undefined values
-      Object.keys(updateData).forEach(key => {
-        if (updateData[key as keyof UpdateData] === undefined) {
-          delete updateData[key as keyof UpdateData];
-        }
-      });
-
-      // Update both the room and the user's sideRoom entry
-      await runTransaction(db, async (transaction) => {
-        // Update the main room
-        transaction.update(roomRef, updateData);
-
-        // Update the user's sideRoom entry
-        transaction.update(userRoomRef, {
-          name: roomData.name || room.name,
-          description: roomData.description || room.description,
-          category: roomData.category || room.category,
-          updatedAt: serverTimestamp(),
-          lastActive: serverTimestamp(),
-          thumbnailUrl: room.style?.thumbnailUrl || null
-        });
-      });
-      
-      toast.success('Room updated successfully');
-      setShowEditDialog(false);
-    } catch (err) {
-      console.error('Error updating room:', err);
-      toast.error('Failed to update room');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleStyleRoom = () => {
-    handleMenuClose();
-    setShowStyleDialog(true);
-  };
-
-  const handleStyleSubmit = async () => {
-    if (!room || !roomId) return;
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-      await updateDoc(roomRef, {
-        style: roomStyle,
-        updatedAt: new Date()
-      });
-      toast.success('Room style updated successfully');
-      setShowStyleDialog(false);
-    } catch (err) {
-      console.error('Error updating room style:', err);
-      handleError(err, 'Failed to update room style');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleDeleteRoom = async () => {
-    handleMenuClose();
-    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) {
-      toast.error('You do not have permission to delete this room');
-      return;
-    }
-
-    // Show confirmation dialog
-    if (!window.confirm('Are you sure you want to delete this room? This action cannot be undone.')) {
-      return;
-    }
-
-    try {
-      setIsDeleting(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-      const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-      const messagesRef = collection(db, 'sideRooms', roomId, 'messages');
-      
-      // Start a batch write
-      const batch = writeBatch(db);
-
-      // Add room to user's trash
-      const trashRef = doc(db, 'users', currentUser.uid, 'trash', roomId);
-      const roomSnapshot = await getDoc(roomRef);
-      
-      if (roomSnapshot.exists()) {
-        batch.set(trashRef, {
-          ...roomSnapshot.data(),
-          deletedAt: serverTimestamp(),
-          originalPath: `sideRooms/${roomId}`
-        });
-      }
-
-      // Delete the room
-      batch.delete(roomRef);
-
-      // Get all presence documents
-      const presenceSnapshot = await getDocs(presenceRef);
-      presenceSnapshot.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-
-      // Get all messages
-      const messagesSnapshot = await getDocs(messagesRef);
-      messagesSnapshot.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-
-      // Commit the batch
-      await batch.commit();
-
-      toast.success('Room deleted successfully');
-      navigate('/side-rooms');
-    } catch (err) {
-      console.error('Error deleting room:', err);
-      toast.error('Failed to delete room');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  const handleInviteMembers = () => {
-    setShowInviteDialog(true);
-  };
-
-  const handleSearchUsers = async (searchTerm: string) => {
-    if (!searchTerm.trim() || !db) return;
-
-    try {
-      // Search users by username
-      const usersRef = collection(db, 'users');
-      const q = query(
-        usersRef,
-        where('username', '>=', searchTerm.toLowerCase()),
-        where('username', '<=', searchTerm.toLowerCase() + '\uf8ff'),
-        limit(10)
-      );
-
-      const snapshot = await getDocs(q);
-      const users = snapshot.docs
-        .map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          username: doc.data().username || 'Anonymous',
-          avatar: doc.data().avatar || ''
-        }))
-        .filter(user => user.id !== auth.currentUser?.uid); // Exclude current user
-
-      setSearchResults(users);
-    } catch (err) {
-      console.error('Error searching users:', err);
-      toast.error('Failed to search users');
-    }
-  };
-
-  const handleInviteSubmit = async () => {
-    if (!room || !roomId || !currentUser || selectedUsers.length === 0) return;
-
-    try {
-      setIsInviting(true);
-      const batch = writeBatch(db);
-
-      // Create invitations and notifications for each selected user
-      for (const selectedUser of selectedUsers) {
-        // Create invitation
-        const invitationRef = doc(collection(db, 'sideRooms', roomId, 'invitations'));
-        batch.set(invitationRef, {
-          userId: selectedUser.id,
-          invitedBy: currentUser.uid,
-          inviterName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone', // Adjusted fallback
-          inviterAvatar: currentUser.photoURL || '',
-          roomId,
-          roomName: room.name,
-          timestamp: serverTimestamp(),
-          status: 'pending'
-        });
-
-        // Create notification in the root /notifications collection
-        const notificationRef = doc(collection(db, 'notifications'));
-        const inviterName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone'; // Adjusted fallback
-        batch.set(notificationRef, {
-          type: 'room_invitation',
-          roomId,
-          roomName: room.name,
-          senderId: currentUser.uid, // Added senderId
-          senderName: inviterName, // Use adjusted inviterName
-          senderAvatar: currentUser.photoURL || '', // Added senderAvatar
-          recipientId: selectedUser.id, // Added recipientId
-          timestamp: serverTimestamp(),
-          isRead: false, // Use isRead for consistency
-          content: `${inviterName} invited you to join "${room.name}"` // Use adjusted inviterName
-        });
-      }
-
-      await batch.commit();
-      toast.success('Invitations sent successfully');
-      setShowInviteDialog(false);
-      setSelectedUsers([]);
-      setSearchResults([]);
-    } catch (err) {
-      console.error('Error sending invitations:', err);
-      toast.error('Failed to send invitations');
-    } finally {
-      setIsInviting(false);
-    }
-  };
-
-  const handleRemoveMember = async (memberToRemove: RoomMember) => {
-    if (!room || !currentUser || !roomId || currentUser.uid !== room.ownerId) {
-      toast.error('Only room owners can remove members');
-      return;
-    }
-
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-
-      await updateDoc(roomRef, {
-        members: arrayRemove(memberToRemove),
-        memberCount: increment(-1)
-      });
-
-      // Create notification in the root /notifications collection
-      const notificationRef = doc(collection(db, 'notifications'));
-      const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'the owner'; // Adjusted fallback
-      await setDoc(notificationRef, {
-        type: 'room_removal',
-        roomId,
-        roomName: room.name,
-        senderId: currentUser.uid, // Use senderId for consistency
-        senderName: senderName, // Use adjusted senderName
-        senderAvatar: currentUser.photoURL || '', // Added senderAvatar
-        recipientId: memberToRemove.userId, // Added recipientId
-        timestamp: serverTimestamp(),
-        isRead: false, // Use isRead
-        content: `You have been removed from "${room.name}" by ${senderName}` // Use adjusted senderName
-      });
-
-      toast.success('Member removed successfully');
-    } catch (err) {
-      console.error('Error removing member:', err);
-      if (err instanceof Error) {
-        toast.error(err.message);
-      } else {
-        toast.error('Failed to remove member');
-      }
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleStartMobileStreamSetup = async () => {
-    if (!db || !currentUser || !roomId) return;
-
-    try {
-      setIsProcessing(true);
-
-      // Create a new Mux live stream
-      const data = await createLiveStream(roomId, currentUser.uid);
-      console.log('Stream created successfully:', data);
-
-      if (!data.stream_key || !data.playback_ids?.[0]?.id) {
-        throw new Error('Invalid stream data received from server');
-      }
-
-      // Get room reference
-      const roomRef = doc(db, 'sideRooms', roomId);
-
-      // Update room with streaming status and keys
-      await updateDoc(roomRef, {
-        mobileStreamKey: data.stream_key,
-        mobilePlaybackId: data.playback_ids[0].id,
-        mobileStreamerId: currentUser.uid,
-        lastActive: serverTimestamp()
-      });
-
-      // Set local state
-      setMobileStreamUrl(`https://stream.mux.com/${data.playback_ids[0].id}`);
-      setStreamKey(data.stream_key);
-      setShowMobileStreamDialog(true);
-
-      toast.success('Mobile streaming setup complete. Configure Larix then return here to start streaming.');
-    } catch (error) {
-      console.error('Error setting up mobile stream:', error);
-      toast.error('Failed to setup mobile stream. Please check your connection and try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleStartMobileStream = async () => {
-    if (!db || !currentUser || !roomId) return;
-
-    try {
-      setIsProcessing(true);
-      const roomRef = doc(db, 'sideRooms', roomId);
-
-      // Update room to indicate mobile streaming is active
-      await updateDoc(roomRef, {
-        isMobileStreaming: true,
-        lastActive: serverTimestamp()
-      });
-
-      setIsMobileStreaming(true);
-      setShowMobileStreamDialog(false);
-      toast.success('Mobile streaming started! Your stream is now live.');
-    } catch (error) {
-      console.error('Error starting mobile stream:', error);
-      toast.error('Failed to start mobile stream');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleStopMobileStream = async () => {
-    if (!db || !currentUser || !roomId) return;
-
-    try {
-      setIsProcessing(true);
-
-      // Get room reference
-      const roomRef = doc(db, 'sideRooms', roomId);
-
-      // Get the current stream ID from the room
-      const roomDoc = await getDoc(roomRef);
-      const roomData = roomDoc.data() as SideRoom;
-      const streamId = roomData?.mobilePlaybackId;
-
-      if (!streamId) {
-        throw new Error('No active stream found');
-      }
-
-      // Delete the Mux live stream
-      await deleteLiveStream(streamId);
-
-      // Update room status
-      await updateDoc(roomRef, {
-        isMobileStreaming: false,
-        mobileStreamKey: null,
-        mobilePlaybackId: null,
-        mobileStreamerId: null,
-        lastActive: serverTimestamp()
-      });
-
-      setIsMobileStreaming(false);
-      setMobileStreamUrl('');
-      setStreamKey('');
-      setShowMobileStreamDialog(false);
-      toast.success('Mobile streaming stopped');
-    } catch (error) {
-      console.error('Error stopping mobile stream:', error);
-      toast.error('Failed to stop mobile stream');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>, type: 'thumbnail' | 'banner') => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsProcessing(true);
-      // Validate file type
-      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-      if (!allowedTypes.includes(file.type)) {
-        throw new Error('Invalid file type. Only JPEG, PNG and GIF are allowed.');
-      }
-
-      // Validate file size (5MB limit)
-      if (file.size > 5 * 1024 * 1024) {
-        throw new Error('File size too large. Maximum size is 5MB.');
-      }
-
-      // Create a FormData object
-      const formData = new FormData();
-      formData.append('image', file);
-      formData.append('roomId', roomId || '');
-      formData.append('type', type);
-
-      // Upload to your server/storage
-      const response = await fetch('http://localhost:3001/api/upload-image', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to upload image');
-      }
-
-      const { url } = await response.json();
-      
-      // Update the room style with the new image URL
-      const updatedStyle = {
-        ...roomStyle,
-        [type === 'thumbnail' ? 'thumbnailUrl' : 'bannerUrl']: url
-      };
-
-      // Update local state
-      setRoomStyle(updatedStyle);
-
-      // Update Firestore
-      const roomRef = doc(db, 'sideRooms', roomId || '');
-      await updateDoc(roomRef, {
-        style: updatedStyle,
-        updatedAt: serverTimestamp()
-      });
-
-      toast.success(`${type} uploaded successfully`);
-    } catch (error: unknown) {
-      console.error('Error uploading image:', error);
-      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-      toast.error(`Failed to upload ${type}: ${errorMessage}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleStartRecording = async () => {
-    if (!room || !currentUser || !roomId || !room.isLive) {
-      toast.error('Room must be live to start recording');
-      return;
-    }
-
-    // Check for active stream and get the correct stream ID
-    const activeStreamId = room.mobilePlaybackId || room.currentStreamId;
-    if (!activeStreamId) {
-      toast.error('No active stream found. Please start streaming first.');
-      return;
-    }
-
-    try {
-      setIsProcessing(true);
-      
-      // Start recording through Mux API
-      const response = await fetch('http://localhost:3001/api/mux/start-recording', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          roomId,
-          userId: currentUser.uid,
-          streamId: activeStreamId
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to start recording');
-      }
-
-      const { recordingId } = await response.json();
-
-      // Update room with recording status
-      const roomRef = doc(db, 'sideRooms', roomId);
-      await updateDoc(roomRef, {
-        isRecording: true,
-        currentRecordingId: recordingId,
-        lastActive: serverTimestamp()
-      });
-
-      setIsRecording(true);
-      toast.success('Recording started');
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to start recording');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleStopRecording = async () => {
-    if (!room || !currentUser || !roomId) return;
-
-    try {
-      setIsProcessing(true);
-
-      // Stop recording through Mux API
-      const response = await fetch('http://localhost:3001/api/mux/stop-recording', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          roomId,
-          userId: currentUser.uid,
-          recordingId: room.currentRecordingId
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to stop recording');
-      }
-
-      // Update room status
-      const roomRef = doc(db, 'sideRooms', roomId);
-      await updateDoc(roomRef, {
-        isRecording: false,
-        currentRecordingId: null,
-        lastActive: serverTimestamp()
-      });
-
-      setIsRecording(false);
-      toast.success('Recording stopped');
-    } catch (error) {
-      console.error('Error stopping recording:', error);
-      toast.error('Failed to stop recording');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Move owner and follow state to main component scope
-  const owner = room?.members?.find(member => member.role === 'owner');
-  const isViewerOnly = isViewer && !isRoomOwner;
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [followLoading, setFollowLoading] = useState(false);
-
-  // Check if the current user is following the owner
-  useEffect(() => {
-    const checkFollowing = async () => {
-      if (!currentUser?.uid || !owner?.userId || currentUser.uid === owner.userId) return;
-      const followerRef = doc(db, 'users', owner.userId, 'followers', currentUser.uid);
-      const followerSnap = await getDoc(followerRef);
-      setIsFollowing(followerSnap.exists());
-    };
-    checkFollowing();
-  }, [currentUser?.uid, owner?.userId]);
-
-  // Handle follow
-  const handleFollow = async () => {
-    if (!currentUser?.uid || !owner?.userId) return;
-    setFollowLoading(true);
-    try {
-      const followerRef = doc(db, 'users', owner.userId, 'followers', currentUser.uid);
-      await setDoc(followerRef, {
-        userId: currentUser.uid,
-        username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-        avatar: currentUser.photoURL || '',
-        followedAt: serverTimestamp()
-      });
-      setIsFollowing(true);
-      toast.success('You are now following the room owner!');
-    } catch (err) {
-      toast.error('Failed to follow the owner');
-    } finally {
-      setFollowLoading(false);
-    }
-  };
-
-  // Add the handler for the share icon
-  const handleShareRoom = () => {
-    setShowShareDialog(true);
-  };
-
-  // Add the handler for sharing to feed
-  const handleShareToFeed = async () => {
-    if (!currentUser || !room) return;
-    try {
-      // Create a new post in the 'posts' collection
-      const ownerMember = room.members?.find((m: any) => m.role === 'owner');
-      const postData = {
-        authorId: currentUser.uid,
-        authorUsername: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-        authorAvatar: currentUser.photoURL || '',
-        createdAt: serverTimestamp(),
-        content: `Check out this live room: ${room.name}`,
-        roomId: roomId,
-        roomName: room.name,
-        roomDescription: room.description,
-        roomOwner: ownerMember?.username || '',
-        roomThumbnail: room.style?.thumbnailUrl || '',
-        type: 'room_share',
-      };
-      await addDoc(collection(db, 'posts'), postData);
-      setShowShareDialog(false);
-      toast.success('Room shared to your feed!');
-    } catch (err) {
-      toast.error('Failed to share to feed');
-    }
-  };
-
-  const renderRoomHeader = () => (
-    <Box sx={{ position: 'relative', p: { xs: 1.5, sm: 2 }, borderBottom: 1, borderColor: 'divider', background: room?.style?.headerGradient ? room?.style?.headerColor : room?.style?.headerColor, minHeight: { xs: '56px', sm: 'auto' }, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: { xs: 1, sm: 2 } }}>
-      <Box sx={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, width: '100%', gap: { xs: 1, sm: 2 }, color: room?.style?.textColor }}>
-        {/* Room info */}
-        <Box sx={{ width: { xs: '100%', sm: 'auto' } }}>
-          <Typography variant="h4" component="h1" sx={{ fontFamily: room?.style?.font, textShadow: '2px 2px 4px rgba(0,0,0,0.3)', fontSize: { xs: '1.5rem', sm: `${room?.style?.headerFontSize || 24}px` } }}>{room?.name}</Typography>
-          <Typography variant="subtitle1" sx={{ fontFamily: room?.style?.font, textShadow: '1px 1px 2px rgba(0,0,0,0.3)', fontSize: { xs: '0.875rem', sm: '1rem' } }}>
-            Created by {owner?.username || 'Anonymous'}
-          </Typography>
-        </Box>
-        {/* Controls */}
-        <Box sx={{ display: 'flex', gap: { xs: 0.5, sm: 1 }, flexWrap: 'wrap', justifyContent: { xs: 'flex-start', sm: 'flex-end' }, width: { xs: '100%', sm: 'auto' } }}>
-          {/* Leave and Follow buttons for viewers only */}
-          {isViewerOnly && (
-            <>
-              <Button variant="outlined" color="error" onClick={handleLeaveRoom} disabled={isProcessing} sx={{ mr: 1 }}>Leave Room</Button>
-              <Button variant="contained" color="primary" onClick={handleFollow} disabled={isFollowing || followLoading || !owner?.userId || owner.userId === currentUser?.uid}>
-                {isFollowing ? 'Following' : followLoading ? 'Following...' : 'Follow Owner'}
-              </Button>
-            </>
-          )}
-          {/* Share icon for everyone */}
-          <Tooltip title="Share Room">
-            <IconButton onClick={handleShareRoom} color="primary">
-              <ShareIcon />
-            </IconButton>
-          </Tooltip>
-          {/* Chat and viewers panel icons for everyone */}
-          <Tooltip title="Toggle Chat">
-            <IconButton 
-              onClick={() => {
-                setShowChat(!showChat);
-                setShowMembers(false);
-              }}
-              color={showChat ? "primary" : "default"}
-            >
-              <Chat />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="View Members">
-            <IconButton
-              onClick={() => {
-                setShowMembers(!showMembers);
-                setShowChat(false);
-              }}
-              color={showMembers ? "primary" : "default"}
-            >
-              <Group />
-            </IconButton>
-          </Tooltip>
-          {/* Room owner controls */}
-          {isRoomOwner && (
-            <>
-              <Tooltip title="Room Settings">
-                <IconButton
-                  onClick={handleMenuClick}
-                  color="primary"
-                >
-                  <MoreVert />
-                </IconButton>
-              </Tooltip>
-              <Menu
-                anchorEl={anchorEl}
-                open={Boolean(anchorEl)}
-                onClose={handleMenuClose}
-              >
-                <MenuItem onClick={handleEditRoom}>
-                  <ListItemIcon>
-                    <Edit fontSize="small" />
-                  </ListItemIcon>
-                  <ListItemText>Edit Room</ListItemText>
-                </MenuItem>
-                <MenuItem onClick={handleStyleRoom}>
-                  <ListItemIcon>
-                    <Palette fontSize="small" />
-                  </ListItemIcon>
-                  <ListItemText>Customize Room</ListItemText>
-                </MenuItem>
-                <MenuItem onClick={handleDeleteRoom}>
-                  <ListItemIcon>
-                    <Delete fontSize="small" />
-                  </ListItemIcon>
-                  <ListItemText>Delete Room</ListItemText>
-                </MenuItem>
-              </Menu>
-              {/* Streaming controls */}
-              <Tooltip title={isLive ? "Stop Streaming" : "Go Live"}>
-                <IconButton
-                  onClick={handleGoLive}
-                  color={isLive ? "error" : "primary"}
-                  disabled={isProcessing}
-                >
-                  {isLive ? <VideocamOff /> : <LiveTv />}
-                </IconButton>
-              </Tooltip>
-              {isLive && (
-                <Tooltip title={isRecording ? "Stop Recording" : "Start Recording"}>
-                  <IconButton
-                    onClick={isRecording ? handleStopRecording : handleStartRecording}
-                    color={isRecording ? "error" : "primary"}
-                    disabled={isProcessing}
-                  >
-                    {isRecording ? <Stop /> : <FiberManualRecord />}
-                  </IconButton>
-                </Tooltip>
-              )}
-              {/* Mobile streaming button - only visible to room owners */}
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={handleStartMobileStreamSetup}
-                startIcon={<PhoneAndroidIcon />}
-                disabled={isProcessing}
-                sx={{ mb: 2 }}
-              >
-                Start Mobile Stream
-              </Button>
-            </>
-          )}
-        </Box>
-      </Box>
-    </Box>
-  );
-
-  if (authLoading || loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Box sx={{ p: 2 }}>
-        <Alert severity="error">{error}</Alert>
-      </Box>
-    );
-  }
-
-  if (!room) {
-    return null;
-  }
-
-  const isOwner = room.members?.some(member => member.userId === currentUser?.uid && member.role === 'owner');
-
-  // Update the live section in the render
-  const renderVideoElements = () => {
-    if (!room) return null;
-
-    return (
-      <Box sx={{ mb: 3 }}>
-        <MuxStream 
-          isOwner={room.ownerId === currentUser?.uid}
-          roomId={roomId || ''}
-        />
-      </Box>
-    );
-  };
-
-  // Update the member list display
-  const renderMemberList = () => (
-    <List>
-      {room?.members?.map((member) => (
-        <ListItem 
-          key={member.userId}
-          sx={{
-            borderRadius: 1,
-            mb: 1,
-            '&:hover': {
-              bgcolor: 'action.hover'
-            }
-          }}
-        >
-          <ListItemAvatar>
-            <Avatar 
-              src={member.avatar} 
-              alt={member.username}
-              sx={{ 
-                width: 40, 
-                height: 40,
-                border: theme => member.role === 'owner' ? `2px solid ${theme.palette.primary.main}` : 'none'
-              }}
-            >
-              {!member.avatar && member.username?.charAt(0)}
-            </Avatar>
-          </ListItemAvatar>
-          <ListItemText
-            primary={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography variant="subtitle2">
-                  {member.username || 'Anonymous'}
-                </Typography>
-                {member.role === 'owner' && (
-                  <Chip 
-                    label="Owner" 
-                    size="small" 
-                    color="primary" 
-                    sx={{ height: 20 }}
-                  />
-                )}
-              </Box>
-            }
-            secondary={
-              <Typography variant="caption" color="text.secondary">
-                Joined {member.joinedAt instanceof Timestamp 
-                  ? member.joinedAt.toDate().toLocaleDateString()
-                  : (member.joinedAt as Date).toLocaleDateString()}
-              </Typography>
-            }
-          />
-          {/* Only show remove button to room owner and don't allow removing the owner */}
-          {isRoomOwner && member.role !== 'owner' && (
-            <IconButton
-              edge="end"
-              aria-label="remove member"
-              onClick={() => {
-                if (window.confirm(`Are you sure you want to remove ${member.username || 'this member'}?`)) {
-                  handleRemoveMember(member);
-                }
-              }}
-              color="error"
-              disabled={isProcessing}
-            >
-              <Delete />
-            </IconButton>
-          )}
-        </ListItem>
-      ))}
-    </List>
-  );
-
-  // Update the renderChat function to remove its header since we now have a mobile header
-  const renderChat = () => (
-    <Box sx={{ 
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      overflow: 'hidden',
-      bgcolor: 'background.paper',
-      borderRadius: 1
-    }}>
-      {/* Messages Container */}
-      <Box sx={{ 
-        flex: 1,
-        overflow: 'auto',
-        p: 2,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1.5,
-        '&::-webkit-scrollbar': {
-          width: '8px',
-        },
-        '&::-webkit-scrollbar-track': {
-          background: 'transparent',
-        },
-        '&::-webkit-scrollbar-thumb': {
-          background: 'rgba(0, 0, 0, 0.1)',
-          borderRadius: '4px',
-          '&:hover': {
-            background: 'rgba(0, 0, 0, 0.2)',
-          },
-        },
-      }}>
-        {messages.map((message) => (
-          <Box 
-            key={message.id} 
-            sx={{ 
-              display: 'flex',
-              gap: 1.5,
-              alignItems: 'flex-start',
-              maxWidth: '85%',
-              alignSelf: message.userId === currentUser?.uid ? 'flex-end' : 'flex-start',
-              animation: 'fadeIn 0.3s ease-in-out',
-              '@keyframes fadeIn': {
-                '0%': { opacity: 0, transform: 'translateY(10px)' },
-                '100%': { opacity: 1, transform: 'translateY(0)' }
-              }
-            }}
-          >
-            {message.userId !== currentUser?.uid && (
-              <RouterLink 
-                to={`/profile/${message.userId}`}
-                style={{ textDecoration: 'none' }}
-              >
-                <Avatar 
-                  src={message.avatar} 
-                  alt={message.username}
-                  sx={{ 
-                    width: 36, 
-                    height: 36,
-                    border: '2px solid',
-                    borderColor: 'primary.main',
-                    cursor: 'pointer',
-                    transition: 'transform 0.2s',
-                    '&:hover': {
-                      transform: 'scale(1.1)'
-                    }
-                  }}
-                >
-                  {!message.avatar && message.username?.charAt(0).toUpperCase()}
-                </Avatar>
-              </RouterLink>
-            )}
-            <Box sx={{ 
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 0.5
-            }}>
-              {message.userId !== currentUser?.uid && (
-                <RouterLink 
-                  to={`/profile/${message.userId}`}
-                  style={{ textDecoration: 'none' }}
-                >
-                  <Typography 
-                    variant="caption" 
-                    sx={{ 
-                      fontWeight: 600,
-                      color: 'primary.main',
-                      ml: 1,
-                      cursor: 'pointer',
-                      '&:hover': {
-                        textDecoration: 'underline'
+    }, [roomId, currentUser, authLoading, navigate, handleError]); // Added dependencies
+
+    useEffect(() => { // Presence Listener - Modified for WebRTC join/leave
+        if (!roomId || !hasRoomAccess) return;
+        const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
+        const q = query(presenceRef, where("isOnline", "==", true));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            if (!mountedRef.current || !currentUser?.uid) return; // Don't process if unmounted or no user
+
+            const currentOnlineUsersMap = new Map<string, PresenceData>();
+             snapshot.docs.forEach(doc => { currentOnlineUsersMap.set(doc.id, { userId: doc.id, ...doc.data() } as PresenceData); });
+             const currentOnlineUserIds = Array.from(currentOnlineUsersMap.keys());
+             const existingPeerIds = Object.keys(peerConnections.current);
+
+             // Only process joins/leaves if WE are connected to audio
+             if (isAudioConnected) {
+                 // Connect to New Users
+                 currentOnlineUserIds.forEach(async userId => { // Made async
+                     if (userId !== currentUser.uid && !peerConnections.current[userId]) {
+                         console.log(`Presence: New user ${userId}. Initiating connection.`);
+                         const pc = createPeerConnection(userId);
+                          if (pc) {
+                               try {
+                                   const offer = await pc.createOffer();
+                                   console.log(`[WebRTC ${userId}] Creating offer for new user via presence:`, offer);
+                                   await pc.setLocalDescription(offer);
+                                   console.log(`[WebRTC ${userId}] Set local description (offer). Sending offer to new user.`);
+                                   await sendSignalingMessage(userId, { type: 'offer', senderId: currentUser.uid, data: offer });
+                               } catch (err) {
+                                   handleError(err, `offer to new user ${userId}`);
+                               }
+                          }
+                     }
+                 });
+                 // Disconnect Leavers
+                  existingPeerIds.forEach(peerId => {
+                      if (peerId !== currentUser.uid && !currentOnlineUsersMap.has(peerId)) {
+                          console.log(`Presence: User ${peerId} left. Closing connection.`);
+                          closePeerConnection(peerId);
                       }
+                  });
+             }
+
+            setPresence(Array.from(currentOnlineUsersMap.values()));
+            updatePresence();
+
+        }, (err) => handleError(err, "listening to presence"));
+
+        if (hasRoomAccess) updatePresence();
+        const handleVisibilityChange = () => { /* ... set offline/online ... */ };
+        const handleBeforeUnload = () => { /* ... set offline ... */ };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('beforeunload', handleBeforeUnload);
+
+        return () => {
+            unsubscribe();
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+             // Set self offline and close connections on unmount
+            if (currentUser?.uid) setDoc(doc(db, 'sideRooms', roomId!, 'presence', currentUser.uid), { isOnline: false, lastSeen: serverTimestamp() }, { merge: true }).catch();
+            Object.keys(peerConnections.current).forEach(peerId => closePeerConnection(peerId));
+        };
+    }, [
+        roomId, hasRoomAccess, currentUser?.uid, isAudioConnected, // Added isAudioConnected
+        updatePresence, handleError, createPeerConnection, closePeerConnection, sendSignalingMessage
+    ]);
+
+    // --- Other Room Actions ---
+    // ... (handleJoinRoom, handlePasswordSubmit, handleLeaveRoom, handleMenu, etc.) ...
+
+    // --- Render Functions ---
+    const ParticipantGridItem: React.FC<{ participant: PresenceData }> = ({ participant }) => {
+        return (
+            <Grid item xs={6} sm={4} md={3} lg={2} key={participant.userId}>
+                <Paper 
+                    elevation={participant.isSpeaking ? 4 : 1} 
+                    sx={{ 
+                        p: 1, 
+                        textAlign: 'center', 
+                        position: 'relative',
+                        overflow: 'hidden',
+                        bgcolor: participant.isSpeaking ? 'primary.light' : 'background.paper',
+                        transition: 'all 0.3s ease-in-out',
+                        transform: participant.isSpeaking ? 'scale(1.05)' : 'scale(1)'
                     }}
-                  >
-                    {message.username}
-                  </Typography>
-                </RouterLink>
-              )}
-              <Box sx={{
-                bgcolor: message.userId === currentUser?.uid ? 'primary.main' : 'background.default',
-                color: message.userId === currentUser?.uid ? 'primary.contrastText' : 'text.primary',
-                p: 1.5,
-                borderRadius: 2,
-                boxShadow: 1,
-                position: 'relative',
-                '&::before': message.userId === currentUser?.uid ? {
-                  content: '""',
-                  position: 'absolute',
-                  right: -8,
-                  top: '50%',
-                  width: 0,
-                  height: 0,
-                  border: '8px solid transparent',
-                  borderLeftColor: 'primary.main',
-                  transform: 'translateY(-50%)'
-                } : {
-                  content: '""',
-                  position: 'absolute',
-                  left: -8,
-                  top: '50%',
-                  width: 0,
-                  height: 0,
-                  border: '8px solid transparent',
-                  borderRightColor: 'background.default',
-                  transform: 'translateY(-50%)'
-                }
-              }}>
-                <Typography 
-                  variant="body2" 
-                  sx={{ 
-                    wordBreak: 'break-word',
-                    whiteSpace: 'pre-wrap'
-                  }}
                 >
-                  {message.content}
-                </Typography>
-              </Box>
-              <Typography 
-                variant="caption" 
-                sx={{ 
-                  color: 'text.secondary',
-                  ml: 1,
-                  fontSize: '0.7rem'
-                }}
-              >
-                {message.timestamp instanceof Date 
-                  ? message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                  : message.timestamp?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || ''}
-              </Typography>
-            </Box>
-            {message.userId === currentUser?.uid && (
-              <RouterLink 
-                to={`/profile/${message.userId}`}
-                style={{ textDecoration: 'none' }}
-              >
-                <Avatar 
-                  src={message.avatar} 
-                  alt={message.username}
-                  sx={{ 
-                    width: 36, 
-                    height: 36,
-                    border: '2px solid',
-                    borderColor: 'primary.main',
-                    cursor: 'pointer',
-                    transition: 'transform 0.2s',
-                    '&:hover': {
-                      transform: 'scale(1.1)'
-                    }
-                  }}
-                >
-                  {!message.avatar && message.username?.charAt(0).toUpperCase()}
-                </Avatar>
-              </RouterLink>
-            )}
-          </Box>
-        ))}
-        <div ref={messagesEndRef} />
-      </Box>
-
-      {/* Message Input */}
-      <Box 
-        component="form" 
-        onSubmit={handleSendMessage}
-        sx={{ 
-          p: 2,
-          borderTop: 1,
-          borderColor: 'divider',
-          bgcolor: 'background.paper'
-        }}
-      >
-        <Box sx={{ 
-          display: 'flex', 
-          gap: 1,
-          alignItems: 'center'
-        }}>
-          <TextField
-            fullWidth
-            placeholder="Type a message..."
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            size="small"
-            sx={{ 
-              '& .MuiOutlinedInput-root': {
-                borderRadius: 2,
-                bgcolor: 'background.default',
-                '&:hover': {
-                  bgcolor: 'action.hover'
-                },
-                '&.Mui-focused': {
-                  bgcolor: 'background.paper'
-                }
-              }
-            }}
-          />
-          <IconButton 
-            type="submit" 
-            color="primary" 
-            disabled={!newMessage.trim()}
-            sx={{ 
-              bgcolor: 'primary.main',
-              color: 'white',
-              '&:hover': {
-                bgcolor: 'primary.dark'
-              },
-              '&.Mui-disabled': {
-                bgcolor: 'action.disabledBackground',
-                color: 'action.disabled'
-              }
-            }}
-          >
-            <Send />
-          </IconButton>
-        </Box>
-      </Box>
-    </Box>
-  );
-
-  // Update the invite dialog
-  const renderInviteDialog = () => (
-    <Dialog 
-      open={showInviteDialog} 
-      onClose={() => setShowInviteDialog(false)}
-      maxWidth="sm" 
-      fullWidth
-    >
-      <DialogTitle>Invite Members</DialogTitle>
-      <DialogContent>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          <TextField
-            fullWidth
-            label="Search users"
-            variant="outlined"
-            onChange={(e) => {
-              const value = e.target.value;
-              setSearchQuery(value);
-              if (value.trim()) {
-                handleSearchUsers(value);
-              } else {
-                setSearchResults([]);
-              }
-            }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search />
-                </InputAdornment>
-              )
-            }}
-          />
-
-          {/* Selected Users */}
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            {selectedUsers.map((user) => (
-              <Chip
-                key={user.id}
-                avatar={<Avatar src={user.avatar}>{user.username?.[0]}</Avatar>}
-                label={user.username}
-                onDelete={() => setSelectedUsers(prev => prev.filter(u => u.id !== user.id))}
-              />
-            ))}
-          </Box>
-
-          {/* Search Results */}
-          <List>
-            {searchResults.map((user) => (
-              <ListItem
-                key={user.id}
-                sx={{
-                  borderRadius: 1,
-                  cursor: 'pointer',
-                  '&:hover': { bgcolor: 'action.hover' }
-                }}
-                onClick={() => {
-                  if (!selectedUsers.some(u => u.id === user.id)) {
-                    setSelectedUsers(prev => [...prev, user]);
-                  }
-                }}
-              >
-                <ListItemAvatar>
-                  <Avatar src={user.avatar}>{user.username?.[0]}</Avatar>
-                </ListItemAvatar>
-                <ListItemText primary={user.username} />
-              </ListItem>
-            ))}
-          </List>
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={() => setShowInviteDialog(false)}>Cancel</Button>
-        <Button
-          variant="contained"
-          onClick={handleInviteSubmit}
-          disabled={isInviting || selectedUsers.length === 0}
-        >
-          {isInviting ? 'Sending...' : 'Send Invitations'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-
-  // Add Recordings Dialog
-  const renderRecordingsDialog = () => (
-    <Dialog
-      open={showRecordingsDialog}
-      onClose={() => setShowRecordingsDialog(false)}
-      maxWidth="md"
-      fullWidth
-    >
-      <DialogTitle>Recorded Streams</DialogTitle>
-      <DialogContent>
-        <List>
-          {recordedStreams.map((stream) => (
-            <ListItem
-              key={stream.id}
-              secondaryAction={
-                <IconButton edge="end" onClick={() => window.open(`https://stream.mux.com/${stream.playbackId}`)}>
-                  <Videocam />
-                </IconButton>
-              }
-            >
-              <ListItemText
-                primary={stream.title || `Recording from ${stream.startedAt.toLocaleDateString()}`}
-                secondary={`Duration: ${stream.duration ? Math.floor(stream.duration / 60) : '?'} minutes`}
-              />
-            </ListItem>
-          ))}
-          {recordedStreams.length === 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
-              No recordings available
-            </Typography>
-          )}
-        </List>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={() => setShowRecordingsDialog(false)}>Close</Button>
-      </DialogActions>
-    </Dialog>
-  );
-
-  // Update the mobile streaming dialog to show different content based on device type
-  const renderMobileStreamDialog = () => {
-    return (
-      <Dialog
-        open={showMobileStreamDialog}
-        onClose={() => setShowMobileStreamDialog(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Mobile Streaming Setup</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="body1" gutterBottom>
-              To stream from your mobile device, use the free <b>Larix Broadcaster</b> app:
-            </Typography>
-            <Typography variant="body2" color="text.secondary" paragraph>
-              1. Download Larix Broadcaster: <br />
-              <a href="https://apps.apple.com/us/app/larix-broadcaster/id1042474385" target="_blank" rel="noopener noreferrer">iOS (App Store)</a> | <a href="https://play.google.com/store/apps/details?id=com.wmspanel.larix_broadcaster" target="_blank" rel="noopener noreferrer">Android (Google Play)</a>
-            </Typography>
-            <Typography variant="body2" color="text.secondary" paragraph>
-              2. Open Larix Broadcaster and tap the gear/settings icon.<br />
-              3. Go to <b>Connections</b> and tap the <b>+</b> to add a new connection.<br />
-              4. <b>URL:</b> <span style={{ fontFamily: 'monospace' }}>rtmps://global-live.mux.com:443/app</span><br />
-              5. <b>Stream Name/Key:</b> Use the stream key below.
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <TextField
-                fullWidth
-                label="Stream Key"
-                value={streamKey}
-                InputProps={{
-                  readOnly: true,
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton onClick={() => {
-                        navigator.clipboard.writeText(streamKey);
-                        toast.success('Stream key copied to clipboard');
-                      }}>
-                        <ContentCopy />
-                      </IconButton>
-                    </InputAdornment>
-                  )
-                }}
-                variant="outlined"
-              />
-            </Box>
-            <Typography variant="body2" color="text.secondary" paragraph>
-              6. Save the connection, return to the main screen, and tap the red record button in Larix to start streaming.<br />
-              7. Allow camera and microphone access if prompted.<br />
-              8. Once Larix is streaming, click the red button below to go live!
-            </Typography>
-            <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
-              <Button
-                variant="contained"
-                color="error"
-                size="large"
-                onClick={handleStartMobileStream}
-                disabled={isProcessing}
-                startIcon={<FiberManualRecord />}
-                sx={{ 
-                  py: 2,
-                  px: 4,
-                  borderRadius: 2,
-                  fontSize: '1.1rem',
-                  fontWeight: 'bold'
-                }}
-              >
-                {isProcessing ? 'Starting Stream...' : 'START STREAMING'}
-              </Button>
-            </Box>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowMobileStreamDialog(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
-    );
-  };
-
-  return (
-    <Box sx={{ 
-      display: 'flex', 
-      height: '100vh',
-      overflow: 'hidden',
-      flexDirection: { xs: 'column', sm: 'row' },
-      ...(room?.style ? {
-        bgcolor: room.style.backgroundColor,
-        background: room.style.backgroundGradient ? room.style.backgroundColor : undefined,
-        color: room.style.textColor || 'text.primary',
-        fontFamily: room.style.font || 'inherit',
-        ...(room.style.glitterEffect && {
-          '&::before': {
-            content: '""',
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\' viewBox=\'0 0 100 100\'%3E%3Cg fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.2\'%3E%3Cpath d=\'M11 0h2v2h-2zM13 2h2v2h-2zM15 4h2v2h-2zM17 6h2v2h-2zM19 8h2v2h-2zM21 10h2v2h-2zM23 12h2v2h-2zM25 14h2v2h-2zM27 16h2v2h-2zM29 18h2v2h-2zM31 20h2v2h-2zM33 22h2v2h-2zM35 24h2v2h-2zM37 26h2v2h-2zM39 28h2v2h-2zM41 30h2v2h-2zM43 32h2v2h-2zM45 34h2v2h-2zM47 36h2v2h-2zM49 38h2v2h-2zM51 40h2v2h-2zM53 42h2v2h-2zM55 44h2v2h-2zM57 46h2v2h-2zM59 48h2v2h-2zM61 50h2v2h-2zM63 52h2v2h-2zM65 54h2v2h-2zM67 56h2v2h-2zM69 58h2v2h-2zM71 60h2v2h-2zM73 62h2v2h-2zM75 64h2v2h-2zM77 66h2v2h-2zM79 68h2v2h-2zM81 70h2v2h-2zM83 72h2v2h-2zM85 74h2v2h-2zM87 76h2v2h-2zM89 78h2v2h-2zM91 80h2v2h-2zM93 82h2v2h-2zM95 84h2v2h-2zM97 86h2v2h-2zM99 88h2v2h-2zM101 90h2v2h-2zM103 92h2v2h-2zM105 94h2v2h-2zM107 96h2v2h-2zM109 98h2v2h-2z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")',
-            opacity: 0.5,
-            zIndex: 1,
-            pointerEvents: 'none'
-          }
-        }),
-        ...(room.style.customCss ? { ...JSON.parse(room.style.customCss) } : {})
-      } : {})
-    }}>
-      {/* Main Room Content */}
-      <Box sx={{ 
-        flex: 1, 
-        display: 'flex', 
-        flexDirection: 'column',
-        height: { xs: 'calc(100vh - 56px)', sm: '100%' },
-        overflow: 'hidden'
-      }}>
-        {renderRoomHeader()}
-        {/* Scrollable Content Area */}
-        <Box sx={{ 
-          flex: 1, 
-          overflow: 'auto',
-          p: { xs: 1, sm: 2 },
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 2
-        }}>
-          {/* Video Elements */}
-          {room?.isLive && renderVideoElements()}
-        </Box>
-      </Box>
-
-      {/* Side Panels */}
-      {(showMembers || showChat) && (
-        <Box sx={{ 
-          width: { xs: '100%', sm: 300 },
-          height: { xs: 'calc(100vh - 56px)', sm: '100%' },
-          position: { xs: 'fixed', sm: 'relative' },
-          right: 0,
-          top: { xs: '56px', sm: 0 },
-          bgcolor: 'background.paper',
-          borderLeft: { xs: 0, sm: 1 },
-          borderTop: { xs: 1, sm: 0 },
-          borderColor: 'divider',
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 1200
-        }}>
-          {/* Panel Header */}
-          <Box sx={{ 
-            p: 2, 
-            borderBottom: 1, 
-            borderColor: 'divider',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}>
-            <Typography variant="h6">
-              {showChat ? 'Chat' : 'Room Info'}
-            </Typography>
-            <IconButton onClick={() => {
-              setShowChat(false);
-              setShowMembers(false);
-            }}>
-              <Close />
-            </IconButton>
-          </Box>
-
-          {/* Panel Content */}
-          <Box sx={{ 
-            flex: 1, 
-            overflow: 'auto',
-            p: 2
-          }}>
-            {showChat ? (
-              <Box>
-                {renderChat()}
-              </Box>
-            ) : (
-              <Box>
-                <Typography variant="h6" sx={{ mb: 2 }}>Viewers</Typography>
-                <List>
-                  {room?.viewers?.map((viewer) => (
-                    <ListItem key={viewer.userId}>
-                      <ListItemAvatar>
-                        <Avatar src={viewer.avatar}>{viewer.username[0]}</Avatar>
-                      </ListItemAvatar>
-                      <ListItemText
-                        primary={viewer.username}
-                        secondary={`Joined ${viewer.joinedAt instanceof Timestamp 
-                          ? viewer.joinedAt.toDate().toLocaleDateString()
-                          : (viewer.joinedAt as Date).toLocaleDateString()}`}
-                      />
-                    </ListItem>
-                  ))}
-                  {(!room?.viewers || room.viewers.length === 0) && (
-                    <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
-                      No viewers in the room
+                    <Avatar 
+                        src={participant.avatar} 
+                        alt={participant.displayName} 
+                        sx={{ 
+                            width: 60, 
+                            height: 60, 
+                            margin: 'auto', 
+                            mb: 1,
+                            border: participant.isSpeaking ? '3px solid' : 'none',
+                            borderColor: 'primary.main',
+                            boxShadow: participant.isSpeaking ? '0 0 10px rgba(0,0,0,0.2)' : 'none'
+                        }} 
+                    />
+                    <Typography variant="caption" display="block" noWrap sx={{ fontWeight: 500 }}>
+                        {participant.displayName || participant.username}
                     </Typography>
-                  )}
-                </List>
-              </Box>
-            )}
-          </Box>
-        </Box>
-      )}
+                    {participant.isMuted && (
+                        <MicOff 
+                            fontSize="small" 
+                            sx={{ 
+                                position: 'absolute', 
+                                top: 4, 
+                                right: 4, 
+                                color: 'text.secondary',
+                                bgcolor: 'rgba(255,255,255,0.7)',
+                                borderRadius: '50%',
+                                p: 0.2
+                            }} 
+                        />
+                    )}
+                    {participant.role === 'owner' && (
+                        <Chip 
+                            label="Host" 
+                            size="small" 
+                            color="primary" 
+                            sx={{ 
+                                position: 'absolute', 
+                                top: 4, 
+                                left: 4, 
+                                height: 18,
+                                fontSize: '0.65rem'
+                            }}
+                        />
+                    )}
+                    {isRoomOwner && participant.userId !== currentUser?.uid && (
+                        <Box sx={{ position: 'absolute', bottom: 2, right: 2, display: 'flex', gap: 0.5 }}>
+                            <Tooltip title={participant.isMuted ? "Request Unmute" : "Mute User"}>
+                                <IconButton 
+                                    size="small" 
+                                    onClick={() => handleAdminMuteUser(participant.userId)}
+                                >
+                                    {participant.isMuted ? <Mic fontSize='inherit'/> : <MicOff fontSize='inherit'/>}
+                                </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Remove User">
+                                <IconButton 
+                                    size="small" 
+                                    color="error" 
+                                    onClick={() => handleAdminRemoveUser(participant)}
+                                >
+                                    <PersonRemove fontSize='inherit'/>
+                                </IconButton>
+                            </Tooltip>
+                        </Box>
+                    )}
+                </Paper>
+            </Grid>
+        );
+    };
 
-      {renderInviteDialog()}
-      {renderMobileStreamDialog()}
-      {showEditDialog && (
-        <RoomForm
-          open={showEditDialog}
-          onClose={() => setShowEditDialog(false)}
-          onSubmit={handleEditSubmit}
-          initialData={room}
-          title="Edit Room"
-          submitButtonText="Save Changes"
-          isProcessing={isProcessing}
-        />
-      )}
-      {showStyleDialog && (
-        <Dialog open={showStyleDialog} onClose={() => setShowStyleDialog(false)} maxWidth="sm" fullWidth>
-          <DialogTitle>Customize Room</DialogTitle>
-          <DialogContent>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-              {/* Color Presets */}
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                {COLOR_PRESETS.map((preset) => (
-                  <Button
-                    key={preset.name}
-                    variant="outlined"
-                    size="small"
-                    style={{ background: preset.value, color: '#000', minWidth: 36, minHeight: 36, border: roomStyle.headerColor === preset.value ? '2px solid #1976d2' : undefined }}
-                    onClick={() => setRoomStyle(s => ({ ...s, headerColor: preset.value, backgroundColor: preset.value }))}
-                  >
-                    {preset.name}
-                  </Button>
-                ))}
-              </Box>
-              <TextField
-                label="Header Color"
-                type="color"
-                value={roomStyle.headerColor}
-                onChange={e => setRoomStyle(s => ({ ...s, headerColor: e.target.value }))}
-                InputLabelProps={{ shrink: true }}
-                fullWidth
-              />
-              <TextField
-                label="Background Color"
-                type="color"
-                value={roomStyle.backgroundColor}
-                onChange={e => setRoomStyle(s => ({ ...s, backgroundColor: e.target.value }))}
-                InputLabelProps={{ shrink: true }}
-                fullWidth
-              />
-              <TextField
-                label="Text Color"
-                type="color"
-                value={roomStyle.textColor}
-                onChange={e => setRoomStyle(s => ({ ...s, textColor: e.target.value }))}
-                InputLabelProps={{ shrink: true }}
-                fullWidth
-              />
-              <TextField
-                label="Accent Color"
-                type="color"
-                value={roomStyle.accentColor}
-                onChange={e => setRoomStyle(s => ({ ...s, accentColor: e.target.value }))}
-                InputLabelProps={{ shrink: true }}
-                fullWidth
-              />
-              <FormControl fullWidth>
-                <InputLabel>Font</InputLabel>
-                <Select
-                  value={roomStyle.font}
-                  label="Font"
-                  onChange={e => setRoomStyle(s => ({ ...s, font: e.target.value }))}
-                >
-                  {FONT_OPTIONS.map(opt => (
-                    <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={roomStyle.headerGradient}
-                    onChange={e => setRoomStyle(s => ({ ...s, headerGradient: e.target.checked }))}
-                  />
-                }
-                label="Header Gradient"
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={roomStyle.backgroundGradient}
-                    onChange={e => setRoomStyle(s => ({ ...s, backgroundGradient: e.target.checked }))}
-                  />
-                }
-                label="Background Gradient"
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={roomStyle.glitterEffect}
-                    onChange={e => setRoomStyle(s => ({ ...s, glitterEffect: e.target.checked }))}
-                  />
-                }
-                label="Glitter Effect"
-              />
-              <TextField
-                label="Header Font Size"
-                type="number"
-                value={roomStyle.headerFontSize}
-                onChange={e => setRoomStyle(s => ({ ...s, headerFontSize: Number(e.target.value) }))}
-                InputProps={{ inputProps: { min: 12, max: 64 } }}
-                fullWidth
-              />
-              {/* Sticker Selection */}
-              <Box>
-                <Typography variant="subtitle2">Stickers</Typography>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                  {STICKER_OPTIONS.map(sticker => (
-                    <Button
-                      key={sticker.value}
-                      variant={roomStyle.stickers?.includes(sticker.value) ? 'contained' : 'outlined'}
-                      onClick={() => setRoomStyle(s => ({ ...s, stickers: s.stickers?.includes(sticker.value) ? s.stickers.filter(sv => sv !== sticker.value) : [...(s.stickers || []), sticker.value] }))}
-                      size="small"
-                    >
-                      {sticker.value}
-                    </Button>
-                  ))}
+
+    const renderAudioRoomContent = () => (
+        <Box sx={{ flexGrow: 1, p: 2, overflowY: 'auto' }}>
+          <Typography variant="h6" gutterBottom>Participants ({onlineParticipants.length})</Typography>
+          <Grid container spacing={2}>
+            {currentUser && isAudioConnected && (
+              <ParticipantGridItem participant={{
+                userId: currentUser.uid,
+                avatar: currentUser.photoURL || '',
+                displayName: currentUser.displayName || 'You',
+                username: currentUser.displayName || 'You',
+                isMuted: isMicMuted,
+                isOnline: true,
+                role: isRoomOwner ? 'owner' : 'viewer',
+                lastSeen: Date.now(),
+                isSpeaking: isSpeaking // Add local speaking state
+              }} />
+            )}
+            {onlineParticipants.filter(p => p.userId !== currentUser?.uid).map((participant) => (
+                <ParticipantGridItem key={participant.userId} participant={participant} />
+            ))}
+          </Grid>
+          {!isAudioConnected && hasRoomAccess && !loading && room && ( <Alert severity="info" sx={{ mt: 2 }}> Join the audio to start talking or listening. </Alert> )}
+        </Box>
+    );
+
+    const renderRoomHeader = () => (
+        <Box sx={{ p: { xs: 1, sm: 1.5 }, borderBottom: 1, borderColor: 'divider', background: roomStyle?.headerGradient ? roomStyle?.headerColor : roomStyle?.headerColor, color: roomStyle?.textColor || 'text.primary' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Box sx={{ overflow: 'hidden', mr: 1 }}>
+                   <Typography noWrap variant="h6" component="h1" sx={{ fontFamily: roomStyle?.font, fontSize: '1.1rem', fontWeight: 'bold' }}>{room?.name}</Typography>
+                   {ownerData && <Typography noWrap variant="caption" sx={{ opacity: 0.8 }}>Host: {ownerData.username}</Typography>}
                 </Box>
-              </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+                     <Tooltip title="Share"><IconButton size="small" sx={{ color: 'inherit' }} onClick={handleShareRoom}><ShareIcon fontSize="inherit"/></IconButton></Tooltip>
+                     {isRoomOwner && (
+                         <>
+                             <Tooltip title="Settings"><IconButton size="small" sx={{ color: 'inherit' }} onClick={handleMenuClick}><MoreVert fontSize="inherit"/></IconButton></Tooltip>
+                             <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
+                                  <MenuItem onClick={handleEditRoom}><ListItemIcon><Edit fontSize="small" /></ListItemIcon>Edit Room</MenuItem>
+                                  <MenuItem onClick={handleStyleRoom}><ListItemIcon><Palette fontSize="small" /></ListItemIcon>Customize</MenuItem>
+                                  <MenuItem onClick={handleInviteMembers}><ListItemIcon><PersonAdd fontSize="small" /></ListItemIcon>Invite</MenuItem>
+                                  <MenuItem onClick={handleDeleteRoom}><ListItemIcon><Delete fontSize="small" /></ListItemIcon>Delete Room</MenuItem>
+                             </Menu>
+                         </>
+                     )}
+                     <Tooltip title="Leave"><IconButton size="small" sx={{ color: 'inherit' }} onClick={handleLeaveRoom} disabled={isProcessing}><ExitToApp fontSize="inherit"/></IconButton></Tooltip>
+                </Box>
             </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setShowStyleDialog(false)}>Cancel</Button>
-            <Button onClick={handleStyleSubmit} variant="contained" disabled={isProcessing}>
-              Save Style
-            </Button>
-          </DialogActions>
-        </Dialog>
-      )}
-      {showShareDialog && (
-        <Dialog open={showShareDialog} onClose={() => setShowShareDialog(false)}>
-          <DialogTitle>Share Room</DialogTitle>
-          <DialogContent>
-            <Typography gutterBottom>Share this live room to your feed or copy the link to share with others.</Typography>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleShareToFeed} variant="contained">Share to Feed</Button>
-            <Button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/side-room/' + roomId); toast.success('Room link copied!'); }}>Copy Link</Button>
-            <Button onClick={() => setShowShareDialog(false)}>Cancel</Button>
-          </DialogActions>
-        </Dialog>
-      )}
-    </Box>
-  );
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+               <Typography variant="caption" sx={{ color: 'inherit', opacity: 0.8 }}>{onlineParticipants.length} Online</Typography>
+               <Box sx={{ display: 'flex', gap: 1 }}>
+                    {isAudioConnected ? (
+                        <>
+                            <Button variant="contained" size="small" color={isMicMuted ? "secondary" : "primary"} onClick={handleToggleMute} startIcon={isMicMuted ? <MicOff /> : <Mic />} sx={{ fontSize: '0.75rem', px: 1.5 }} disabled={isProcessing}>{isMicMuted ? 'Unmute' : 'Mute'}</Button>
+                            <Button variant="outlined" size="small" color="error" onClick={handleLeaveAudio} sx={{ fontSize: '0.75rem', px: 1.5 }} disabled={isProcessing}>Leave Audio</Button>
+                        </>
+                    ) : (
+                        <Button variant="contained" size="small" color="success" onClick={handleJoinAudio} startIcon={<VolumeUp />} disabled={!hasRoomAccess || isProcessing || !isMicAvailable} sx={{ fontSize: '0.75rem', px: 1.5 }}>Join Audio</Button>
+                    )}
+                </Box>
+            </Box>
+        </Box>
+    );
+
+     const renderInviteDialog = () => (
+         <Dialog open={showInviteDialog} onClose={() => setShowInviteDialog(false)} maxWidth="xs" fullWidth>
+             <DialogTitle>Invite Users</DialogTitle>
+             <DialogContent>
+                 <TextField label="Search Users" variant="outlined" fullWidth size="small" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); handleSearchUsers(e.target.value); }} InputProps={{ startAdornment: <InputAdornment position="start"><Search /></InputAdornment> }} sx={{ mb: 2 }}/>
+                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>{selectedUsers.map((user) => (<Chip key={user.id} avatar={<Avatar src={user.avatar} />} label={user.username} onDelete={() => setSelectedUsers(prev => prev.filter(u => u.id !== user.id))} /> ))}</Box>
+                 <List sx={{ maxHeight: 200, overflow: 'auto' }}>{searchResults.map((user) => (<ListItem key={user.id} button onClick={() => { if (!selectedUsers.some(u => u.id === user.id)) setSelectedUsers(prev => [...prev, user]); }}><ListItemAvatar><Avatar src={user.avatar} /></ListItemAvatar><ListItemText primary={user.username} /></ListItem>))}</List>
+             </DialogContent>
+             <DialogActions><Button onClick={() => setShowInviteDialog(false)}>Cancel</Button><Button onClick={handleInviteSubmit} disabled={isInviting || selectedUsers.length === 0} variant="contained">{isInviting ? 'Sending...' : 'Send Invites'}</Button></DialogActions>
+         </Dialog>
+     );
+
+    // --- Loading & Error States ---
+    if (authLoading || loading) return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}><CircularProgress /></Box>;
+    if (!loading && error && !room) return <Box sx={{ p: 3 }}><Alert severity="error">{error}</Alert><Button onClick={() => navigate('/side-rooms')} sx={{ mt: 1 }}>Back to Rooms</Button></Box>;
+    if (!room && !loading) return <Box sx={{ p: 3 }}><Alert severity="warning">Room not found or access denied.</Alert></Box>;
+
+    // --- Main Return ---
+    return (
+        <>
+            {/* Hidden container for remote audio elements */}
+            <div id="remote-audio-container" style={{ display: 'none' }} />
+            <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', flexDirection: 'column', overflow: 'hidden', bgcolor: roomStyle?.backgroundColor || 'background.default' }}>
+                {renderRoomHeader()}
+                <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
+                    {renderAudioRoomContent()}
+                </Box>
+
+                {/* Dialogs */}
+                {showEditDialog && room && <RoomForm open={showEditDialog} onClose={() => setShowEditDialog(false)} onSubmit={handleEditSubmit} initialData={room ? { ...room } : undefined} title="Edit Room" submitButtonText="Save Changes" />}
+                {renderInviteDialog()}
+                {/* TODO: Add other Dialogs (Style, Share) back if needed */}
+                <Dialog open={showPasswordDialog && !hasRoomAccess} onClose={() => !isProcessing && navigate('/side-rooms')}>
+                    <DialogTitle>Enter Password</DialogTitle>
+                    <DialogContent><TextField autoFocus type="password" label="Room Password" value={password} onChange={e => setPassword(e.target.value)} fullWidth /></DialogContent>
+                    <DialogActions><Button onClick={() => navigate('/side-rooms')}>Cancel</Button><Button onClick={handlePasswordSubmit} variant="contained" disabled={isProcessing}>Join</Button></DialogActions>
+                </Dialog>
+            </Box>
+        </>
+    );
 };
 
-export default SideRoomComponent; 
+export default SideRoomComponent;
