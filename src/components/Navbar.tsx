@@ -19,8 +19,8 @@ import {
   Menu as MenuIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
-  Palette,
   Notifications as NotificationsIcon,
+  Psychology,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -178,11 +178,11 @@ const Navbar: React.FC = () => {
               },
             }}
           >
-            <MenuItem onClick={() => handleNavigation('/creators-hub')}>
+            <MenuItem onClick={() => handleNavigation('/sade-ai')}>
               <ListItemIcon>
-                <Palette />
+                <Psychology />
               </ListItemIcon>
-              <ListItemText primary="Creators Hub" />
+              <ListItemText primary="Sade AI" />
             </MenuItem>
             <Divider />
             <MenuItem onClick={() => handleNavigation('/settings')}>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, ChangeEvent } from 'react';
+import HeadsetIcon from '@mui/icons-material/Headset';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../services/firebase'; // Assuming firebase services are setup
@@ -33,8 +34,8 @@ import {
     Box, Typography, Button, Avatar, Chip, CircularProgress, Dialog,
     DialogTitle, DialogContent, DialogActions, TextField, Alert, IconButton,
     Tooltip, Divider, List, ListItem, ListItemAvatar, ListItemText, Paper,
-    Menu, MenuItem, ListItemIcon, InputAdornment, Grid, ListItemSecondaryAction
-    // Removed unused MUI imports like InputBase, Switch, Autocomplete, Slider, etc. if not needed
+    Menu, MenuItem, ListItemIcon, InputAdornment, Grid, ListItemSecondaryAction,
+    Select, // Added Select import
 } from '@mui/material';
 import {
     ExitToApp, Lock, Group, MoreVert, Send, Edit, Delete, PersonAdd,
@@ -44,7 +45,7 @@ import {
 import type { SideRoom as BaseSideRoom, RoomMember, RoomStyle } from '../../types/index'; // Import base type and RoomStyle
 import RoomForm from './RoomForm';
 import _ from 'lodash';
-import AgoraRTC, { IAgoraRTCClient, ILocalAudioTrack } from 'agora-rtc-sdk-ng';
+import AgoraRTC, { IAgoraRTCClient, ILocalAudioTrack, IRemoteAudioTrack, IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng';
 
 // Configuration for STUN servers (Public Google servers)
 const iceServers = {
@@ -87,14 +88,25 @@ interface SideRoom extends BaseSideRoom {
     // isLive should be defined in BaseSideRoom
 }
 
-interface SignalingMessage {
-    type: 'offer' | 'answer' | 'candidate';
-    senderId: string;
-    data: any; // SDP or ICE candidate
-    timestamp?: FieldValue; // Optional as we add it on send
-}
+const APP_ID = 'b67cbd2d25d146c283500b20fa6b24d6'; // Your Agora App ID
+const TEMP_TOKEN = '007eJxTYJiqkhTCzh1YZ3Rm+nRTC5aVh0M/bs5uecOiV6Mfu+aTbb4CQ5KZeXJSilGKkWmKoYlZspGFsamBQZKRQVqiWZKRSYpZmjJvRkMgI8Oe1q0MjFAI4nMxBGempCq4VqYqGDEwAAA9qx5e';
 
-const APP_ID = 'eb21ad9cb5574991af1e8ba5dc712fb8'; // Your Agora App ID
+// Add App ID validation function
+const validateAppId = (appId: string): boolean => {
+    // Check if App ID is in the correct format (32 characters)
+    if (appId.length !== 32) {
+        console.error('Invalid App ID length. App ID should be 32 characters long.');
+        return false;
+    }
+    
+    // Check if App ID contains only hexadecimal characters
+    if (!/^[0-9a-fA-F]+$/.test(appId)) {
+        console.error('Invalid App ID format. App ID should contain only hexadecimal characters.');
+        return false;
+    }
+    
+    return true;
+};
 
 const SideRoomComponent: React.FC = () => {
     const { roomId } = useParams<{ roomId: string }>();
@@ -119,25 +131,24 @@ const SideRoomComponent: React.FC = () => {
     const [searchResults, setSearchResults] = useState<User[]>([]);
     const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
     const [isInviting, setIsInviting] = useState(false);
-    const [localStream, setLocalStream] = useState<MediaStream | null>(null);
     const [isAudioConnected, setIsAudioConnected] = useState(false);
     const [isMicMuted, setIsMicMuted] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [isMicAvailable, setIsMicAvailable] = useState(true);
+    const [isHeadphonesConnected, setIsHeadphonesConnected] = useState(false);
+    const [joined, setJoined] = useState(false);
+    const [localAudioTrack, setLocalAudioTrack] = useState<ILocalAudioTrack | null>(null);
+    const [remoteUsers, setRemoteUsers] = useState<any[]>([]);
+    const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
+    const [showDeviceSelect, setShowDeviceSelect] = useState(false);
+    const [selectedDeviceId, setSelectedDeviceId] = useState('');
+
+    // --- Refs ---
+    const agoraClient = useRef<IAgoraRTCClient | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const animationFrameRef = useRef<number | null>(null);
     const speakingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const agoraClient = useRef<IAgoraRTCClient>(AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' }));
-    const [joined, setJoined] = useState(false);
-    const [localAudioTrack, setLocalAudioTrack] = useState<ILocalAudioTrack | null>(null);
-    const [remoteUsers, setRemoteUsers] = useState<any[]>([]);
-
-    // --- Refs ---
-    const mountedRef = useRef(true);
-    const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
-    const signalingListeners = useRef<(() => void)[]>([]);
-    const remoteAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
     // --- Memos ---
     const isRoomOwner = useMemo(() => room?.ownerId === currentUser?.uid, [room?.ownerId, currentUser?.uid]);
@@ -146,19 +157,52 @@ const SideRoomComponent: React.FC = () => {
     const onlineParticipants = useMemo(() => presence.filter(p => p.isOnline), [presence]);
     const ownerData = useMemo(() => room?.viewers?.find(v => v.role === 'owner'), [room?.viewers]);
 
+    // Automatically show microphone selection when headphones are detected
+    useEffect(() => {
+        const getAndSetDevices = async () => {
+            try {
+                // Request microphone access
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+                // Fetch devices
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                setAvailableDevices(devices.filter(device => device.kind === 'audioinput'));
+            } catch (err) {
+                setAvailableDevices([]);
+            }
+        };
+        if (isHeadphonesConnected) {
+            setShowDeviceSelect(true);
+            getAndSetDevices();
+        }
+    }, [isHeadphonesConnected]);
+
+    // Also fetch devices when dialog is manually opened
+    useEffect(() => {
+        const getAndSetDevices = async () => {
+            try {
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                setAvailableDevices(devices.filter(device => device.kind === 'audioinput'));
+            } catch (err) {
+                setAvailableDevices([]);
+            }
+        };
+        if (showDeviceSelect) {
+            getAndSetDevices();
+        }
+    }, [showDeviceSelect]);
+
     // --- Utility ---
     const handleError = useCallback((err: unknown, context: string) => {
         console.error(`Error (${context}):`, err);
         const message = err instanceof Error ? err.message : `An unknown error occurred during ${context}.`;
-        if (mountedRef.current) {
-            setError(message);
-            toast.error(`Error: ${message}`); // Provide slightly more context in toast
-        }
+        setError(message);
+        toast.error(`Error: ${message}`);
     }, []);
 
     // --- Presence Update ---
     const updatePresence = useCallback(_.debounce(async () => {
-        if (!currentUser?.uid || !roomId || !mountedRef.current) return;
+        if (!currentUser?.uid || !roomId) return;
         try {
             const presenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
             const presenceData: Partial<PresenceData> = {
@@ -170,283 +214,360 @@ const SideRoomComponent: React.FC = () => {
                 isOnline: true,
                 role: isRoomOwner ? 'owner' : 'viewer',
                 isMuted: isMicMuted,
-                isSpeaking: isSpeaking // Add local speaking state
+                isSpeaking: isSpeaking
             };
             await setDoc(presenceRef, { ...presenceData, lastSeen: serverTimestamp() }, { merge: true });
-        } catch (err) { console.error('Presence update failed:', err); }
-    }, 2000), [currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, roomId, isRoomOwner, isMicMuted, isSpeaking]); // More specific dependencies
-
-    // --- Signaling ---
-    const sendSignalingMessage = useCallback(async (recipientId: string, messageData: Omit<SignalingMessage, 'timestamp'>) => {
-        if (!roomId || !currentUser?.uid) return;
-        console.log(`Sending ${messageData.type} from ${currentUser.uid} to ${recipientId}`);
-        try {
-            // Corrected path: Add messages to a subcollection under the recipient's ID
-            const messagesPath = `sideRooms/${roomId}/signaling/${recipientId}/messages`;
-            const messagesCollectionRef = collection(db, messagesPath);
-            await addDoc(messagesCollectionRef, {
-                ...messageData,
-                timestamp: serverTimestamp()
-            });
         } catch (err) {
-            handleError(err, `sending ${messageData.type} to ${recipientId}`);
+            console.error('Presence update failed:', err);
         }
-    }, [roomId, currentUser?.uid, handleError]);
+    }, 2000), [currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, roomId, isRoomOwner, isMicMuted, isSpeaking]);
 
-    // --- WebRTC Core ---
-    const closePeerConnection = useCallback((peerId: string) => {
-        console.log(`Closing peer connection and cleaning up for ${peerId}`);
-         const pc = peerConnections.current[peerId];
-         if (pc) {
-             pc.onicecandidate = null;
-             pc.ontrack = null;
-             pc.onconnectionstatechange = null;
-             pc.close();
-             delete peerConnections.current[peerId];
-         }
-         const audioEl = remoteAudioRefs.current[peerId];
-         if (audioEl) {
-             audioEl.remove();
-             delete remoteAudioRefs.current[peerId];
-         }
-     }, []);
-
-    const createPeerConnection = useCallback((peerId: string): RTCPeerConnection | null => {
-        if (!localStream || !currentUser?.uid || !roomId) return null;
-        if (peerConnections.current[peerId]) return peerConnections.current[peerId];
-        console.log(`Creating peer connection for ${peerId}`);
-
-        const pc = new RTCPeerConnection(iceServers);
-
-        // Always add local audio track if not already present
-        const audioTracks = localStream.getAudioTracks();
-        if (audioTracks.length > 0 && !pc.getSenders().some(s => s.track && s.track.id === audioTracks[0].id)) {
-            console.log(`Adding local audio track to peer connection: ${audioTracks[0].id}`);
-            pc.addTrack(audioTracks[0], localStream);
-        }
-
-        pc.onicecandidate = (event) => {
-            if (event.candidate && currentUser?.uid) {
-                console.log(`[WebRTC ${peerId}] Generated ICE candidate`);
-                sendSignalingMessage(peerId, {
-                    type: 'candidate',
-                    senderId: currentUser.uid,
-                    data: event.candidate.toJSON(),
-                });
-            }
-        };
-
-        pc.ontrack = (event) => {
-            console.log(`[WebRTC ${peerId}] Received remote track`);
-            if (event.streams && event.streams[0]) {
-                const remoteStream = event.streams[0];
-                let audioEl = remoteAudioRefs.current[peerId];
-                if (!audioEl) {
-                    audioEl = document.createElement('audio');
-                    audioEl.id = `remote-audio-${peerId}`;
-                    audioEl.autoplay = true;
-                    audioEl.controls = false;
-                    audioEl.style.display = 'none'; // Hide but keep in DOM
-                    remoteAudioRefs.current[peerId] = audioEl;
-                    document.getElementById('remote-audio-container')?.appendChild(audioEl);
-                }
-                audioEl.srcObject = remoteStream;
-                // Ensure audio can play (handle autoplay policies)
-                audioEl.play().catch(err => {
-                    console.warn('Remote audio play() failed:', err);
-                });
-            }
-        };
-
-        pc.onconnectionstatechange = () => {
-            console.log(`[WebRTC ${peerId}] Connection state: ${pc.connectionState}`);
-            if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
-                closePeerConnection(peerId);
-            }
-        };
-
-        peerConnections.current[peerId] = pc;
-        return pc;
-    }, [localStream, currentUser?.uid, roomId, sendSignalingMessage, closePeerConnection]);
-
-    const handleOffer = useCallback(async (offerData: SignalingMessage) => {
-        const { senderId, data: offer } = offerData;
-        if (!currentUser?.uid || !localStream) {
-             console.warn(`[WebRTC ${senderId}] handleOffer called but currentUser or localStream is missing.`);
-             return;
-        }
-        console.log(`[WebRTC ${senderId}] Received offer:`, offer);
-        const pc = createPeerConnection(senderId);
-        if (!pc) return;
-        // Ensure local audio track is added to the peer connection
-        const audioTracks = localStream.getAudioTracks();
-        if (audioTracks.length > 0 && !pc.getSenders().some(s => s.track && s.track.id === audioTracks[0].id)) {
-            pc.addTrack(audioTracks[0], localStream);
-        }
+    // --- Agora Audio Functions ---
+    const handleLeaveAudio = useCallback(async () => {
         try {
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-            console.log(`[WebRTC ${senderId}] Set remote description (offer). Creating answer...`);
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            console.log(`[WebRTC ${senderId}] Set local description (answer). Sending answer:`, answer);
-            await sendSignalingMessage(senderId, { type: 'answer', senderId: currentUser.uid, data: answer });
-        } catch (err) { handleError(err, `handling offer from ${senderId}`); }
-    }, [createPeerConnection, sendSignalingMessage, currentUser, handleError, localStream]);
-
-    const handleAnswer = useCallback(async (answerData: SignalingMessage) => {
-        const { senderId, data: answer } = answerData;
-        console.log(`[WebRTC ${senderId}] Received answer:`, answer);
-        const pc = peerConnections.current[senderId];
-        if (pc && pc.signalingState === 'have-local-offer') {
-            try {
-                await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                console.log(`[WebRTC ${senderId}] Set remote description (answer).`);
+            if (localAudioTrack) {
+                localAudioTrack.close();
+                setLocalAudioTrack(null);
             }
-            catch (err) { handleError(err, `setting answer from ${senderId}`); }
-        } else { console.warn(`[WebRTC ${senderId}] Received answer in unexpected state: ${pc?.signalingState}`); }
-    }, [handleError]);
-
-    const handleCandidate = useCallback(async (candidateData: SignalingMessage) => {
-        const { senderId, data: candidateJson } = candidateData;
-        const pc = peerConnections.current[senderId];
-        console.log(`[WebRTC ${senderId}] Received ICE candidate:`, candidateJson);
-        if (pc) {
-            try {
-                const candidate = new RTCIceCandidate(candidateJson);
-                if (pc.remoteDescription) {
-                    await pc.addIceCandidate(candidate);
-                    console.log(`[WebRTC ${senderId}] Added ICE candidate.`);
-                }
-                 else {
-                     console.warn(`[WebRTC ${senderId}] ICE candidate arrived before remote description set. Queueing/Ignoring for now.`);
-                      // TODO: Consider implementing a queue for candidates here
-                 }
-            } catch (err) {
-                 // Ignore common harmless errors, log others
-                 if (!`${err}`.includes("remote description is not set") && !`${err}`.includes("Error processing ICE candidate")) {
-                    handleError(err, `adding ICE candidate from ${senderId}`);
-                 }
+            if (agoraClient.current) {
+                await agoraClient.current.leave();
             }
-        } else { console.warn(`[WebRTC ${senderId}] Received candidate, but no PeerConnection found.`); }
-    }, [handleError]);
+            setRemoteUsers([]);
+            setIsAudioConnected(false);
+            setIsSpeaking(false);
+            setJoined(false);
+            console.log('Successfully left audio channel');
+        } catch (error) {
+            console.error('Error leaving audio:', error);
+            toast.error('Failed to leave audio channel');
+        }
+    }, [localAudioTrack]);
 
-    // --- Signaling Listener ---
-    const setupSignalingListener = useCallback(() => {
-        if (!roomId || !currentUser?.uid || signalingListeners.current.length > 0) return;
-        console.log(`Setting up signaling listener for user ${currentUser.uid}`);
-        // Corrected path: Listen to the messages subcollection under the current user's ID
-        const messagesPath = `sideRooms/${roomId}/signaling/${currentUser.uid}/messages`;
-        const userMessagesCollectionRef = collection(db, messagesPath);
-        const q = query(userMessagesCollectionRef, orderBy('timestamp', 'asc'));
+    const joinVoiceChannel = useCallback(async (channelName: string, uid: string) => {
+        try {
+            console.log('Starting to join channel:', channelName, 'with uid:', uid);
+            console.log('Using App ID:', APP_ID);
+            
+            // Check network connectivity
+            if (!navigator.onLine) {
+                throw new Error('No internet connection. Please check your network and try again.');
+            }
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            snapshot.docChanges().forEach(async (change) => {
-                if (change.type === 'added') {
-                    // Ensure data exists before spreading
-                    const data = change.doc.data();
-                    if (!data) return;
+            // Only create client if it doesn't exist
+            if (!agoraClient.current) {
+                console.log('Creating new Agora client');
+                try {
+                    // Create client with specific configuration
+                    agoraClient.current = AgoraRTC.createClient({ 
+                        mode: 'rtc', 
+                        codec: 'vp8'
+                    });
 
-                    const message = { id: change.doc.id, ...data } as SignalingMessage & { id: string };
-                    const messageDocPath = `sideRooms/${roomId}/signaling/${currentUser.uid!}/messages/${message.id}`; // Corrected path for deletion
+                    // Set up event listeners before joining
+                    agoraClient.current.on('connection-state-change', (curState: string, prevState: string) => {
+                        console.log('Connection state changed:', prevState, '->', curState);
+                    });
 
+                    agoraClient.current.on('error', (error: Error) => {
+                        console.error('Agora client error:', error);
+                        if (error.message.includes('CAN_NOT_GET_GATEWAY_SERVER')) {
+                            console.error('Gateway server error details:', {
+                                error,
+                                timestamp: new Date().toISOString(),
+                                userAgent: navigator.userAgent,
+                                online: navigator.onLine
+                            });
+                        }
+                    });
+
+                    // Try to join with a simple channel name first
+                    console.log('Attempting to join channel with simple configuration');
                     try {
-                         if (message.type === 'offer') await handleOffer(message);
-                         else if (message.type === 'answer') await handleAnswer(message);
-                         else if (message.type === 'candidate') await handleCandidate(message);
-                         else console.warn("Unknown signaling message type:", message.type);
-                         // Delete the processed message from the correct path
-                         await deleteDoc(doc(db, messageDocPath));
-                    } catch (err) {
-                         handleError(err, `processing ${message.type} from ${message.senderId}`);
-                         // Attempt to delete even if processing failed, using the correct path
-                         await deleteDoc(doc(db, messageDocPath)).catch(delErr => console.error("Failed to delete message after error:", delErr));
+                        await agoraClient.current.join(
+                            APP_ID,
+                            'test-channel', // Use a simple channel name for testing
+                            TEMP_TOKEN, // Use the token here
+                            uid
+                        );
+                        console.log('Successfully joined test channel');
+                        await agoraClient.current.leave();
+                        console.log('Left test channel');
+                    } catch (testError) {
+                        console.error('Test channel join failed:', testError);
+                        if (testError instanceof Error && testError.message.includes('CAN_NOT_GET_GATEWAY_SERVER')) {
+                            throw new Error('Unable to connect to Agora servers. This might be due to: 1) Project status not being active, 2) App ID not being properly configured, or 3) Network restrictions. Please check your Agora Console settings and try again.');
+                        }
+                        throw testError;
                     }
+
+                    // Now try to join the actual channel
+                    console.log('Attempting to join actual channel:', channelName);
+                    await agoraClient.current.join(
+                        APP_ID,
+                        channelName,
+                        TEMP_TOKEN, // Use the token here
+                        uid
+                    );
+
+                    console.log('Successfully joined actual channel');
+                } catch (error) {
+                    console.error('Failed to create or join channel:', error);
+                    if (error instanceof Error) {
+                        if (error.message.includes('CAN_NOT_GET_GATEWAY_SERVER')) {
+                            console.error('Gateway server error details:', {
+                                error,
+                                timestamp: new Date().toISOString(),
+                                userAgent: navigator.userAgent,
+                                online: navigator.onLine
+                            });
+                            throw new Error('Unable to connect to Agora servers. Please check: 1) Your Agora project status is "Active", 2) The App ID is correctly configured, 3) Your network allows connections to Agora servers.');
+                        }
+                    }
+                    throw error;
+                }
+            }
+
+            // Create and publish local audio track
+            console.log('Creating local audio track');
+            try {
+                const localTrack = await AgoraRTC.createMicrophoneAudioTrack();
+                setLocalAudioTrack(localTrack);
+                
+                console.log('Publishing local audio track');
+                await agoraClient.current?.publish(localTrack);
+                
+                // Set volume and play
+                localTrack.setVolume(100);
+                await localTrack.play();
+                
+                if (isHeadphonesConnected) {
+                    await localTrack.setPlaybackDevice('default');
+                }
+                
+                setJoined(true);
+                console.log('Successfully joined channel and published audio');
+            } catch (error) {
+                console.error('Failed to create or publish audio track:', error);
+                throw new Error('Failed to setup audio. Please check your microphone permissions and try again.');
+            }
+        } catch (error) {
+            console.error('Failed to join channel:', error);
+            
+            // Handle specific Agora errors
+            if (error instanceof Error) {
+                if (error.message.includes('CAN_NOT_GET_GATEWAY_SERVER')) {
+                    throw new Error('Unable to connect to Agora servers. Please check: 1) Your Agora project status is "Active", 2) The App ID is correctly configured, 3) Your network allows connections to Agora servers.');
+                } else if (error.message.includes('INVALID_APP_ID')) {
+                    throw new Error('Invalid Agora App ID. Please verify your App ID in the Agora Console and ensure it is enabled for RTC functionality.');
+                } else if (error.message.includes('INVALID_CHANNEL_NAME')) {
+                    throw new Error('Invalid channel name. Please try again.');
+                } else if (error.message.includes('NotAllowedError')) {
+                    throw new Error('Microphone access was denied. Please allow microphone access and try again.');
+                } else if (error.message.includes('NotFoundError')) {
+                    throw new Error('No microphone found. Please connect a microphone and try again.');
+                } else if (error.message.includes('NotReadableError')) {
+                    throw new Error('Microphone is busy or not accessible. Please check if another application is using it.');
+                }
+            }
+            
+            // Cleanup on error
+            if (localAudioTrack) {
+                localAudioTrack.close();
+                setLocalAudioTrack(null);
+            }
+            if (agoraClient.current) {
+                await agoraClient.current.leave();
+            }
+            setJoined(false);
+            throw error;
+        }
+    }, [isHeadphonesConnected]);
+
+    const handleJoinAudio = useCallback(async () => {
+        if (isProcessing || !currentUser?.uid) return;
+        setIsProcessing(true);
+        
+        try {
+            // Check network connectivity first
+            if (!navigator.onLine) {
+                throw new Error('No internet connection. Please check your network and try again.');
+            }
+
+            // First, request microphone permissions
+            console.log('Requesting microphone permissions...');
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
                 }
             });
-        }, (err) => handleError(err, "listening to signaling"));
-        signalingListeners.current.push(unsubscribe);
-    }, [roomId, currentUser?.uid, handleError, handleOffer, handleAnswer, handleCandidate]); // Added handlers
+            
+            // Stop the test stream
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Get available devices
+            console.log('Enumerating audio devices...');
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices.filter(d => d.kind === 'audioinput');
+            setAvailableDevices(audioInputs);
+            
+            if (audioInputs.length === 0) {
+                throw new Error('No microphones found. Please connect a microphone and try again.');
+            }
+            
+            // Auto-select if only one device
+            if (audioInputs.length === 1) {
+                console.log('Auto-selecting single microphone:', audioInputs[0].label);
+                setSelectedDeviceId(audioInputs[0].deviceId);
+            } else {
+                console.log('Multiple microphones found, showing selection dialog');
+                setShowDeviceSelect(true);
+                return; // Wait for user selection
+            }
+            
+            setJoined(true);
+            setIsAudioConnected(true);
+            setIsMicMuted(false);
+            
+        } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            console.error('Audio setup failed:', err);
+            
+            // Handle specific error cases
+            if (err.name === 'NotAllowedError') {
+                toast.error('Microphone access was denied. Please allow microphone access and try again.');
+            } else if (err.name === 'NotFoundError') {
+                toast.error('No microphone found. Please connect a microphone and try again.');
+            } else if (err.name === 'NotReadableError') {
+                toast.error('Microphone is busy or not accessible. Please check if another application is using it.');
+            } else if (err.message.includes('No internet connection')) {
+                toast.error('No internet connection. Please check your network and try again.');
+            } else {
+                toast.error(`Failed to setup microphone: ${err.message}`);
+            }
+        } finally {
+            setIsProcessing(false);
+        }
+    }, [currentUser?.uid, isProcessing, selectedDeviceId, roomId]);
 
-    const cleanupSignaling = useCallback(() => {
-        console.log("Cleaning up signaling listeners...");
-        signalingListeners.current.forEach(unsubscribe => unsubscribe());
-        signalingListeners.current = [];
-    }, []);
+    // --- Presence Listener ---
+    useEffect(() => {
+        if (!roomId || !hasRoomAccess) return;
+        const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
+        const q = query(presenceRef, where("isOnline", "==", true));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            if (!currentUser?.uid) return;
+
+            const currentOnlineUsersMap = new Map<string, PresenceData>();
+            snapshot.docs.forEach(doc => {
+                currentOnlineUsersMap.set(doc.id, { userId: doc.id, ...doc.data() } as PresenceData);
+            });
+
+            setPresence(Array.from(currentOnlineUsersMap.values()));
+            updatePresence();
+        }, (err) => handleError(err, "listening to presence"));
+
+        if (hasRoomAccess) updatePresence();
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') {
+                updatePresence();
+            }
+        };
+        const handleBeforeUnload = () => {
+            updatePresence();
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('beforeunload', handleBeforeUnload);
+
+        return () => {
+            unsubscribe();
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            if (currentUser?.uid) {
+                setDoc(doc(db, 'sideRooms', roomId!, 'presence', currentUser.uid), 
+                    { isOnline: false, lastSeen: serverTimestamp() }, 
+                    { merge: true }
+                ).catch(console.error);
+            }
+        };
+    }, [roomId, hasRoomAccess, currentUser?.uid, updatePresence, handleError]);
 
     // Constants for audio analysis
     const SPEAKING_THRESHOLD = 0.03; // Adjust based on testing
     const DEBOUNCE_DELAY_MS = 300; // Prevents rapid toggling
 
-    // Setup audio analysis when stream is available
+    // --- Audio Analysis Setup ---
     useEffect(() => {
-      if (!localStream) return;
+        if (!localAudioTrack) return;
 
-      const setupAudioAnalysis = () => {
-        try {
-          // Create audio context if not exists
-          if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-          }
+        const setupAudioAnalysis = () => {
+            try {
+                // Create audio context if not exists
+                if (!audioContextRef.current) {
+                    audioContextRef.current = new ((window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext)();
+                }
 
-          // Create analyser node
-          const analyser = audioContextRef.current.createAnalyser();
-          analyser.fftSize = 32;
-          analyserRef.current = analyser;
+                // Create analyser node
+                const analyser = audioContextRef.current.createAnalyser();
+                analyser.fftSize = 32;
+                analyserRef.current = analyser;
 
-          // Connect stream to analyser
-          const source = audioContextRef.current.createMediaStreamSource(localStream);
-          source.connect(analyser);
+                // Connect audio track to analyser
+                const mediaStream = new MediaStream([localAudioTrack.getMediaStreamTrack()]);
+                const source = audioContextRef.current.createMediaStreamSource(mediaStream);
+                source.connect(analyser);
 
-          // Start analysis loop
-          analyzeAudio();
-        } catch (err) {
-          console.error('Audio analysis setup failed:', err);
-        }
-      };
+                // Start analysis loop
+                analyzeAudio();
+            } catch (err) {
+                console.error('Audio analysis setup failed:', err);
+            }
+        };
 
-      setupAudioAnalysis();
+        setupAudioAnalysis();
 
-      return () => {
-        // Cleanup
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-        }
-        if (speakingTimeoutRef.current) {
-          clearTimeout(speakingTimeoutRef.current);
-        }
-      };
-    }, [localStream]);
+        return () => {
+            // Cleanup
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current);
+            }
+            if (speakingTimeoutRef.current) {
+                clearTimeout(speakingTimeoutRef.current);
+            }
+        };
+    }, [localAudioTrack]);
 
     const analyzeAudio = () => {
-      if (!analyserRef.current) return;
+        if (!analyserRef.current) return;
 
-      const analyser = analyserRef.current;
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      analyser.getByteFrequencyData(dataArray);
+        const analyser = analyserRef.current;
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
 
-      // Calculate average volume
-      let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-        sum += dataArray[i];
-      }
-      const average = sum / dataArray.length / 255; // Normalize to 0-1
+        // Calculate average volume
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+        }
+        const average = sum / dataArray.length / 255; // Normalize to 0-1
 
-      // Detect speaking with debouncing
-      const currentlySpeaking = average > SPEAKING_THRESHOLD;
-      
-      if (currentlySpeaking !== isSpeaking) {
-        if (speakingTimeoutRef.current) {
-          clearTimeout(speakingTimeoutRef.current);
+        // Detect speaking with debouncing
+        const currentlySpeaking = average > SPEAKING_THRESHOLD;
+        
+        if (currentlySpeaking !== isSpeaking) {
+            if (speakingTimeoutRef.current) {
+                clearTimeout(speakingTimeoutRef.current);
+            }
+
+            speakingTimeoutRef.current = setTimeout(() => {
+                setIsSpeaking(currentlySpeaking);
+                updatePresence(); // Update presence with new speaking state
+            }, DEBOUNCE_DELAY_MS);
         }
 
-        speakingTimeoutRef.current = setTimeout(() => {
-          setIsSpeaking(currentlySpeaking);
-          updatePresence(); // Update presence with new speaking state
-        }, DEBOUNCE_DELAY_MS);
-      }
-
-      // Continue analysis loop
-      animationFrameRef.current = requestAnimationFrame(analyzeAudio);
+        // Continue analysis loop
+        animationFrameRef.current = requestAnimationFrame(analyzeAudio);
     };
 
     // Microphone connection detection
@@ -459,7 +580,7 @@ const SideRoomComponent: React.FC = () => {
                 const hasMic = devices.some(device => device.kind === 'audioinput');
                 if (isMounted) setIsMicAvailable(hasMic);
             } catch (err) {
-                if (isMounted) setIsMicAvailable(false);
+                if (isMounted) setIsMicAvailable(true);
             }
         }
         
@@ -586,7 +707,7 @@ const SideRoomComponent: React.FC = () => {
         } finally {
             setIsInviting(false);
         }
-    }, [roomId, selectedUsers, isInviting, handleError]); // Added dependencies
+    }, [roomId, selectedUsers, isInviting, handleError]);
 
     const handleEditSubmit = useCallback(async (updatedData: Partial<SideRoom>) => {
         if (!roomId || !isRoomOwner) return;
@@ -600,67 +721,27 @@ const SideRoomComponent: React.FC = () => {
         } catch (err) {
             handleError(err, 'submitting room edits');
         } finally {
-            if (mountedRef.current) { // Check mount status
-                 setIsProcessing(false);
-            }
-        }
-    }, [roomId, isRoomOwner, handleError]); // Added dependencies
-
-    // First declare all functions before they're used
-    const handleJoinAudio = useCallback(async () => {
-        if (isProcessing || !currentUser?.uid) return;
-        setIsProcessing(true);
-        
-        try {
-            // Request microphone permission
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: true,
-                video: false 
-            });
-            
-            // Setup audio analysis
-            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const analyser = audioContext.createAnalyser();
-            const source = audioContext.createMediaStreamSource(stream);
-            source.connect(analyser);
-            
-            // Update state
-            setLocalStream(stream);
-            setIsAudioConnected(true);
-            setIsMicMuted(false);
-            
-            // Start analysis loop
-            const checkSpeaking = () => {
-                const data = new Uint8Array(analyser.frequencyBinCount);
-                analyser.getByteFrequencyData(data);
-                const isSpeaking = data.some(level => level > 30); // Volume threshold
-                setIsSpeaking(isSpeaking);
-                requestAnimationFrame(checkSpeaking);
-            };
-            checkSpeaking();
-            
-        } catch (err) {
-            console.error('Microphone access failed:', err);
-            toast.error('Could not access microphone');
-        } finally {
             setIsProcessing(false);
         }
-    }, [currentUser?.uid, isProcessing]);
-    
-    const handleLeaveAudio = useCallback(async () => {
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
-            setLocalStream(null);
-        }
-        setIsAudioConnected(false);
-        setIsSpeaking(false);
-    }, [localStream]);
+    }, [roomId, isRoomOwner, handleError]);
 
     const handleToggleMute = useCallback(() => {
-        console.log("Toggling mute...");
-        setIsMicMuted(!isMicMuted);
-        // Implementation goes here
-    }, [isMicMuted]);
+        try {
+            if (localAudioTrack) {
+                if (isMicMuted) {
+                    localAudioTrack.setEnabled(true);
+                    console.log('Unmuted microphone');
+                } else {
+                    localAudioTrack.setEnabled(false);
+                    console.log('Muted microphone');
+                }
+            }
+            setIsMicMuted(!isMicMuted);
+        } catch (error) {
+            console.error('Error toggling mute:', error);
+            toast.error('Failed to toggle mute');
+        }
+    }, [isMicMuted, localAudioTrack]);
 
     const handlePasswordSubmit = useCallback(() => {
         console.log("Password submit clicked");
@@ -672,150 +753,162 @@ const SideRoomComponent: React.FC = () => {
         // Room leaving logic including audio cleanup
     }, []);
 
+    const handleDeviceConfirm = useCallback(async () => {
+        if (!selectedDeviceId) {
+            toast.error('Please select a microphone');
+            return;
+        }
+        
+        setShowDeviceSelect(false);
+        setIsProcessing(true);
+        
+        try {
+            // Test the selected device
+            console.log('Testing selected microphone:', selectedDeviceId);
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { 
+                    deviceId: selectedDeviceId,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+            
+            // Stop the test stream
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Join the voice channel
+            console.log('Joining voice channel with selected device...');
+            await joinVoiceChannel(roomId!, currentUser!.uid);
+            
+            // Set up audio analysis
+            console.log('Setting up audio analysis...');
+            const audioContext = new ((window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext)();
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 2048;
+            
+            // Update state
+            setIsAudioConnected(true);
+            setIsMicMuted(false);
+            
+            // Start analysis loop
+            const checkSpeaking = () => {
+                const data = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(data);
+                const isSpeaking = data.some(level => level > 30);
+                setIsSpeaking(isSpeaking);
+                requestAnimationFrame(checkSpeaking);
+            };
+            checkSpeaking();
+            
+        } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            console.error('Microphone setup failed:', err);
+            
+            // Handle specific error cases
+            if (err.name === 'NotAllowedError') {
+                toast.error('Microphone access was denied. Please allow microphone access and try again.');
+            } else if (err.name === 'NotFoundError') {
+                toast.error('Selected microphone not found. Please select another microphone.');
+            } else if (err.name === 'NotReadableError') {
+                toast.error('Microphone is busy or not accessible. Please check if another application is using it.');
+            } else {
+                toast.error(`Failed to setup microphone: ${err.message}`);
+            }
+            
+            await handleLeaveAudio();
+        } finally {
+            setIsProcessing(false);
+        }
+    }, [selectedDeviceId, roomId, currentUser, joinVoiceChannel, handleLeaveAudio]);
+
+    function renderDeviceSelectionModal() {
+        return (
+            <Dialog open={showDeviceSelect} onClose={() => setShowDeviceSelect(false)}>
+                <DialogTitle>Select Microphone</DialogTitle>
+                <DialogContent>
+                    <Select
+                        fullWidth
+                        value={selectedDeviceId}
+                        onChange={(e) => setSelectedDeviceId(e.target.value as string)}
+                    >
+                        {availableDevices.map(device => (
+                            <MenuItem key={device.deviceId} value={device.deviceId}>
+                                {device.label || `Microphone ${availableDevices.indexOf(device) + 1}`}
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setShowDeviceSelect(false)}>Cancel</Button>
+                    <Button 
+                        onClick={handleDeviceConfirm}
+                        variant="contained"
+                        disabled={!selectedDeviceId}
+                    >
+                        Confirm
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
     // --- Data Listeners ---
     useEffect(() => {
-      mountedRef.current = true;
-      return () => {
-        mountedRef.current = false;
         // Only call handleLeaveAudio if audio is connected
-        if (isAudioConnected) {
-          handleLeaveAudio();
-        }
-      };
-    }, [handleLeaveAudio, isAudioConnected]);
+        return () => {
+            if (isAudioConnected) {
+                handleLeaveAudio();
+            }
+        };
+    }, [isAudioConnected, handleLeaveAudio]);
 
-    // useEffect(() => { /* Room Listener - remains the same */ }, [/* ... */]); // Commented out placeholder
-
-    // --- Initial Room Data Fetching Effect ---
+    // --- Room Listener ---
     useEffect(() => {
         if (!roomId || !currentUser || authLoading) {
-            // Don't fetch if missing prerequisites or auth is still loading
-            if (!authLoading) { // If auth is done but missing roomId/currentUser
-                setLoading(false); // Stop loading if we can't proceed
+            if (!authLoading) {
+                setLoading(false);
                 setError("Cannot load room: Missing room ID or user information.");
             }
-            return; // Exit early
+            return;
         }
 
-        setLoading(true); // Start loading process for this room
-        setError(null); // Clear previous errors
+        setLoading(true);
+        setError(null);
 
         const roomRef = doc(db, 'sideRooms', roomId);
-
         const unsubscribe = onSnapshot(roomRef, (docSnapshot) => {
-            if (!mountedRef.current) return; // Check if component is still mounted
-
             if (docSnapshot.exists()) {
                 const roomData = { id: docSnapshot.id, ...docSnapshot.data() } as SideRoom;
                 setRoom(roomData);
-                setRoomStyle(roomData.style); // Update style state
+                setRoomStyle(roomData.style);
 
-                // Determine access rights immediately based on fetched data
                 const isOwner = roomData.ownerId === currentUser.uid;
-                // Ensure viewers array exists before checking
                 const isViewer = roomData.viewers?.some(v => v.userId === currentUser.uid) ?? false;
-                const isPrivate = roomData.isPrivate ?? false; // Default to false if undefined
+                const isPrivate = roomData.isPrivate ?? false;
 
                 if (isPrivate && !isOwner && !isViewer) {
-                    // Room is private, user doesn't have access yet -> show password dialog
                     setShowPasswordDialog(true);
-                    setLoading(false); // Stop loading, wait for password input
+                    setLoading(false);
                 } else {
-                    // Room is public or user already has access -> show room content
-                    setShowPasswordDialog(false); // Ensure password dialog is hidden
-                    setLoading(false); // Stop loading, display room content
+                    setShowPasswordDialog(false);
+                    setLoading(false);
                 }
             } else {
-                // Room not found
                 setError(`Room with ID "${roomId}" not found.`);
                 setRoom(null);
-                setLoading(false); // Stop loading
-                 // Optional: Consider navigating back to the list
-                 // navigate('/side-rooms');
+                setLoading(false);
             }
         }, (err) => {
-            // Error fetching room
-            if (mountedRef.current) {
-                handleError(err, "fetching room data");
-                setRoom(null);
-                setLoading(false); // Stop loading on error
-            }
+            handleError(err, "fetching room data");
+            setRoom(null);
+            setLoading(false);
         });
 
-        // Cleanup function for the listener
         return () => {
             unsubscribe();
         };
-
-    }, [roomId, currentUser, authLoading, navigate, handleError]); // Added dependencies
-
-    useEffect(() => { // Presence Listener - Modified for WebRTC join/leave
-        if (!roomId || !hasRoomAccess) return;
-        const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-        const q = query(presenceRef, where("isOnline", "==", true));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            if (!mountedRef.current || !currentUser?.uid) return; // Don't process if unmounted or no user
-
-            const currentOnlineUsersMap = new Map<string, PresenceData>();
-             snapshot.docs.forEach(doc => { currentOnlineUsersMap.set(doc.id, { userId: doc.id, ...doc.data() } as PresenceData); });
-             const currentOnlineUserIds = Array.from(currentOnlineUsersMap.keys());
-             const existingPeerIds = Object.keys(peerConnections.current);
-
-             // Only process joins/leaves if WE are connected to audio
-             if (isAudioConnected) {
-                 // Connect to New Users
-                 currentOnlineUserIds.forEach(async userId => { // Made async
-                     if (userId !== currentUser.uid && !peerConnections.current[userId]) {
-                         console.log(`Presence: New user ${userId}. Initiating connection.`);
-                         const pc = createPeerConnection(userId);
-                          if (pc) {
-                               try {
-                                   const offer = await pc.createOffer();
-                                   console.log(`[WebRTC ${userId}] Creating offer for new user via presence:`, offer);
-                                   await pc.setLocalDescription(offer);
-                                   console.log(`[WebRTC ${userId}] Set local description (offer). Sending offer to new user.`);
-                                   await sendSignalingMessage(userId, { type: 'offer', senderId: currentUser.uid, data: offer });
-                               } catch (err) {
-                                   handleError(err, `offer to new user ${userId}`);
-                               }
-                          }
-                     }
-                 });
-                 // Disconnect Leavers
-                  existingPeerIds.forEach(peerId => {
-                      if (peerId !== currentUser.uid && !currentOnlineUsersMap.has(peerId)) {
-                          console.log(`Presence: User ${peerId} left. Closing connection.`);
-                          closePeerConnection(peerId);
-                      }
-                  });
-             }
-
-            setPresence(Array.from(currentOnlineUsersMap.values()));
-            updatePresence();
-
-        }, (err) => handleError(err, "listening to presence"));
-
-        if (hasRoomAccess) updatePresence();
-        const handleVisibilityChange = () => { /* ... set offline/online ... */ };
-        const handleBeforeUnload = () => { /* ... set offline ... */ };
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        window.addEventListener('beforeunload', handleBeforeUnload);
-
-        return () => {
-            unsubscribe();
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            window.removeEventListener('beforeunload', handleBeforeUnload);
-             // Set self offline and close connections on unmount
-            if (currentUser?.uid) setDoc(doc(db, 'sideRooms', roomId!, 'presence', currentUser.uid), { isOnline: false, lastSeen: serverTimestamp() }, { merge: true }).catch();
-            Object.keys(peerConnections.current).forEach(peerId => closePeerConnection(peerId));
-        };
-    }, [
-        roomId, hasRoomAccess, currentUser?.uid, isAudioConnected, // Added isAudioConnected
-        updatePresence, handleError, createPeerConnection, closePeerConnection, sendSignalingMessage
-    ]);
-
-    // --- Other Room Actions ---
-    // ... (handleJoinRoom, handlePasswordSubmit, handleLeaveRoom, handleMenu, etc.) ...
+    }, [roomId, currentUser, authLoading, navigate, handleError]);
 
     // --- Render Functions ---
     const ParticipantGridItem: React.FC<{ participant: PresenceData }> = ({ participant }) => {
@@ -999,7 +1092,7 @@ const SideRoomComponent: React.FC = () => {
                 {/* Dialogs */}
                 {showEditDialog && room && <RoomForm open={showEditDialog} onClose={() => setShowEditDialog(false)} onSubmit={handleEditSubmit} initialData={room ? { ...room } : undefined} title="Edit Room" submitButtonText="Save Changes" />}
                 {renderInviteDialog()}
-                {/* TODO: Add other Dialogs (Style, Share) back if needed */}
+                {renderDeviceSelectionModal()}
                 <Dialog open={showPasswordDialog && !hasRoomAccess} onClose={() => !isProcessing && navigate('/side-rooms')}>
                     <DialogTitle>Enter Password</DialogTitle>
                     <DialogContent><TextField autoFocus type="password" label="Room Password" value={password} onChange={e => setPassword(e.target.value)} fullWidth /></DialogContent>

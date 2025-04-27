@@ -24,6 +24,7 @@ import Discover from './pages/Discover';
 import Messages from './pages/Messages';
 import { Toaster } from 'react-hot-toast';
 import SideRoomList from './components/SideRooms/SideRoomList';
+import SadeAIPage from './pages/SadeAIPage';
 import SideRoomComponent from './components/SideRooms/SideRoomComponent'; // Corrected the import path
 import Chat from './pages/Chat';
 import SafetyPage from './pages/SafetyPage';
@@ -83,6 +84,7 @@ const AppContent: React.FC = () => {
           <Route path="/setup-source-code" element={<SetupSourceCode />} />
           <Route path="/enter-source-code" element={<EnterSourceCode />} />
           <Route path="/reset-source-code" element={<ResetSourceCode />} />
+          <Route path="/sade-ai" element={<SadeAIPage />} />
           
           {/* Protected routes requiring full authentication */}
           <Route path="/" element={

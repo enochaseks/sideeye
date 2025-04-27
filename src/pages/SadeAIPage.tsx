@@ -1,0 +1,156 @@
+import React, { useState, useEffect } from 'react';
+import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider } from '@mui/material';
+
+const SadeAIPage: React.FC = () => {
+  const [messages, setMessages] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // Load chat history from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('sadeai_chat_history');
+    if (saved) {
+      setMessages(JSON.parse(saved));
+    }
+  }, []);
+
+  // Save chat history to localStorage whenever messages change
+  useEffect(() => {
+    localStorage.setItem('sadeai_chat_history', JSON.stringify(messages));
+  }, [messages]);
+
+  // This function would call your backend or an AI API
+  const sendMessage = async () => {
+    if (!input.trim()) return;
+    setMessages([...messages, { sender: 'user', text: input }]);
+    setLoading(true);
+
+    try {
+      const res = await fetch('https://sideeye-production.up.railway.app/api/sade-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: input }),
+      });
+      const data = await res.json();
+      setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
+    } catch (err) {
+      setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
+    }
+    setLoading(false);
+    setInput('');
+  };
+
+  return (
+    <Box
+      sx={{
+        minHeight: '100vh',
+        bgcolor: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+        background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        pb: { xs: 10, sm: 7 },
+        pt: { xs: 2, sm: 6 },
+      }}
+    >
+      <Paper elevation={3} sx={{ width: '100%', maxWidth: 500, p: { xs: 2, sm: 4 }, borderRadius: 4, mb: 2, mt: 2, boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)' }}>
+        <Typography variant="h4" align="center" fontWeight={700} color="primary.main" gutterBottom sx={{ letterSpacing: 1 }}>
+          Sade AI <span style={{ fontWeight: 400, fontSize: '1.2rem', color: '#888' }}>(SHA-DEY)</span>
+        </Typography>
+        <Divider sx={{ mb: 2 }} />
+        <Box
+          sx={{
+            minHeight: 320,
+            maxHeight: { xs: 350, sm: 400 },
+            overflowY: 'auto',
+            bgcolor: 'rgba(255,255,255,0.7)',
+            borderRadius: 3,
+            p: 2,
+            mb: 2,
+            boxShadow: '0 2px 8px 0 rgba(31, 38, 135, 0.05)',
+            transition: 'background 0.3s',
+          }}
+        >
+          {messages.length === 0 && (
+            <Typography color="text.secondary" align="center" sx={{ mt: 8 }}>
+              Say hello to <b>Sade AI</b>, your friendly AI therapist! 🌸
+            </Typography>
+          )}
+          {messages.map((msg, idx) => (
+            <Box
+              key={idx}
+              sx={{
+                display: 'flex',
+                justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start',
+                mb: 1.5,
+              }}
+            >
+              <Box
+                sx={{
+                  bgcolor: msg.sender === 'user' ? 'primary.main' : '#f3f6fb',
+                  color: msg.sender === 'user' ? 'primary.contrastText' : 'text.primary',
+                  borderRadius: msg.sender === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                  px: 2,
+                  py: 1.2,
+                  maxWidth: '80%',
+                  boxShadow: msg.sender === 'user' ? '0 2px 8px 0 rgba(33, 150, 243, 0.10)' : '0 2px 8px 0 rgba(31, 38, 135, 0.05)',
+                  fontSize: '1.08rem',
+                  wordBreak: 'break-word',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {msg.text}
+              </Box>
+            </Box>
+          ))}
+          {loading && <CircularProgress size={24} sx={{ display: 'block', mx: 'auto', mt: 2 }} />}
+        </Box>
+        <Box
+          sx={{
+            display: 'flex',
+            gap: 1,
+            alignItems: 'center',
+            position: { xs: 'fixed', sm: 'static' },
+            bottom: { xs: 64, sm: 'auto' },
+            left: 0,
+            width: { xs: '100vw', sm: 'auto' },
+            maxWidth: { xs: '100vw', sm: 'none' },
+            bgcolor: { xs: 'rgba(255,255,255,0.95)', sm: 'transparent' },
+            p: { xs: 2, sm: 0 },
+            borderTop: { xs: '1px solid #eee', sm: 'none' },
+            zIndex: 1200,
+          }}
+        >
+          <TextField
+            fullWidth
+            variant="outlined"
+            placeholder="Type your message..."
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') sendMessage(); }}
+            disabled={loading}
+            sx={{ bgcolor: 'white', borderRadius: 2, boxShadow: '0 1px 4px 0 rgba(31,38,135,0.04)' }}
+          />
+          <Button variant="contained" onClick={sendMessage} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
+            Send
+          </Button>
+          <Button
+            variant="outlined"
+            color="secondary"
+            onClick={() => {
+              setMessages([]);
+              localStorage.removeItem('sadeai_chat_history');
+            }}
+            disabled={loading}
+            sx={{ minWidth: 90, fontWeight: 500 }}
+          >
+            Clear Chat
+          </Button>
+        </Box>
+      </Paper>
+    </Box>
+  );
+};
+
+export default SadeAIPage;

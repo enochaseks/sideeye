@@ -3,6 +3,7 @@
   "homepage": "https://www.sideeye.uk",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:3001",
   "dependencies": {
     "@chatkitty/core": "^1.11.0",
     "@emotion/react": "^11.11.3",
@@ -10,6 +11,7 @@
     "@ffmpeg/core": "^0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@google-cloud/storage": "^7.16.0",
+    "@google/generative-ai": "^0.24.0",
     "@mui/icons-material": "^5.15.10",
     "@mui/material": "^5.15.10",
     "@mui/x-date-pickers": "^6.18.6",
