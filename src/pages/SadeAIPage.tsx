@@ -26,7 +26,7 @@ const SadeAIPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const res = await fetch('https://sideeye-production.up.railway.app/api/sade-ai', {
+      const res = await fetch('https://www.sideeye.uk/api/sade-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: input }),
