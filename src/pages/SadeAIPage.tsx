@@ -45,6 +45,9 @@ const SadeAIPage: React.FC = () => {
       const data = await res.json();
       setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
     } catch (err) {
+      // Log the actual error object to the console
+      console.error("Sade AI fetch failed:", err);
+      // Keep the user-facing message generic
       setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
     }
     setLoading(false);
