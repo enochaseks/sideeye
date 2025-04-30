@@ -35,53 +35,40 @@ const SadeAIPage: React.FC = () => {
         return; // Stop if URL is not configured
       }
 
-      // const apiUrl = `${backendBaseUrl}/api/sade-ai`; // Original URL
-      const apiUrl = `${backendBaseUrl}/api/dummy-post-test`; // <<< Point to dummy endpoint for test
+      const apiUrl = `${backendBaseUrl}/api/sade-ai`; // Restore original URL
+      console.log(`[SadeAIPage] Attempting to fetch: ${apiUrl}`); // Restore log
+      console.log(`[SadeAIPage] Request Body:`, { message: input }); // Restore log
 
-      console.log(`[SadeAIPage] Attempting XHR POST to (DUMMY): ${apiUrl}`); // Log change
-      // const requestBody = JSON.stringify({ message: input }); // Don't need body for dummy test
-      const requestBody = null; // Send empty body for dummy test
-      console.log(`[SadeAIPage] Request Body (DUMMY):`, requestBody);
-
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', apiUrl, true);
-        xhr.setRequestHeader('Content-Type', 'application/json'); // Keep header for now, backend ignores it
-
-        xhr.onload = function () {
-          console.log("[SadeAIPage] XHR onload triggered. Status:", xhr.status);
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText);
-              console.log("[SadeAIPage] Received XHR response data (DUMMY):", data);
-              // setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Dummy Success!" }]); // Don't update UI
-              setMessages(msgs => [...msgs, { sender: 'ai', text: `Dummy Test OK: ${data.message}` }]); // Show dummy success
-              resolve(data); // Resolve the promise on success
-            } catch (parseError) {
-              console.error("[SadeAIPage] Error parsing XHR JSON response:", parseError);
-              console.error("[SadeAIPage] Raw XHR response text:", xhr.responseText);
-              reject(new Error("Failed to parse response from server."));
-            }
-          } else {
-            console.error("[SadeAIPage] XHR request failed with status:", xhr.status, xhr.statusText);
-            console.error("[SadeAIPage] Raw XHR response text:", xhr.responseText);
-            reject(new Error(`Request failed with status ${xhr.status}`));
-          }
+      // --- Revert back to fetch --- 
+      try {
+        const fetchOptions = { // Restore fetch options
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: input }),
         };
+        console.log("[SadeAIPage] Fetch options prepared:", fetchOptions);
 
-        xhr.onerror = function () {
-          console.error("[SadeAIPage] XHR onerror triggered (Network error).");
-          reject(new Error('Network request failed'));
-        };
+        console.log("[SadeAIPage] About to call fetch...");
+        const res = await fetch(apiUrl, fetchOptions);
+        console.log("[SadeAIPage] Fetch call completed. Response status:", res.status);
 
-        xhr.ontimeout = function () {
-          console.error("[SadeAIPage] XHR ontimeout triggered.");
-          reject(new Error('Request timed out'));
-        };
+        const data = await res.json();
+        console.log("[SadeAIPage] Received response data:", data);
+        setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
 
-        console.log("[SadeAIPage] About to call xhr.send() (DUMMY)...");
-        xhr.send(requestBody);
-      });
+      } catch (err) {
+        // Log the actual error object to the console
+        console.error("[SadeAIPage] Fetch failed inside catch block:", err);
+        // Also log the error name and message separately for more detail
+        if (err instanceof Error) {
+          console.error(`[SadeAIPage] Error Name: ${err.name}`);
+          console.error(`[SadeAIPage] Error Message: ${err.message}`);
+        }
+        // Keep the user-facing message generic
+        setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
+      }
+      // --- End of fetch restoration ---
+
     } catch (err) {
       console.error("[SadeAIPage] XHR request failed inside catch block:", err);
       if (err instanceof Error) {
