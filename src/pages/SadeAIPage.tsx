@@ -29,24 +29,38 @@ const SadeAIPage: React.FC = () => {
       // Use environment variable for the base backend URL
       const backendBaseUrl = process.env.REACT_APP_API_URL;
       if (!backendBaseUrl) {
-        console.error("REACT_APP_API_URL is not defined. Please set it in your .env file.");
+        console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
         setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
         setLoading(false);
         return; // Stop if URL is not configured
       }
 
       const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+      console.log(`[SadeAIPage] Attempting to fetch: ${apiUrl}`);
+      console.log(`[SadeAIPage] Request Body:`, { message: input });
 
-      const res = await fetch(apiUrl, {
+      const fetchOptions = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: input }),
-      });
+      };
+      console.log("[SadeAIPage] Fetch options prepared:", fetchOptions);
+
+      console.log("[SadeAIPage] About to call fetch...");
+      const res = await fetch(apiUrl, fetchOptions);
+      console.log("[SadeAIPage] Fetch call completed. Response status:", res.status);
+
       const data = await res.json();
+      console.log("[SadeAIPage] Received response data:", data);
       setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
     } catch (err) {
       // Log the actual error object to the console
-      console.error("Sade AI fetch failed:", err);
+      console.error("[SadeAIPage] Fetch failed inside catch block:", err);
+      // Also log the error name and message separately for more detail
+      if (err instanceof Error) {
+        console.error(`[SadeAIPage] Error Name: ${err.name}`);
+        console.error(`[SadeAIPage] Error Message: ${err.message}`);
+      }
       // Keep the user-facing message generic
       setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
     }
