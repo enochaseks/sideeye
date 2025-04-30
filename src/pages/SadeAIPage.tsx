@@ -35,24 +35,28 @@ const SadeAIPage: React.FC = () => {
         return; // Stop if URL is not configured
       }
 
-      const apiUrl = `${backendBaseUrl}/api/sade-ai`;
-      console.log(`[SadeAIPage] Attempting XHR POST to: ${apiUrl}`);
-      const requestBody = JSON.stringify({ message: input });
-      console.log(`[SadeAIPage] Request Body:`, requestBody);
+      // const apiUrl = `${backendBaseUrl}/api/sade-ai`; // Original URL
+      const apiUrl = `${backendBaseUrl}/api/dummy-post-test`; // <<< Point to dummy endpoint for test
+
+      console.log(`[SadeAIPage] Attempting XHR POST to (DUMMY): ${apiUrl}`); // Log change
+      // const requestBody = JSON.stringify({ message: input }); // Don't need body for dummy test
+      const requestBody = null; // Send empty body for dummy test
+      console.log(`[SadeAIPage] Request Body (DUMMY):`, requestBody);
 
       await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', apiUrl, true);
-        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.setRequestHeader('Content-Type', 'application/json'); // Keep header for now, backend ignores it
 
         xhr.onload = function () {
           console.log("[SadeAIPage] XHR onload triggered. Status:", xhr.status);
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const data = JSON.parse(xhr.responseText);
-              console.log("[SadeAIPage] Received XHR response data:", data);
-              setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
-              resolve(data);
+              console.log("[SadeAIPage] Received XHR response data (DUMMY):", data);
+              // setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Dummy Success!" }]); // Don't update UI
+              setMessages(msgs => [...msgs, { sender: 'ai', text: `Dummy Test OK: ${data.message}` }]); // Show dummy success
+              resolve(data); // Resolve the promise on success
             } catch (parseError) {
               console.error("[SadeAIPage] Error parsing XHR JSON response:", parseError);
               console.error("[SadeAIPage] Raw XHR response text:", xhr.responseText);
@@ -75,7 +79,7 @@ const SadeAIPage: React.FC = () => {
           reject(new Error('Request timed out'));
         };
 
-        console.log("[SadeAIPage] About to call xhr.send()...");
+        console.log("[SadeAIPage] About to call xhr.send() (DUMMY)...");
         xhr.send(requestBody);
       });
     } catch (err) {
