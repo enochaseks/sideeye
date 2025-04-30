@@ -40,8 +40,8 @@ class AudioService {
   private currentUserId: string | null = null; // Store the current user ID
 
   constructor() {
-    // Use environment variable for Socket.IO server URL
-    const socketUrl = process.env.REACT_APP_SOCKET_SERVER_URL || 'http://localhost:3001';
+    // Use the CORRECT environment variable name
+    const socketUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001';
     console.log(`Connecting to Socket.IO server at: ${socketUrl}`);
 
     this.socket = io(socketUrl, {
