@@ -178,13 +178,7 @@ const Navbar: React.FC = () => {
               },
             }}
           >
-            <MenuItem onClick={() => handleNavigation('/sade-ai')}>
-              <ListItemIcon>
-                <Psychology />
-              </ListItemIcon>
-              <ListItemText primary="Sade AI" />
-            </MenuItem>
-            <Divider />
+           
             <MenuItem onClick={() => handleNavigation('/settings')}>
               <ListItemIcon>
                 <SettingsIcon />

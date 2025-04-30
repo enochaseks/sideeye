@@ -13,7 +13,6 @@ import { ThemeContextProvider } from './contexts/ThemeContext';
 import Navbar from './components/Navbar';
 import { ThemeProvider } from '@mui/material';
 import theme from './theme';
-import Feed from './pages/Feed';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ResetPassword from './pages/ResetPassword';
@@ -25,7 +24,7 @@ import Messages from './pages/Messages';
 import { Toaster } from 'react-hot-toast';
 import SideRoomList from './components/SideRooms/SideRoomList';
 import SadeAIPage from './pages/SadeAIPage';
-import SideRoomComponent from './components/SideRooms/SideRoomComponent'; // Corrected the import path
+import SideRoomComponent from './components/SideRooms/SideRoomComponent';
 import Chat from './pages/Chat';
 import SafetyPage from './pages/SafetyPage';
 import SecurityPage from './pages/SecurityPage';
@@ -53,8 +52,7 @@ import CookieConsent from './components/CookieConsent';
 import BottomNav from './components/BottomNav';
 import './App.css';
 import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
-import Marketplace from './pages/Marketplace';
-import AddProduct from './pages/AddProduct';
+
 
 const BottomNavWrapper: React.FC = () => {
   const { currentUser } = useAuth();
@@ -84,65 +82,86 @@ const AppContent: React.FC = () => {
           <Route path="/setup-source-code" element={<SetupSourceCode />} />
           <Route path="/enter-source-code" element={<EnterSourceCode />} />
           <Route path="/reset-source-code" element={<ResetSourceCode />} />
-          <Route path="/sade-ai" element={<SadeAIPage />} />
-          
-          {/* Protected routes requiring full authentication */}
-          <Route path="/" element={
-            <ProtectedRoute requireEmailVerification requireDeviceSetup>
-              <Feed />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile/:userId" element={
-            <ProtectedRoute requireEmailVerification requireDeviceSetup>
-              <Profile />
-            </ProtectedRoute>
-          } />
-          <Route path="/settings" element={
-            <ProtectedRoute requireEmailVerification requireDeviceSetup>
-              <Settings />
-            </ProtectedRoute>
-          } />
-          <Route path="/security" element={
-            <ProtectedRoute requireEmailVerification requireDeviceSetup>
-              <SecurityPage />
-            </ProtectedRoute>
-          } />
-          
-          {/* Marketplace Route (Protected) */}
-          <Route path="/marketplace" element={
-            <ProtectedRoute requireEmailVerification requireDeviceSetup>
-              <Marketplace />
-            </ProtectedRoute>
-          } />
-          {/* Add Product Route (Protected) */}
-          <Route path="/marketplace/add" element={
-            <ProtectedRoute requireEmailVerification requireDeviceSetup>
-              <AddProduct />
-            </ProtectedRoute>
-          } />
-          {/* End Marketplace Routes */}
-          
-          {/* Other protected routes */}
-          <Route path="/search" element={<ProtectedRoute><SearchResults /></ProtectedRoute>} />
-          <Route path="/discover" element={<ProtectedRoute><Discover /></ProtectedRoute>} />
-          <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
-          <Route path="/side-rooms" element={<ProtectedRoute><SideRoomList /></ProtectedRoute>} />
-          <Route path="/side-room/:roomId" element={<ProtectedRoute><SideRoomComponent /></ProtectedRoute>} />
-          <Route path="/chat/:userId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
-          
-          {/* Public information pages */}
           <Route path="/safety" element={<SafetyPage />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/about" element={<About />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/cookies" element={<CookiePolicy />} />
           
-          {/* Protected management routes */}
-          <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
-          <Route path="/profile/:userId/followers" element={<ProtectedRoute><FollowersList /></ProtectedRoute>} />
-          <Route path="/profile/:userId/following" element={<ProtectedRoute><FollowingList /></ProtectedRoute>} />
-          <Route path="/notifications" element={<ProtectedRoute><NotificationPage /></ProtectedRoute>} />
-          <Route path="/account-management" element={<ProtectedRoute><DeletionDeactivatePage /></ProtectedRoute>} />
+          {/* Protected routes */}
+          <Route path="/" element={
+            <ProtectedRoute>
+              <Discover />
+            </ProtectedRoute>
+          } />
+          <Route path="/profile/:userId" element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          } />
+          <Route path="/settings" element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          } />
+          <Route path="/security" element={
+            <ProtectedRoute>
+              <SecurityPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/search" element={
+            <ProtectedRoute>
+              <SearchResults />
+            </ProtectedRoute>
+          } />
+          <Route path="/messages" element={
+            <ProtectedRoute>
+              <Messages />
+            </ProtectedRoute>
+          } />
+          <Route path="/side-rooms" element={
+            <ProtectedRoute>
+              <SideRoomList />
+            </ProtectedRoute>
+          } />
+          <Route path="/side-room/:roomId" element={
+            <ProtectedRoute>
+              <SideRoomComponent />
+            </ProtectedRoute>
+          } />
+          <Route path="/chat/:userId" element={
+            <ProtectedRoute>
+              <Chat />
+            </ProtectedRoute>
+          } />
+          <Route path="/trash" element={
+            <ProtectedRoute>
+              <TrashPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/profile/:userId/followers" element={
+            <ProtectedRoute>
+              <FollowersList />
+            </ProtectedRoute>
+          } />
+          <Route path="/profile/:userId/following" element={
+            <ProtectedRoute>
+              <FollowingList />
+            </ProtectedRoute>
+          } />
+          <Route path="/notifications" element={
+            <ProtectedRoute>
+              <NotificationPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/account-management" element={
+            <ProtectedRoute>
+              <DeletionDeactivatePage />
+            </ProtectedRoute>
+          } />
+          
+          {/* Redirect all other routes to home */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Box>
       <CookieConsent />

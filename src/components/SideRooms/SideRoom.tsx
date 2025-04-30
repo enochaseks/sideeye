@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../services/firebase';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, Firestore, onSnapshot, increment, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, onSnapshot, increment, serverTimestamp } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
   Box,
@@ -15,10 +15,11 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField
+  TextField,
+  Alert
 } from '@mui/material';
-import { ExitToApp, Lock, Group, LocalFireDepartment } from '@mui/icons-material';
-import type { SideRoom, RoomMember } from '../../types/index';
+import { ExitToApp, Lock, Group } from '@mui/icons-material';
+import type { SideRoom, RoomMember } from '../../types';
 
 interface SideRoomProps {
   roomId: string;
@@ -49,7 +50,7 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
             name: data.name || '',
             description: data.description || '',
             ownerId: data.ownerId || '',
-            members: data.members || [],
+            viewers: data.viewers || [],
             memberCount: data.memberCount || 0,
             createdAt: data.createdAt || new Date(),
             isPrivate: data.isPrivate || false,
@@ -59,17 +60,14 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
             maxMembers: data.maxMembers || 50,
             bannedUsers: data.bannedUsers || [],
             isLive: data.isLive || false,
-            liveParticipants: data.liveParticipants || [],
-            category: data.category || '',
-            scheduledReveals: data.scheduledReveals || [],
             activeUsers: data.activeUsers || 0
           };
           setRoom(roomData);
           setLoading(false);
 
-          // Check if user is already a member
-          const isMember = roomData.members?.some(member => member.userId === currentUser.uid);
-          if (!isMember && roomData.isPrivate) {
+          // Check if user is already a viewer
+          const isViewer = roomData.viewers?.some(viewer => viewer.userId === currentUser.uid);
+          if (!isViewer && roomData.isPrivate) {
             setShowPasswordDialog(true);
           }
         } else {
@@ -96,10 +94,18 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
     try {
       const roomRef = doc(db, 'sideRooms', room.id);
 
-      // Only track active users, don't add as member
+      // Add user as a viewer
+      const viewerData: RoomMember = {
+        userId: currentUser.uid,
+        username: currentUser.displayName || 'Anonymous',
+        avatar: currentUser.photoURL || '',
+        role: 'viewer',
+        joinedAt: new Date()
+      };
+
       await updateDoc(roomRef, {
-        activeUsers: increment(1),
-        lastActive: serverTimestamp()
+        viewers: arrayUnion(viewerData),
+        memberCount: increment(1)
       });
 
       toast.success('Joined room successfully');
@@ -115,26 +121,17 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
 
     try {
       const roomRef = doc(db, 'sideRooms', room.id);
-      const memberToRemove: RoomMember = {
+      const viewerToRemove: RoomMember = {
         userId: currentUser.uid,
         username: currentUser.displayName || 'Anonymous',
         avatar: currentUser.photoURL || '',
-        role: 'member',
+        role: 'viewer',
         joinedAt: new Date()
       };
 
       await updateDoc(roomRef, {
-        members: arrayRemove(memberToRemove),
-        memberCount: Math.max(0, (room.memberCount || 1) - 1)
-      });
-
-      setRoom(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          members: prev.members.filter((m: RoomMember) => m.userId !== currentUser.uid),
-          memberCount: Math.max(0, (prev.memberCount || 1) - 1)
-        };
+        viewers: arrayRemove(viewerToRemove),
+        memberCount: increment(-1)
       });
 
       toast.success('Left room successfully');
@@ -164,8 +161,10 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
   if (error) {
     return (
       <Box sx={{ p: 3 }}>
-        <Typography color="error">{error}</Typography>
-        <Button onClick={() => navigate('/side-rooms')}>Back to Rooms</Button>
+        <Alert severity="error">{error}</Alert>
+        <Button onClick={() => navigate('/side-rooms')} sx={{ mt: 1 }}>
+          Back to Rooms
+        </Button>
       </Box>
     );
   }
@@ -174,8 +173,8 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
     return null;
   }
 
-  const isMember = room.members?.some(member => member.userId === currentUser?.uid);
-  const owner = room.members?.find(member => member.role === 'owner');
+  const isViewer = room.viewers?.some(viewer => viewer.userId === currentUser?.uid);
+  const owner = room.viewers?.find(viewer => viewer.role === 'owner');
 
   return (
     <Box sx={{ p: 3 }}>
@@ -188,7 +187,7 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
             Created by {owner?.username || 'Anonymous'}
           </Typography>
         </Box>
-        {isMember && (
+        {isViewer && (
           <Button
             variant="outlined"
             color="error"
@@ -206,13 +205,8 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           <Chip
-            icon={<LocalFireDepartment />}
-            label={room.isLive ? 'Live' : 'Offline'}
-            color={room.isLive ? 'error' : 'success'}
-          />
-          <Chip
             icon={<Group />}
-            label={`${room.memberCount || 0} members`}
+            label={`${room.memberCount || 0} viewers`}
           />
           {room.isPrivate && (
             <Chip

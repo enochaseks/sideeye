@@ -47,7 +47,7 @@ const TermsOfService: React.FC = () => {
           </Typography>
           <ul>
             <li>Post or transmit any content that is unlawful, harmful, threatening, abusive, harassing, defamatory, vulgar, obscene, or otherwise objectionable</li>
-            <li>Upload videos to Vibits that contain inappropriate content, copyright infringement, or violate our Community Guidelines</li>
+            <li>Share audio content that contains inappropriate material, copyright infringement, or violate our Community Guidelines</li>
             <li>Harass, bully, intimidate, or stalk other users</li>
             <li>Impersonate any person or entity or falsely state or misrepresent your affiliation with a person or entity</li>
             <li>Interfere with or disrupt the proper functioning of the service or servers</li>
@@ -64,7 +64,7 @@ const TermsOfService: React.FC = () => {
             4. Content Ownership and License
           </Typography>
           <Typography variant="body1" paragraph>
-            You retain ownership of any content you post on SideEye, including videos uploaded to Vibits. By posting content, you grant us a worldwide, 
+            You retain ownership of any content you post on SideEye, including audio content shared in Side Rooms and Spaces. By posting content, you grant us a worldwide, 
             non-exclusive, royalty-free license (with the right to sublicense) to use, reproduce, process, adapt, modify, 
             publish, transmit, display, and distribute your content in any and all media or distribution methods.
           </Typography>
@@ -76,23 +76,23 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            5. Vibits Video Sharing
+            5. Audio Content and Participation
           </Typography>
           <Typography variant="body1" paragraph>
-            Vibits is our video sharing feature that allows users to upload, view, like, comment on, and share short videos. 
-            When using Vibits, you agree to:
+            SideEye provides audio-based features including Side Rooms and Spaces for real-time voice conversations. 
+            When participating in these features, you agree to:
           </Typography>
           <ul>
-            <li>Only upload videos that you have created or for which you have the necessary rights and permissions</li>
-            <li>Not upload videos that infringe on others' intellectual property rights</li>
-            <li>Not upload videos containing explicit content, hate speech, violence, or any content that violates our Community Guidelines</li>
-            <li>Allow other users to view, like, comment on, and share your videos according to your privacy settings</li>
-            <li>Grant us the license as described in Section 4 for videos you upload to Vibits</li>
-            <li>Understand that we may remove videos that violate our policies without prior notice</li>
+            <li>Only share audio content that you have the right to share</li>
+            <li>Not share content that infringes on others' intellectual property rights</li>
+            <li>Not share content containing explicit material, hate speech, violence, or any content that violates our Community Guidelines</li>
+            <li>Respect other participants and maintain appropriate conduct during audio sessions</li>
+            <li>Grant us the license as described in Section 4 for audio content you share</li>
+            <li>Understand that we may remove content or restrict access that violates our policies without prior notice</li>
           </ul>
           <Typography variant="body1" paragraph>
-            We may provide tools to enhance or edit your videos, but we do not claim ownership of your original content. 
-            We reserve the right to display advertisements alongside or within Vibits content without providing compensation to you.
+            We may provide tools to enhance your audio experience, but we do not claim ownership of your original content. 
+            We reserve the right to moderate audio sessions and take appropriate action to maintain community standards.
           </Typography>
         </Box>
 
@@ -123,7 +123,7 @@ const TermsOfService: React.FC = () => {
             8. Content Moderation
           </Typography>
           <Typography variant="body1" paragraph>
-            We reserve the right to moderate content posted on our platform, including Vibits videos. We may remove, restrict, or disable access to any 
+            We reserve the right to moderate content posted on our platform, including audio content from Side Rooms and Spaces. We may remove, restrict, or disable access to any 
             content or account that we determine violates these Terms or our Community Guidelines. Content moderation decisions 
             are made in our sole discretion. Users can appeal moderation decisions through our support channels.
           </Typography>
@@ -156,7 +156,7 @@ const TermsOfService: React.FC = () => {
             11. Content Removal and Recovery
           </Typography>
           <Typography variant="body1" paragraph>
-            When you delete content, including Vibits videos, it will be moved to a trash area for 24 hours before permanent deletion, allowing for 
+            When you delete content, including audio content from Side Rooms and Spaces, it will be moved to a trash area for 24 hours before permanent deletion, allowing for 
             recovery if accidentally deleted. We reserve the right to retain certain information as required by law or for 
             legitimate business purposes.
           </Typography>
@@ -201,7 +201,7 @@ const TermsOfService: React.FC = () => {
           </Typography>
           <Typography variant="body1" paragraph>
             SideEye respects the intellectual property rights of others. If you believe that your work has been copied in a way 
-            that constitutes copyright infringement on Vibits or elsewhere on our platform, please provide our copyright agent with the following information:
+            that constitutes copyright infringement in our audio features or elsewhere on our platform, please provide our copyright agent with the following information:
           </Typography>
           <ul>
             <li>An electronic or physical signature of the person authorized to act on behalf of the copyright owner</li>

@@ -17,8 +17,9 @@ const CookiePolicy: React.FC = () => {
             Introduction
           </Typography>
           <Typography variant="body1" paragraph>
-            SideEye uses cookies and similar technologies to provide, improve, and secure our services. This Cookie Policy explains 
-            how we use cookies, what types we use, their purposes, and how you can control them.
+            We use cookies and similar technologies to provide, improve, and secure our services. This Cookie Policy explains 
+            how we use cookies, what types we use, their purposes, and how you can control them. These technologies help us 
+            deliver our audio-based features, including Side Rooms and Spaces, and ensure a smooth user experience.
           </Typography>
         </Box>
 
@@ -64,6 +65,7 @@ const CookiePolicy: React.FC = () => {
             <li>Analytics cookies to measure user interactions with content</li>
             <li>Error monitoring cookies to identify and fix platform issues</li>
             <li>Load balancing cookies to distribute traffic to our servers</li>
+            <li>Audio quality monitoring cookies to ensure optimal performance</li>
           </ul>
           
           <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
@@ -102,6 +104,7 @@ const CookiePolicy: React.FC = () => {
             <li><strong>sideeye_preferences</strong>: Stores user preferences like theme and layout settings</li>
             <li><strong>sideeye_auth</strong>: Maintains login state and authentication details</li>
             <li><strong>sideeye_analytics</strong>: Collects anonymous usage data to improve our services</li>
+            <li><strong>sideeye_audio</strong>: Stores audio quality preferences and device settings</li>
           </ul>
         </Box>
 

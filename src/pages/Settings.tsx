@@ -60,7 +60,6 @@ interface FollowRequest {
 const DeviceSelector = () => {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioDevice, setSelectedAudioDevice] = useState('');
-  const [selectedVideoDevice, setSelectedVideoDevice] = useState('');
 
   useEffect(() => {
     const getDevices = async () => {
@@ -75,29 +74,24 @@ const DeviceSelector = () => {
     setSelectedAudioDevice(event.target.value);
   };
 
-  const handleVideoChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedVideoDevice(event.target.value);
-  };
-
-  const startStream = async () => {
+  const startAudio = async () => {
     const constraints = {
-      audio: { deviceId: selectedAudioDevice ? { exact: selectedAudioDevice } : undefined },
-      video: { deviceId: selectedVideoDevice ? { exact: selectedVideoDevice } : undefined },
+      audio: { deviceId: selectedAudioDevice ? { exact: selectedAudioDevice } : undefined }
     };
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      // Attach the stream to a video element or handle it as needed
+      // Handle the audio stream for Side Rooms and Spaces
     } catch (error) {
-      console.error('Error accessing media devices.', error);
+      console.error('Error accessing audio devices.', error);
     }
   };
 
   return (
     <div>
-      <h3>Select Audio and Video Devices</h3>
+      <h3>Audio Device Settings</h3>
       <div>
-        <label>Audio Input:</label>
+        <label>Microphone:</label>
         <select onChange={handleAudioChange} value={selectedAudioDevice}>
           {devices
             .filter((device) => device.kind === 'audioinput')
@@ -108,19 +102,7 @@ const DeviceSelector = () => {
             ))}
         </select>
       </div>
-      <div>
-        <label>Video Input:</label>
-        <select onChange={handleVideoChange} value={selectedVideoDevice}>
-          {devices
-            .filter((device) => device.kind === 'videoinput')
-            .map((device) => (
-              <option key={device.deviceId} value={device.deviceId}>
-                {device.label || `Camera ${device.deviceId}`}
-              </option>
-            ))}
-        </select>
-      </div>
-      <button onClick={startStream}>Start Stream</button>
+      <button onClick={startAudio}>Test Audio</button>
     </div>
   );
 };
@@ -140,7 +122,8 @@ const Settings: React.FC = () => {
   const [privacyStats, setPrivacyStats] = useState({
     followers: 0,
     following: 0,
-    pendingRequests: 0
+    pendingRequests: 0,
+    audioRooms: 0
   });
   const [showVerificationDialog, setShowVerificationDialog] = useState(false);
   const [showCreateCodeDialog, setShowCreateCodeDialog] = useState(false);
@@ -152,10 +135,10 @@ const Settings: React.FC = () => {
 
   const settingsItems = [
     {
-      title: 'Device Management',
+      title: 'Audio Settings',
       icon: <DevicesIcon />,
       path: '#',
-      description: 'Manage your connected devices and appearance settings',
+      description: 'Manage your audio devices and microphone settings',
       onClick: () => setShowDeviceDialog(true)
     },
     {
@@ -168,13 +151,13 @@ const Settings: React.FC = () => {
       title: 'Account Management',
       icon: <ManageAccountsIcon />,
       path: '/account-management',
-      description: 'Deactivate or delete your account'
+      description: 'Manage your account settings and preferences'
     },
     {
       title: 'Safety & Community Guidelines',
       icon: <ShieldIcon />,
       path: '/safety',
-      description: 'Review our safety policies and community guidelines'
+      description: 'Review our audio chat guidelines and community standards'
     },
     {
       title: 'About',
@@ -215,7 +198,8 @@ const Settings: React.FC = () => {
           setPrivacyStats({
             followers: userData.followers?.length || 0,
             following: userData.following?.length || 0,
-            pendingRequests: followRequests.length
+            pendingRequests: followRequests.length,
+            audioRooms: userData.audioRooms?.length || 0
           });
         }
       });
@@ -424,7 +408,7 @@ const Settings: React.FC = () => {
           maxWidth="sm"
           fullWidth
         >
-          <DialogTitle>Device Management</DialogTitle>
+          <DialogTitle>Audio Device Settings</DialogTitle>
           <DialogContent>
             <List>
               <ListItem>
@@ -469,7 +453,6 @@ const Settings: React.FC = () => {
                   No devices connected
                 </Typography>
               )}
-              {/* Add DeviceSelector component */}
               <DeviceSelector />
             </List>
           </DialogContent>
@@ -478,7 +461,6 @@ const Settings: React.FC = () => {
           </DialogActions>
         </Dialog>
 
-        {/* Enhanced Privacy Settings Section */}
         <Box sx={{ mb: 4, mt: 4 }}>
           <Typography variant="h6" gutterBottom>Privacy Settings</Typography>
           <Paper elevation={2} sx={{ p: 3 }}>
@@ -494,8 +476,8 @@ const Settings: React.FC = () => {
                   <Typography variant="subtitle1">Private Account</Typography>
                   <Typography variant="body2" color="text.secondary">
                     {isPrivate 
-                      ? 'Only approved followers can see your content' 
-                      : 'Anyone can see your content'}
+                      ? 'Only approved followers can join your audio rooms' 
+                      : 'Anyone can join your audio rooms'}
                   </Typography>
                 </Box>
               </Box>
@@ -506,7 +488,6 @@ const Settings: React.FC = () => {
               />
             </Box>
 
-            {/* Privacy Stats */}
             <Box sx={{ 
               display: 'flex', 
               gap: 3, 
@@ -523,6 +504,10 @@ const Settings: React.FC = () => {
                 <Typography variant="subtitle2" color="text.secondary">Following</Typography>
                 <Typography variant="h6">{privacyStats.following}</Typography>
               </Box>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">Audio Rooms</Typography>
+                <Typography variant="h6">{privacyStats.audioRooms}</Typography>
+              </Box>
               {isPrivate && (
                 <Box>
                   <Typography variant="subtitle2" color="text.secondary">Pending Requests</Typography>
@@ -531,23 +516,11 @@ const Settings: React.FC = () => {
               )}
             </Box>
 
-            {/* Privacy Tips */}
             <Alert severity="info" sx={{ mt: 2 }}>
               {isPrivate 
-                ? 'When your account is private, only approved followers can see your content. New followers must send a follow request.'
-                : 'When your account is public, anyone can see your content and follow you without approval.'}
+                ? 'When your account is private, only approved followers can join your audio rooms. New followers must send a follow request.'
+                : 'When your account is public, anyone can join your audio rooms and follow you without approval.'}
             </Alert>
-
-            <Divider />
-            <ListItem button onClick={handleViewSourceCode}>
-              <ListItemIcon>
-                <CodeIcon />
-              </ListItemIcon>
-              <ListItemText 
-                primary="View Registration Source Code" 
-                secondary="Verify your code to view your registration source code"
-              />
-            </ListItem>
           </Paper>
         </Box>
 

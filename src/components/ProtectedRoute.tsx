@@ -1,8 +1,9 @@
-import React from 'react';
-import { Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { User } from '../contexts/AuthContext';
 import LoadingSpinner from './LoadingSpinner';
+import { CircularProgress, Box } from '@mui/material';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -18,9 +19,21 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requireDeviceSetup = true
 }) => {
   const { currentUser, userProfile, loading } = useAuth();
+  const location = useLocation();
+
+  useEffect(() => {
+    // If not loading and no user, redirect to login
+    if (!loading && !currentUser) {
+      window.location.href = `/login?redirect=${encodeURIComponent(location.pathname)}`;
+    }
+  }, [currentUser, loading, location]);
 
   if (loading) {
-    return <LoadingSpinner message="Checking authentication..." />;
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
+    );
   }
 
   if (requireAuth && !currentUser) {

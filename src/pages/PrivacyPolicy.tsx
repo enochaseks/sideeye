@@ -23,7 +23,7 @@ const PrivacyPolicy: React.FC = () => {
             <li>Account information (username, email, display name)</li>
             <li>Profile information (bio, profile picture, custom avatars)</li>
             <li>Content you post (posts, comments, likes, reposts)</li>
-            <li>Videos you upload to Vibits (including metadata and engagement data)</li>
+            <li>Audio content from Side Rooms and Spaces</li>
             <li>Connection data (followers, following relationships)</li>
             <li>Messages and communications between users</li>
             <li>Usage information and interaction with the platform</li>
@@ -41,9 +41,7 @@ const PrivacyPolicy: React.FC = () => {
             <li>Provide and maintain our services</li>
             <li>Improve and personalize your experience</li>
             <li>Facilitate connections between users</li>
-            <li>Display relevant content in your feed</li>
             <li>Process and deliver messages between users</li>
-            <li>Recommend relevant videos in Vibits based on your preferences</li>
             <li>Monitor and enforce our community guidelines</li>
             <li>Communicate with you about updates and changes</li>
             <li>Ensure platform safety and security</li>
@@ -86,7 +84,7 @@ const PrivacyPolicy: React.FC = () => {
             <li>Access your personal information</li>
             <li>Correct inaccurate information</li>
             <li>Delete your account and associated data</li>
-            <li>Delete videos you've uploaded to Vibits</li>
+            <li>Delete audio content from Side Rooms and Spaces</li>
             <li>Control your privacy settings and follower relationships</li>
             <li>Restrict processing of your information</li>
             <li>Request a data export of your content</li>
@@ -99,7 +97,7 @@ const PrivacyPolicy: React.FC = () => {
             6. Content Removal and Retention
           </Typography>
           <Typography variant="body1" paragraph>
-            When you delete content, it may remain in our backup systems for a limited time. Deleted content is moved to a temporary storage for 24 hours before permanent deletion, allowing for potential recovery if accidentally deleted. For Vibits videos, we may retain non-personally identifiable analytics data even after video deletion.
+            When you delete content, it may remain in our backup systems for a limited time. Deleted content is moved to a temporary storage for 24 hours before permanent deletion, allowing for potential recovery if accidentally deleted. For audio content, we may retain non-personally identifiable analytics data even after deletion.
           </Typography>
         </Box>
 
@@ -123,20 +121,20 @@ const PrivacyPolicy: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            9. Vibits Video Information
+            9. Audio Content Information
           </Typography>
           <Typography variant="body1" paragraph>
-            When you upload videos to Vibits, we collect:
+            When you participate in Side Rooms or Spaces, we collect:
           </Typography>
           <ul>
-            <li><strong>Video Content:</strong> The actual video file you upload</li>
-            <li><strong>Metadata:</strong> Information such as upload time, duration, and format</li>
-            <li><strong>User Association:</strong> Connection between your account and the video</li>
-            <li><strong>Engagement Data:</strong> Likes, comments, shares, and viewing statistics</li>
-            <li><strong>Device Information:</strong> Information about the device used to upload the video</li>
+            <li><strong>Audio Content:</strong> The audio data from your participation</li>
+            <li><strong>Metadata:</strong> Information such as duration, timestamps, and participant information</li>
+            <li><strong>User Association:</strong> Connection between your account and the audio session</li>
+            <li><strong>Engagement Data:</strong> Participation statistics and interaction data</li>
+            <li><strong>Device Information:</strong> Information about the device used to participate</li>
           </ul>
           <Typography variant="body1" paragraph>
-            We use this information to provide the Vibits service, recommend videos to other users, and improve our platform. You maintain ownership of your videos and can delete them at any time, though we may retain anonymized analytics data.
+            We use this information to provide the audio chat services, improve our platform, and ensure quality of service. You maintain control over your audio content and can request deletion at any time, though we may retain anonymized analytics data.
           </Typography>
         </Box>
 

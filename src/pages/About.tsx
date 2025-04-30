@@ -83,36 +83,11 @@ const About: React.FC = () => {
                   fontSize: { xs: '1.25rem', md: '1.5rem' }
                 }}
               >
-                Create or join interactive discussion rooms where you can connect with other users in real-time. 
-                Side Rooms support live streaming, allowing you to go live and interact directly with your audience. 
-                These rooms can be public or private, with customizable settings for membership, moderation, and content focus.
-                Each room provides a dedicated space for conversations around specific interests or topics.
-              </Typography>
-            </Box>
-            <Box>
-              <Typography 
-                variant="h3" 
-                sx={{ 
-                  fontWeight: 'medium',
-                  mb: 3,
-                  fontSize: { xs: '1.75rem', md: '2rem' },
-                  color: 'primary.main'
-                }}
-              >
-                Feed
-              </Typography>
-              <Typography 
-                variant="h4" 
-                sx={{ 
-                  lineHeight: 1.8,
-                  color: 'text.secondary',
-                  fontSize: { xs: '1.25rem', md: '1.5rem' }
-                }}
-              >
-                Stay connected with content from users you follow through our personalized Feed. See posts, 
-                updates, and activities from your network in real-time. Our Feed is designed to show you the 
-                most relevant content based on your interests and connections, creating a tailored experience 
-                that keeps you engaged with your community.
+                Create or join audio-based discussion rooms where you can connect with other users in real-time. 
+                Side Rooms provide a space for meaningful conversations and community building through voice interactions. 
+                These rooms can be public or private, with customizable settings for membership and moderation. 
+                Each room serves as a dedicated space for focused discussions around specific topics or interests, 
+                allowing users to engage in authentic conversations with like-minded individuals.
               </Typography>
             </Box>
             <Box>
@@ -203,7 +178,7 @@ const About: React.FC = () => {
                   color: 'primary.main'
                 }}
               >
-                Vibits
+                Audio Spaces
               </Typography>
               <Typography 
                 variant="h4" 
@@ -213,37 +188,11 @@ const About: React.FC = () => {
                   fontSize: { xs: '1.25rem', md: '1.5rem' }
                 }}
               >
-                Share and discover short-form videos through our Vibits feature. Create, upload, and engage with 
-                captivating video content in a vertical scrolling format. Interact with videos through likes, comments, 
-                and sharing, or follow content creators you enjoy. Vibits offers a dynamic way to express yourself 
-                creatively and connect with others through visual storytelling, with built-in moderation to ensure 
-                a safe viewing experience.
-              </Typography>
-            </Box>
-            <Box>
-              <Typography 
-                variant="h3" 
-                sx={{ 
-                  fontWeight: 'medium',
-                  mb: 3,
-                  fontSize: { xs: '1.75rem', md: '2rem' },
-                  color: 'primary.main'
-                }}
-              >
-                Live Streaming
-              </Typography>
-              <Typography 
-                variant="h4" 
-                sx={{ 
-                  lineHeight: 1.8,
-                  color: 'text.secondary',
-                  fontSize: { xs: '1.25rem', md: '1.5rem' }
-                }}
-              >
-                Go live in Side Rooms to engage with your audience in real-time through video streaming. 
-                Host discussions, Q&A sessions, or casual hangouts with followers and community members. 
-                Our streaming feature supports interactive elements like viewer comments and reactions, 
-                creating an immersive and engaging experience for both hosts and viewers.
+                Join or host live audio conversations in our Spaces feature. Similar to popular audio chat platforms,
+                Spaces allow you to have real-time voice discussions with other users. Hosts can invite speakers,
+                manage participants, and create an engaging audio experience. Listeners can join to hear the conversation
+                and request to speak when appropriate. Perfect for discussions, Q&A sessions, or casual hangouts with
+                your community.
               </Typography>
             </Box>
           </Box>

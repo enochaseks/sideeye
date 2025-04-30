@@ -22,7 +22,10 @@ import {
   Card,
   CardContent,
   CardMedia,
-  Button
+  Button,
+  useTheme,
+  useMediaQuery,
+  ListItemSecondaryAction
 } from '@mui/material';
 import { 
   TrendingUp as TrendingIcon,
@@ -34,7 +37,8 @@ import {
   People as PeopleIcon,
   Favorite as FavoriteIcon,
   Comment as CommentIcon,
-  Store as StoreIcon
+  Store as StoreIcon,
+  Share as ShareIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -58,12 +62,16 @@ import {
   DocumentSnapshot,
   onSnapshot,
   runTransaction,
-  increment
+  increment,
+  startAt,
+  endAt
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import { formatTimestamp } from '../utils/dateUtils';
+import ClickAwayListener from '@mui/material/ClickAwayListener';
+import Popper from '@mui/material/Popper';
 
 interface UserProfile {
   id: string;
@@ -141,17 +149,32 @@ interface Video {
   thumbnailUrl?: string;
 }
 
+interface PresenceData {
+  id: string;
+  role?: 'owner' | 'viewer';
+  isMuted?: boolean;
+  isOnline: boolean;
+}
+
 const Discover: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [users, setUsers] = useState<UserProfile[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [following, setFollowing] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [showSearch, setShowSearch] = useState(false);
+  const [isSearchView, setIsSearchView] = useState(false);
+  const [dropdownUsers, setDropdownUsers] = useState<UserProfile[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchRef = React.useRef<HTMLDivElement>(null);
+  const [roomListeners, setRoomListeners] = useState<(() => void)[]>([]);
 
   const fetchDefaultUsers = async () => {
     try {
@@ -181,60 +204,111 @@ const Discover: React.FC = () => {
   const fetchRooms = async () => {
     try {
       setLoading(true);
+      // Clean up existing listeners
+      roomListeners.forEach(unsubscribe => unsubscribe());
+      setRoomListeners([]);
+
       const roomsRef = collection(db, 'sideRooms');
       const q = firestoreQuery(
         roomsRef,
-        orderBy('createdAt', 'desc'),
+        orderBy('lastActive', 'desc'),
         limit(20)
       );
-      
-      // Use onSnapshot instead of getDocs for real-time updates
-      const unsubscribe = onSnapshot(q, async (snapshot) => {
-        const roomsData = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
-          const roomData = docSnapshot.data();
-          let creatorData = null;
-          
-          // Get creator data if ownerId exists
-          if (roomData.ownerId) {
-            const creatorDocRef = doc(db, 'users', roomData.ownerId);
-            const creatorDocSnapshot = await getDoc(creatorDocRef);
-            if (creatorDocSnapshot.exists()) {
-              creatorData = creatorDocSnapshot.data();
-            }
+
+      // Initial fetch of rooms
+      const querySnapshot = await getDocs(q);
+      const roomsData = await Promise.all(querySnapshot.docs.map(async (docSnapshot) => {
+        const data = docSnapshot.data();
+        let creatorData = null;
+
+        if (data.ownerId) {
+          const creatorDocRef = doc(db, 'users', data.ownerId);
+          const creatorDocSnapshot = await getDoc(creatorDocRef);
+          if (creatorDocSnapshot.exists()) {
+            creatorData = creatorDocSnapshot.data();
           }
-          
-          return {
-            id: docSnapshot.id,
-            name: roomData.name || 'Unnamed Room',
-            description: roomData.description || '',
-            memberCount: roomData.memberCount || 0,
-            shareCount: roomData.shareCount || 0,
-            isPrivate: roomData.isPrivate || false,
-            createdAt: roomData.createdAt?.toDate() || new Date(),
-            creatorName: creatorData?.username || roomData.creatorName || '',
-            creatorId: roomData.ownerId || '',
-            creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
-            tags: roomData.tags || [],
-            lastActive: roomData.lastActive?.toDate() || new Date(),
-            maxMembers: roomData.maxMembers || 50,
-            activeUsers: roomData.activeUsers || 0,
-            isLive: roomData.isLive || false
-          };
-        }));
-        
-        setRooms(roomsData);
-        setLoading(false);
-      }, (error) => {
-        console.error('Error fetching rooms:', error);
-        toast.error('Failed to load rooms');
-        setLoading(false);
+        }
+
+        return {
+          id: docSnapshot.id,
+          name: data.name || '',
+          description: data.description || '',
+          memberCount: data.memberCount || 0,
+          shareCount: data.shareCount || 0,
+          isPrivate: data.isPrivate || false,
+          createdAt: data.createdAt?.toDate() || new Date(),
+          creatorName: creatorData?.username || data.creatorName || '',
+          creatorId: data.ownerId || '',
+          creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
+          tags: data.tags || [],
+          lastActive: data.lastActive?.toDate() || new Date(),
+          maxMembers: data.maxMembers || 50,
+          activeUsers: data.activeUsers || 0,
+          isLive: data.isLive || false
+        };
+      }));
+
+      setRooms(roomsData);
+
+      // Set up real-time listeners for each room
+      roomsData.forEach(room => {
+        setupRoomListener(room.id);
       });
 
-      // Return unsubscribe function
-      return () => unsubscribe();
+      // Set up a listener for new rooms
+      const roomsListener = onSnapshot(q, (snapshot) => {
+        snapshot.docChanges().forEach(async (change) => {
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            let creatorData = null;
+
+            if (data.ownerId) {
+              const creatorDocRef = doc(db, 'users', data.ownerId);
+              const creatorDocSnapshot = await getDoc(creatorDocRef);
+              if (creatorDocSnapshot.exists()) {
+                creatorData = creatorDocSnapshot.data();
+              }
+            }
+
+            const newRoom = {
+              id: change.doc.id,
+              name: data.name || '',
+              description: data.description || '',
+              memberCount: data.memberCount || 0,
+              shareCount: data.shareCount || 0,
+              isPrivate: data.isPrivate || false,
+              createdAt: data.createdAt?.toDate() || new Date(),
+              creatorName: creatorData?.username || data.creatorName || '',
+              creatorId: data.ownerId || '',
+              creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
+              tags: data.tags || [],
+              lastActive: data.lastActive?.toDate() || new Date(),
+              maxMembers: data.maxMembers || 50,
+              activeUsers: data.activeUsers || 0,
+              isLive: data.isLive || false
+            };
+
+            setRooms(prevRooms => {
+              if (!prevRooms.find(r => r.id === newRoom.id)) {
+                setupRoomListener(newRoom.id);
+                return [newRoom, ...prevRooms];
+              }
+              return prevRooms;
+            });
+          }
+          if (change.type === 'removed') {
+            setRooms(prevRooms => prevRooms.filter(room => room.id !== change.doc.id));
+          }
+        });
+      });
+
+      // Add the rooms listener to the cleanup list
+      setRoomListeners(prev => [...prev, roomsListener]);
+
     } catch (error) {
       console.error('Error fetching rooms:', error);
       toast.error('Failed to load rooms');
+    } finally {
       setLoading(false);
     }
   };
@@ -500,223 +574,268 @@ const Discover: React.FC = () => {
     navigate(`/side-room/${roomId}`);
   };
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = async (query: string, isSubmit: boolean = false) => {
     setSearchQuery(query);
     
-    if (!currentUser || !db) {
-      setUsers([]);
-      setRooms([]);
-      setVideos([]);
-      return;
-    }
-
-    if (query.length < 2) {
-      // If query is too short, fetch default data
-      fetchDefaultUsers();
+    if (query.length < 2 && !isSubmit) {
+      setIsSearchView(false);
       fetchRooms();
-      fetchVideos();
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const searchTerm = query.toLowerCase();
+    if (isSubmit) {
+      setIsSearchView(true);
+      setLoading(true);
+      try {
+        const searchTerm = query.toLowerCase();
+        
+        // Modified user search query
+        const usersRef = collection(db, 'users');
+        const usersQuery = firestoreQuery(
+          usersRef,
+          orderBy('username'),
+          startAt(searchTerm),
+          endAt(searchTerm + '\uf8ff'),
+          limit(20)
+        );
 
-      // Search for users
-      const usersRef = collection(db, 'users');
-      const usersQuery = firestoreQuery(
-        usersRef,
-        where('username_lower', '>=', searchTerm),
-        where('username_lower', '<=', searchTerm + '\uf8ff'),
-        limit(20)
-      );
-      
-      // Search for rooms
-      const roomsRef = collection(db, 'sideRooms');
-      const roomsQuery = firestoreQuery(
-        roomsRef,
-        where('name_lower', '>=', searchTerm),
-        where('name_lower', '<=', searchTerm + '\uf8ff'),
-        limit(20)
-      );
+        // Search for rooms
+        const roomsRef = collection(db, 'sideRooms');
+        const roomsQuery = firestoreQuery(
+          roomsRef,
+          where('name_lower', '>=', searchTerm),
+          where('name_lower', '<=', searchTerm + '\uf8ff'),
+          limit(20)
+        );
 
-      // Search for videos
-      const videosRef = collection(db, 'videos');
-      const videosQuery = firestoreQuery(
-        videosRef,
-        where('title_lower', '>=', searchTerm),
-        where('title_lower', '<=', searchTerm + '\uf8ff'),
-        limit(20)
-      );
+        const [usersSnapshot, roomsSnapshot] = await Promise.all([
+          getDocs(usersQuery),
+          getDocs(roomsQuery)
+        ]);
 
-      // Execute all queries in parallel
-      const [usersSnapshot, roomsSnapshot, videosSnapshot] = await Promise.all([
-        getDocs(usersQuery),
-        getDocs(roomsQuery),
-        getDocs(videosQuery)
-      ]);
-
-      // Process users results
-      const usersData = usersSnapshot.docs
-        .map(doc => ({
+        // Process users with additional name search if needed
+        let usersData = usersSnapshot.docs.map(doc => ({
           id: doc.id,
-          ...doc.data(),
           username: doc.data().username || '',
           name: doc.data().name || '',
           bio: doc.data().bio || '',
           profilePic: doc.data().profilePic || '',
-          avatar: doc.data().avatar || '',
+          isPublic: true,
+          isAuthenticated: true,
           createdAt: doc.data().createdAt
-        } as FirestoreUser))
-        .filter(user => 
-          user.username.toLowerCase().includes(searchTerm) || 
-          user.name.toLowerCase().includes(searchTerm) ||
-          (user.bio && user.bio.toLowerCase().includes(searchTerm))
-        );
-      
-      // Process rooms results
-      const roomsData = await Promise.all(roomsSnapshot.docs.map(async (docSnapshot) => {
-        const data = docSnapshot.data();
-        const roomData: FirestoreRoom = {
-          id: docSnapshot.id,
-          name: data.name || '',
-          description: data.description || '',
-          ownerId: data.ownerId || '',
-          createdAt: data.createdAt,
-          lastActive: data.lastActive,
-          tags: data.tags || [],
-          isPrivate: data.isPrivate || false,
-          activeUsers: data.activeUsers || 0,
-          isLive: data.isLive || false
-        };
+        }));
 
-        let creatorData: FirestoreUser | null = null;
-        
-        if (roomData.ownerId) {
-          const creatorDocRef = doc(db, 'users', roomData.ownerId);
-          const creatorDocSnapshot = await getDoc(creatorDocRef);
-          if (creatorDocSnapshot.exists()) {
-            const creatorDocData = creatorDocSnapshot.data();
-            creatorData = {
-              id: creatorDocSnapshot.id,
-              username: creatorDocData.username || '',
-              name: creatorDocData.name || '',
-              profilePic: creatorDocData.profilePic || '',
-              avatar: creatorDocData.avatar || '',
-              createdAt: creatorDocData.createdAt
-            } as FirestoreUser;
-          }
+        // If no results by username, try searching by name
+        if (usersData.length === 0) {
+          const nameQuery = firestoreQuery(
+            usersRef,
+            orderBy('name'),
+            startAt(searchTerm),
+            endAt(searchTerm + '\uf8ff'),
+            limit(20)
+          );
+          const nameSnapshot = await getDocs(nameQuery);
+          usersData = nameSnapshot.docs.map(doc => ({
+            id: doc.id,
+            username: doc.data().username || '',
+            name: doc.data().name || '',
+            bio: doc.data().bio || '',
+            profilePic: doc.data().profilePic || '',
+            isPublic: true,
+            isAuthenticated: true,
+            createdAt: doc.data().createdAt
+          }));
         }
-        
-        return {
-          id: docSnapshot.id,
-          name: roomData.name,
-          description: roomData.description,
-          memberCount: data.memberCount || 0,
-          shareCount: data.shareCount || 0,
-          isPrivate: roomData.isPrivate,
-          createdAt: roomData.createdAt?.toDate() || new Date(),
-          creatorName: creatorData?.username || data.creatorName || '',
-          creatorId: roomData.ownerId,
-          creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
-          tags: roomData.tags,
-          lastActive: roomData.lastActive?.toDate() || new Date(),
-          maxMembers: data.maxMembers || 50,
-          activeUsers: roomData.activeUsers,
-          isLive: roomData.isLive
-        };
-      }));
 
-      // Filter rooms by search term
-      const filteredRooms = roomsData.filter(room => 
-        room.name.toLowerCase().includes(searchTerm) || 
-        room.description.toLowerCase().includes(searchTerm) ||
-        room.tags?.some((tag: string) => tag.toLowerCase().includes(searchTerm))
+        // Process rooms (keep existing room processing logic)
+        const roomsData = await Promise.all(roomsSnapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data();
+          const roomData: FirestoreRoom = {
+            id: docSnapshot.id,
+            name: data.name || '',
+            description: data.description || '',
+            ownerId: data.ownerId || '',
+            createdAt: data.createdAt,
+            lastActive: data.lastActive,
+            tags: data.tags || [],
+            isPrivate: data.isPrivate || false,
+            activeUsers: data.activeUsers || 0,
+            isLive: data.isLive || false
+          };
+
+          let creatorData: FirestoreUser | null = null;
+          if (roomData.ownerId) {
+            const creatorDocRef = doc(db, 'users', roomData.ownerId);
+            const creatorDocSnapshot = await getDoc(creatorDocRef);
+            if (creatorDocSnapshot.exists()) {
+              creatorData = creatorDocSnapshot.data() as FirestoreUser;
+            }
+          }
+
+          return {
+            id: docSnapshot.id,
+            name: roomData.name,
+            description: roomData.description,
+            memberCount: data.memberCount || 0,
+            shareCount: data.shareCount || 0,
+            isPrivate: roomData.isPrivate,
+            createdAt: roomData.createdAt?.toDate() || new Date(),
+            creatorName: creatorData?.username || data.creatorName || '',
+            creatorId: roomData.ownerId,
+            creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
+            tags: roomData.tags || [],
+            lastActive: roomData.lastActive?.toDate() || new Date(),
+            maxMembers: data.maxMembers || 50,
+            activeUsers: roomData.activeUsers,
+            isLive: roomData.isLive
+          };
+        }));
+
+        setUsers(usersData);
+        setRooms(roomsData);
+      } catch (error: any) {
+        console.error('Search error:', error);
+        toast.error(`Search failed: ${error.code || error.message}`);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleSearchSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch(searchQuery, true);
+    }
+  };
+
+  const handleInstantSearch = async (query: string) => {
+    setSearchQuery(query);
+    
+    if (query.length < 1) {
+      setDropdownUsers([]);
+      setShowDropdown(false);
+      return;
+    }
+
+    try {
+      const searchTerm = query.toLowerCase();
+      const usersRef = collection(db, 'users');
+      
+      // Modified query to search by username
+      const usersQuery = firestoreQuery(
+        usersRef,
+        orderBy('username'),
+        startAt(searchTerm),
+        endAt(searchTerm + '\uf8ff'),
+        limit(5)
       );
 
-      // Convert room data to Room type
-      const roomResults = filteredRooms.map(room => ({
-        id: room.id,
-        name: room.name,
-        description: room.description,
-        memberCount: room.memberCount || 0,
-        shareCount: room.shareCount || 0,
-        isPrivate: room.isPrivate,
-        createdAt: room.createdAt,
-        creatorName: room.creatorName,
-        creatorId: room.creatorId,
-        creatorAvatar: room.creatorAvatar,
-        tags: room.tags || [],
-        lastActive: room.lastActive,
-        maxMembers: room.maxMembers || 50,
-        activeUsers: room.activeUsers,
-        isLive: room.isLive
-      })) as Room[];
-
-      // Process videos results
-      const videosData = videosSnapshot.docs
-        .map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            title: data.title || '',
-            description: data.description || '',
-            username: data.username || '',
-            userId: data.userId || '',
-            url: data.url || '',
-            thumbnailUrl: data.thumbnailUrl || '',
-            timestamp: data.timestamp
-          } as FirestoreVideo;
-        })
-        .filter(video => 
-          video.title.toLowerCase().includes(searchTerm) ||
-          (video.description && video.description.toLowerCase().includes(searchTerm)) ||
-          video.username.toLowerCase().includes(searchTerm)
+      const usersSnapshot = await getDocs(usersQuery);
+      
+      if (usersSnapshot.empty) {
+        // If no results with username, try searching by display name
+        const nameQuery = firestoreQuery(
+          usersRef,
+          orderBy('name'),
+          startAt(searchTerm),
+          endAt(searchTerm + '\uf8ff'),
+          limit(5)
         );
-
-      // Convert FirestoreUser to UserProfile
-      const userProfiles = usersData.map(user => ({
-        id: user.id,
-        username: user.username,
-        name: user.name,
-        profilePic: user.profilePic || '',
-        bio: user.bio || '',
-        coverPhoto: user.coverPhoto || '',
-        isPublic: true,
-        isAuthenticated: true,
-        createdAt: user.createdAt
-      }));
-
-      // Convert FirestoreVideo to Video
-      const videoResults = videosData.map(video => ({
-        id: video.id,
-        title: video.title,
-        description: video.description || '',
-        username: video.username,
-        userId: video.userId,
-        url: video.url,
-        thumbnailUrl: video.thumbnailUrl || '',
-        timestamp: video.timestamp,
-        likes: 0,
-        comments: 0
-      }));
-
-      setUsers(userProfiles);
-      setRooms(roomResults);
-      setVideos(videoResults);
-
-    } catch (error: any) {
-      console.error('Search error:', error);
-      setError(`Failed to perform search: ${error.message}`);
-      toast.error(`Search failed: ${error.code || error.message}`);
-      // Fallback to default data on error
-      fetchDefaultUsers();
-      fetchRooms();
-      fetchVideos();
-    } finally {
-      setLoading(false);
+        const nameSnapshot = await getDocs(nameQuery);
+        const usersData = nameSnapshot.docs.map(doc => ({
+          id: doc.id,
+          username: doc.data().username || '',
+          name: doc.data().name || '',
+          bio: doc.data().bio || '',
+          profilePic: doc.data().profilePic || '',
+          isPublic: true,
+          isAuthenticated: true,
+          createdAt: doc.data().createdAt
+        }));
+        setDropdownUsers(usersData);
+      } else {
+        const usersData = usersSnapshot.docs.map(doc => ({
+          id: doc.id,
+          username: doc.data().username || '',
+          name: doc.data().name || '',
+          bio: doc.data().bio || '',
+          profilePic: doc.data().profilePic || '',
+          isPublic: true,
+          isAuthenticated: true,
+          createdAt: doc.data().createdAt
+        }));
+        setDropdownUsers(usersData);
+      }
+      
+      setShowDropdown(true);
+    } catch (error) {
+      console.error('Instant search error:', error);
+      toast.error('Failed to search users');
     }
+  };
+
+  const handleClickAway = () => {
+    setShowDropdown(false);
+  };
+
+  // Cleanup function for listeners
+  useEffect(() => {
+    return () => {
+      // Cleanup all room listeners when component unmounts
+      roomListeners.forEach(unsubscribe => unsubscribe());
+    };
+  }, [roomListeners]);
+
+  const setupRoomListener = (roomId: string) => {
+    // Create a real-time listener for room status and presence
+    const roomRef = doc(db, 'sideRooms', roomId);
+    const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
+    
+    // Listen to presence collection for active users
+    const presenceQuery = firestoreQuery(presenceRef, where("isOnline", "==", true));
+    const presenceUnsubscribe = onSnapshot(presenceQuery, (presenceSnapshot) => {
+      const activeUsers = presenceSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as PresenceData[];
+      
+      // Find the room owner in the active users
+      const roomOwner = activeUsers.find(user => user.role === 'owner');
+      // Ensure isLive is always a boolean
+      const isLive = Boolean(roomOwner && !roomOwner.isMuted);
+      
+      // Update room's active users count and live status in Firestore
+      updateDoc(roomRef, {
+        activeUsers: activeUsers.length,
+        isLive: isLive,  // Now guaranteed to be a boolean
+        lastActive: serverTimestamp()
+      }).catch(error => {
+        console.error(`Error updating room ${roomId} status:`, error);
+      });
+    });
+
+    // Listen to room document for other changes
+    const roomUnsubscribe = onSnapshot(roomRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const roomData = snapshot.data();
+        setRooms(prevRooms => {
+          const updatedRooms = [...prevRooms];
+          const roomIndex = updatedRooms.findIndex(r => r.id === roomId);
+          if (roomIndex !== -1) {
+            updatedRooms[roomIndex] = {
+              ...updatedRooms[roomIndex],
+              isLive: Boolean(roomData.isLive),  // Ensure boolean here too
+              activeUsers: roomData.activeUsers || 0,
+              lastActive: roomData.lastActive?.toDate() || new Date()
+            };
+          }
+          return updatedRooms;
+        });
+      }
+    });
+
+    // Store both unsubscribe functions
+    setRoomListeners(prevListeners => [...prevListeners, presenceUnsubscribe, roomUnsubscribe]);
   };
 
   if (loading) {
@@ -728,261 +847,566 @@ const Discover: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4 }}>
-      <Box sx={{ mb: 4, display: 'flex', alignItems: 'center', gap: 2 }}>
-        <TrendingIcon fontSize="large" color="primary" />
-        <Typography variant="h4" component="h1">
-          Discover
-        </Typography>
-      </Box>
-
-      <Paper sx={{ p: 2, mb: 4 }}>
-        <TextField
-          fullWidth
-          placeholder="Search users and rooms..."
-          value={searchQuery}
-          onChange={(e) => handleSearch(e.target.value)}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-            endAdornment: loading && (
-              <InputAdornment position="end">
-                <CircularProgress size={20} />
-              </InputAdornment>
-            )
-          }}
-        />
-      </Paper>
-
-      <Box sx={{ width: '100%', mb: 4 }}>
-        <Tabs
-          value={activeTab}
-          onChange={handleTabChange}
-          variant="fullWidth"
-          indicatorColor="primary"
-          textColor="primary"
-        >
-          <Tab icon={<PeopleIcon />} label="People" />
-          <Tab icon={<GroupIcon />} label="Rooms" />
-          <Tab icon={<StoreIcon />} label="Marketplace" />
-        </Tabs>
-      </Box>
-      
-      {activeTab === 0 && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Users Section */}
-          <Paper>
-            <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="h6" component="h2">
-                Users
+    <Box sx={{ 
+      height: '100vh',
+      overflowY: 'auto',
+      position: 'relative',
+      backgroundColor: theme.palette.background.default
+    }}>
+      {/* Header and Search Section */}
+      <Box sx={{
+        position: 'sticky',
+        top: 0,
+        backgroundColor: theme.palette.background.default,
+        zIndex: 1000,
+        pt: 2,
+        pb: 2,
+        borderBottom: 1,
+        borderColor: 'divider'
+      }}>
+        <Container maxWidth={false} sx={{ maxWidth: '1440px' }}>
+          <Box sx={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            mb: 2
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography 
+                variant={isMobile ? "h5" : "h4"} 
+                component="h1"
+                sx={{ fontWeight: 600 }}
+              >
+                {isSearchView ? 'Search Results' : 'Discover'}
               </Typography>
             </Box>
-            <List>
-              {users.length === 0 ? (
-                <ListItem>
-                  <ListItemText 
-                    primary="No users found" 
-                    secondary="Try a different search term"
-                  />
-                </ListItem>
-              ) : (
-                users.map((user, index) => (
-                  <React.Fragment key={user.id}>
-                    <ListItem
-                      secondaryAction={
-                        user.id !== currentUser?.uid && (
-                          <Box sx={{ display: 'flex', gap: 1 }}>
-                            <IconButton
-                              edge="end"
-                              onClick={() => navigate(`/messages/${user.id}`)}
-                              title="Send message"
-                            >
-                              <MessageIcon />
-                            </IconButton>
-                            <IconButton
-                              edge="end"
-                              onClick={() => handleFollow(user.id)}
-                              title={following.has(user.id) ? "Unfollow user" : "Follow user"}
-                              color={following.has(user.id) ? "primary" : "default"}
-                            >
-                              <PersonAddIcon />
-                            </IconButton>
-                          </Box>
-                        )
-                      }
-                    >
-                      <ListItemAvatar>
-                        <Avatar src={user.profilePic} alt={user.name}>
-                          {user.name[0]}
-                        </Avatar>
-                      </ListItemAvatar>
-                      <ListItemText
-                        primary={user.name}
-                        secondary={
-                          <React.Fragment>
-                            @{user.username}
-                            {user.bio && (
-                              <Typography
-                                component="span"
-                                variant="body2"
-                                color="text.secondary"
-                                sx={{ display: 'block' }}
-                              >
-                                {user.bio.length > 100 
-                                  ? `${user.bio.substring(0, 100)}...` 
-                                  : user.bio}
-                              </Typography>
-                            )}
-                          </React.Fragment>
+            <ClickAwayListener onClickAway={handleClickAway}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, position: 'relative' }}>
+                {showSearch && (
+                  <Box ref={searchRef}>
+                    <TextField
+                      size="small"
+                      placeholder="Search rooms and users..."
+                      value={searchQuery}
+                      onChange={(e) => {
+                        handleInstantSearch(e.target.value);
+                        handleSearch(e.target.value);
+                      }}
+                      onKeyDown={handleSearchSubmit}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon />
+                          </InputAdornment>
+                        ),
+                      }}
+                      sx={{ 
+                        backgroundColor: 'background.paper',
+                        borderRadius: 1,
+                        width: isMobile ? '200px' : '250px',
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 1,
                         }
-                        onClick={() => handleUserClick(user.id)}
-                        sx={{ cursor: 'pointer' }}
-                      />
-                    </ListItem>
-                    {index < users.length - 1 && <Divider />}
-                  </React.Fragment>
-                ))
-              )}
-            </List>
-          </Paper>
-        </Box>
-      )}
-      
-      {activeTab === 1 && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Rooms Section */}
-          <Paper>
-            <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="h6" component="h2">
-                Rooms
-              </Typography>
-            </Box>
-            <List>
-              {rooms.length === 0 ? (
-                <ListItem>
-                  <ListItemText 
-                    primary="No rooms found" 
-                    secondary="No side rooms have been created yet."
-                  />
-                </ListItem>
-              ) : (
-                rooms.map((room, index) => (
-                  <React.Fragment key={room.id}>
-                    <ListItem
-                      secondaryAction={
-                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                          <Chip
-                            icon={<PeopleIcon />}
-                            label={`${room.activeUsers || 0} viewing`}
-                            size="small"
-                            color="primary"
-                            variant="outlined"
+                      }}
+                    />
+                    {/* Dropdown Results */}
+                    <Popper
+                      open={showDropdown && dropdownUsers.length > 0}
+                      anchorEl={searchRef.current}
+                      placement="bottom-start"
+                      style={{ width: searchRef.current?.offsetWidth, zIndex: 1400 }}
+                    >
+                      <Paper 
+                        elevation={3}
+                        sx={{ 
+                          mt: 1,
+                          maxHeight: '300px',
+                          overflowY: 'auto',
+                          borderRadius: 1
+                        }}
+                      >
+                        <List sx={{ p: 0 }}>
+                          {dropdownUsers.map((user, index) => (
+                            <React.Fragment key={user.id}>
+                              <ListItem
+                                button
+                                onClick={() => {
+                                  navigate(`/profile/${user.id}`);
+                                  setShowDropdown(false);
+                                }}
+                                sx={{ 
+                                  py: 1,
+                                  px: 2,
+                                  '&:hover': {
+                                    backgroundColor: 'action.hover'
+                                  }
+                                }}
+                              >
+                                <ListItemAvatar>
+                                  <Avatar 
+                                    src={user.profilePic} 
+                                    alt={user.name}
+                                    sx={{ width: 32, height: 32 }}
+                                  >
+                                    {user.name[0]}
+                                  </Avatar>
+                                </ListItemAvatar>
+                                <ListItemText
+                                  primary={
+                                    <Typography variant="body1">
+                                      {user.name}
+                                    </Typography>
+                                  }
+                                  secondary={
+                                    <Typography variant="body2" color="text.secondary">
+                                      @{user.username}
+                                    </Typography>
+                                  }
+                                  sx={{ my: 0 }}
+                                />
+                                {currentUser && user.id !== currentUser.uid && (
+                                  <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <IconButton
+                                      size="small"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/messages/${user.id}`);
+                                      }}
+                                    >
+                                      <MessageIcon fontSize="small" />
+                                    </IconButton>
+                                    <IconButton
+                                      size="small"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleFollow(user.id);
+                                      }}
+                                      color={following.has(user.id) ? "primary" : "default"}
+                                    >
+                                      <PersonAddIcon fontSize="small" />
+                                    </IconButton>
+                                  </Box>
+                                )}
+                              </ListItem>
+                              {index < dropdownUsers.length - 1 && <Divider />}
+                            </React.Fragment>
+                          ))}
+                        </List>
+                      </Paper>
+                    </Popper>
+                  </Box>
+                )}
+                <IconButton 
+                  onClick={() => setShowSearch(!showSearch)}
+                  sx={{ 
+                    backgroundColor: 'background.paper',
+                    '&:hover': { backgroundColor: 'action.hover' }
+                  }}
+                >
+                  <SearchIcon />
+                </IconButton>
+              </Box>
+            </ClickAwayListener>
+          </Box>
+        </Container>
+      </Box>
+
+      {/* Search Results or Rooms Grid */}
+      <Container 
+        maxWidth={false} 
+        sx={{ 
+          pt: 3,
+          pb: 4, 
+          px: isMobile ? 2 : 3,
+          maxWidth: '1440px'
+        }}
+      >
+        {isSearchView ? (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {/* Users Section */}
+            {users.length > 0 && (
+              <Box>
+                <Typography variant="h6" sx={{ mb: 2 }}>Users</Typography>
+                <List>
+                  {users.map((user, index) => (
+                    <React.Fragment key={user.id}>
+                      <ListItem 
+                        sx={{ 
+                          py: 2,
+                          cursor: 'pointer',
+                          '&:hover': {
+                            backgroundColor: 'action.hover'
+                          }
+                        }}
+                        onClick={() => navigate(`/profile/${user.id}`)}
+                      >
+                        <ListItemAvatar>
+                          <Avatar 
+                            src={user.profilePic} 
+                            alt={user.name}
+                            sx={{ width: 50, height: 50 }}
+                          >
+                            {user.name[0]}
+                          </Avatar>
+                        </ListItemAvatar>
+                        <ListItemText
+                          primary={
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                              {user.name}
+                            </Typography>
+                          }
+                          secondary={
+                            <>
+                              <Typography variant="body2" color="text.secondary">
+                                @{user.username}
+                              </Typography>
+                              {user.bio && (
+                                <Typography 
+                                  variant="body2" 
+                                  color="text.secondary"
+                                  sx={{
+                                    mt: 0.5,
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden'
+                                  }}
+                                >
+                                  {user.bio}
+                                </Typography>
+                              )}
+                            </>
+                          }
+                        />
+                        {currentUser && user.id !== currentUser.uid && (
+                          <ListItemSecondaryAction>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                              <IconButton
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/messages/${user.id}`);
+                                }}
+                                size="small"
+                              >
+                                <MessageIcon />
+                              </IconButton>
+                              <IconButton
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleFollow(user.id);
+                                }}
+                                size="small"
+                                color={following.has(user.id) ? "primary" : "default"}
+                              >
+                                <PersonAddIcon />
+                              </IconButton>
+                            </Box>
+                          </ListItemSecondaryAction>
+                        )}
+                      </ListItem>
+                      {index < users.length - 1 && <Divider />}
+                    </React.Fragment>
+                  ))}
+                </List>
+              </Box>
+            )}
+
+            {/* Rooms Section */}
+            {rooms.length > 0 && (
+              <Box>
+                <Typography variant="h6" sx={{ mb: 2 }}>Rooms</Typography>
+                <Grid container spacing={3}>
+                  {rooms.map((room) => (
+                    <Grid item xs={12} sm={6} md={4} key={room.id}>
+                      <Card 
+                        sx={{ 
+                          height: '100%',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          cursor: 'pointer',
+                          borderRadius: 2,
+                          overflow: 'hidden',
+                          boxShadow: theme.shadows[3],
+                          '&:hover': {
+                            transform: 'translateY(-4px)',
+                            transition: 'transform 0.2s ease-in-out',
+                            boxShadow: theme.shadows[6]
+                          }
+                        }}
+                        onClick={() => handleRoomClick(room.id)}
+                      >
+                        <Box sx={{ position: 'relative' }}>
+                          <CardMedia
+                            component="img"
+                            height={isMobile ? "220" : "280"}
+                            image={room.creatorAvatar || '/default-room.jpg'}
+                            alt={room.name}
+                            sx={{ 
+                              objectFit: 'cover',
+                              width: '100%'
+                            }}
                           />
                           {room.isLive && (
                             <Chip
-                              label="Live"
+                              label="LIVE"
                               color="error"
                               size="small"
-                            />
-                          )}
-                          {room.isPrivate && (
-                            <Chip
-                              label="Private"
-                              color="secondary"
-                              size="small"
+                              sx={{ 
+                                position: 'absolute',
+                                top: 12,
+                                right: 12,
+                                fontWeight: 'bold',
+                                fontSize: isMobile ? '0.75rem' : '0.875rem',
+                                height: 'auto',
+                                padding: '6px 12px'
+                              }}
                             />
                           )}
                         </Box>
-                      }
-                    >
-                      <ListItemAvatar>
-                        <Link to={`/profile/${room.creatorId}`} style={{ textDecoration: 'none' }}>
-                          <Avatar 
-                            src={room.creatorAvatar}
-                            alt={room.creatorName}
-                          >
-                            {room.creatorName ? room.creatorName.charAt(0).toUpperCase() : '?'}
-                          </Avatar>
-                        </Link>
-                      </ListItemAvatar>
-                      <ListItemText
-                        primary={
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="subtitle1">{room.name}</Typography>
-                            {room.tags && room.tags.map((tag, i) => (
-                              <Chip
-                                key={i}
-                                label={tag}
-                                size="small"
-                                sx={{ height: 20 }}
-                              />
-                            ))}
-                          </Box>
-                        }
-                        secondary={
-                          <React.Fragment>
-                            <Typography
-                              component="span"
-                              variant="body2"
-                              color="text.secondary"
-                              sx={{ display: 'block' }}
+                        <CardContent sx={{ 
+                          flexGrow: 1,
+                          p: 3,
+                          '&:last-child': { pb: 3 }
+                        }}>
+                          <Box sx={{ mb: 2 }}>
+                            <Typography 
+                              gutterBottom 
+                              variant={isMobile ? "h6" : "h5"} 
+                              component="h2" 
+                              noWrap
+                              sx={{ 
+                                fontWeight: 600,
+                                mb: 1
+                              }}
+                            >
+                              {room.name}
+                            </Typography>
+                            <Typography 
+                              variant="body1" 
+                              color="text.secondary" 
+                              sx={{ 
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                                mb: 2,
+                                lineHeight: 1.5
+                              }}
                             >
                               {room.description}
                             </Typography>
-                            <Typography
-                              component="span"
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ display: 'block', mt: 0.5 }}
-                            >
-                              Created by{' '}
-                              {room.creatorName ? (
-                                <Link 
-                                  to={`/profile/${room.creatorId}`}
-                                  style={{ textDecoration: 'none', color: 'inherit', fontWeight: 'bold' }}
-                                >
-                                  {room.creatorName}
-                                </Link>
-                              ) : (
-                                <span style={{ fontStyle: 'italic' }}>deleted user</span>
-                              )}
-                              {' • '}
-                              Last active {formatTimestamp(room.lastActive)}
-                            </Typography>
-                          </React.Fragment>
-                        }
-                        onClick={() => handleRoomClick(room.id)}
-                        sx={{ cursor: 'pointer' }}
+                          </Box>
+                          <Box sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 1.5, 
+                            mb: 2,
+                            flexWrap: 'wrap'
+                          }}>
+                            <Chip
+                              icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
+                              label={`${room.activeUsers || 0} viewing`}
+                              color="primary"
+                              variant="outlined"
+                              sx={{ 
+                                height: 'auto',
+                                padding: '8px 12px',
+                                '& .MuiChip-label': {
+                                  padding: '0 4px',
+                                  fontSize: isMobile ? '0.875rem' : '1rem'
+                                }
+                              }}
+                            />
+                            {room.isPrivate && (
+                              <Chip
+                                label="Private"
+                                color="secondary"
+                                sx={{ 
+                                  height: 'auto',
+                                  padding: '8px 12px',
+                                  '& .MuiChip-label': {
+                                    padding: '0 4px',
+                                    fontSize: isMobile ? '0.875rem' : '1rem'
+                                  }
+                                }}
+                              />
+                            )}
+                          </Box>
+                          <Typography 
+                            variant="body2" 
+                            color="text.secondary"
+                            sx={{ 
+                              fontSize: isMobile ? '0.75rem' : '0.875rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 0.5
+                            }}
+                          >
+                            Created by {room.creatorName || 'Anonymous'} • {formatTimestamp(room.lastActive)}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Box>
+            )}
+
+            {users.length === 0 && rooms.length === 0 && !loading && (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <Typography variant="h6" color="text.secondary">
+                  No results found
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Try different keywords or check your spelling
+                </Typography>
+              </Box>
+            )}
+          </Box>
+        ) : (
+          <Grid container spacing={3}>
+            {rooms.map((room) => (
+              <Grid item xs={12} sm={6} md={4} key={room.id}>
+                <Card 
+                  sx={{ 
+                    height: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    cursor: 'pointer',
+                    borderRadius: 2,
+                    overflow: 'hidden',
+                    boxShadow: theme.shadows[3],
+                    '&:hover': {
+                      transform: 'translateY(-4px)',
+                      transition: 'transform 0.2s ease-in-out',
+                      boxShadow: theme.shadows[6]
+                    }
+                  }}
+                  onClick={() => handleRoomClick(room.id)}
+                >
+                  <Box sx={{ position: 'relative' }}>
+                    <CardMedia
+                      component="img"
+                      height={isMobile ? "220" : "280"}
+                      image={room.creatorAvatar || '/default-room.jpg'}
+                      alt={room.name}
+                      sx={{ 
+                        objectFit: 'cover',
+                        width: '100%'
+                      }}
+                    />
+                    {room.isLive && (
+                      <Chip
+                        label="LIVE"
+                        color="error"
+                        size="small"
+                        sx={{ 
+                          position: 'absolute',
+                          top: 12,
+                          right: 12,
+                          fontWeight: 'bold',
+                          fontSize: isMobile ? '0.75rem' : '0.875rem',
+                          height: 'auto',
+                          padding: '6px 12px'
+                        }}
                       />
-                    </ListItem>
-                    {index < rooms.length - 1 && <Divider />}
-                  </React.Fragment>
-                ))
-              )}
-            </List>
-          </Paper>
-        </Box>
-      )}
-      
-      {activeTab === 2 && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Marketplace Section */}
-          <Paper>
-            <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="h6" component="h2">
-                Marketplace
-              </Typography>
-            </Box>
-            <List>
-              {/* Marketplace content will be added here */}
-            </List>
-          </Paper>
-        </Box>
-      )}
-    </Container>
+                    )}
+                  </Box>
+                  <CardContent sx={{ 
+                    flexGrow: 1,
+                    p: 3,
+                    '&:last-child': { pb: 3 }
+                  }}>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography 
+                        gutterBottom 
+                        variant={isMobile ? "h6" : "h5"} 
+                        component="h2" 
+                        noWrap
+                        sx={{ 
+                          fontWeight: 600,
+                          mb: 1
+                        }}
+                      >
+                        {room.name}
+                      </Typography>
+                      <Typography 
+                        variant="body1" 
+                        color="text.secondary" 
+                        sx={{ 
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                          mb: 2,
+                          lineHeight: 1.5
+                        }}
+                      >
+                        {room.description}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: 1.5, 
+                      mb: 2,
+                      flexWrap: 'wrap'
+                    }}>
+                      <Chip
+                        icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
+                        label={`${room.activeUsers || 0} viewing`}
+                        color="primary"
+                        variant="outlined"
+                        sx={{ 
+                          height: 'auto',
+                          padding: '8px 12px',
+                          '& .MuiChip-label': {
+                            padding: '0 4px',
+                            fontSize: isMobile ? '0.875rem' : '1rem'
+                          }
+                        }}
+                      />
+                      {room.isPrivate && (
+                        <Chip
+                          label="Private"
+                          color="secondary"
+                          sx={{ 
+                            height: 'auto',
+                            padding: '8px 12px',
+                            '& .MuiChip-label': {
+                              padding: '0 4px',
+                              fontSize: isMobile ? '0.875rem' : '1rem'
+                            }
+                          }}
+                        />
+                      )}
+                    </Box>
+                    <Typography 
+                      variant="body2" 
+                      color="text.secondary"
+                      sx={{ 
+                        fontSize: isMobile ? '0.75rem' : '0.875rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5
+                      }}
+                    >
+                      Created by {room.creatorName || 'Anonymous'} • {formatTimestamp(room.lastActive)}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+        )}
+
+        {loading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+            <CircularProgress />
+          </Box>
+        )}
+      </Container>
+    </Box>
   );
 };
 

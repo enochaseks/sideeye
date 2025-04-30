@@ -4,48 +4,23 @@ import {
   BottomNavigation,
   BottomNavigationAction,
   Box,
-  Dialog,
 } from '@mui/material';
 import {
   Home as HomeIcon,
   MeetingRoom as MeetingRoomIcon,
   TrendingUp as TrendingUpIcon,
-  Add as AddIcon,
   Person as PersonIcon,
-  Store as StoreIcon,
+  Psychology as PsychologyIcon,
 } from '@mui/icons-material';
-import CreatePostDialog from './CreatePostDialog';
 import { useAuth } from '../contexts/AuthContext';
 
 const BottomNav: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [createPostOpen, setCreatePostOpen] = useState(false);
   const { currentUser } = useAuth();
 
   const handleNavigation = (event: React.SyntheticEvent, newValue: string) => {
-    if (newValue === 'create-post') {
-      setCreatePostOpen(true);
-    } else {
-      navigate(newValue);
-    }
-  };
-
-  const handleCreatePost = async (content: string, imageFile?: File) => {
-    if (!currentUser) return;
-    
-    try {
-      const postData = {
-        content,
-        imageFile,
-        authorId: currentUser.uid,
-        timestamp: new Date(),
-      };
-      // Add your post creation logic here
-      setCreatePostOpen(false);
-    } catch (error) {
-      console.error('Error creating post:', error);
-    }
+    navigate(newValue);
   };
 
   return (
@@ -65,19 +40,9 @@ const BottomNav: React.FC = () => {
         }}
       >
         <BottomNavigationAction
-          label="Home"
-          value="/"
-          icon={<HomeIcon />}
-        />
-        <BottomNavigationAction
           label="Discover"
-          value="/discover"
+          value="/"
           icon={<TrendingUpIcon />}
-        />
-        <BottomNavigationAction
-          label="Post"
-          value="create-post"
-          icon={<AddIcon />}
         />
         <BottomNavigationAction
           label="Side Rooms"
@@ -85,9 +50,24 @@ const BottomNav: React.FC = () => {
           icon={<MeetingRoomIcon />}
         />
         <BottomNavigationAction
-          label="Marketplace"
-          value="/marketplace"
-          icon={<StoreIcon />}
+          label="Sade AI"
+          value="/sade-ai"
+          // Note: To resolve the 'Cannot find name PsychologyIcon' error,
+          // you need to import the icon at the top of this file (`side-eye/frontend/src/components/BottomNav.tsx`).
+          // Find the line that starts with:
+          // import { Home as HomeIcon, ... } from '@mui/icons-material';
+          // Add 'Psychology as PsychologyIcon' to the list inside the curly braces {}.
+          // For example:
+          // import {
+          //   Home as HomeIcon,
+          //   MeetingRoom as MeetingRoomIcon,
+          //   TrendingUp as TrendingUpIcon,
+          //   Person as PersonIcon,
+          //   Store as StoreIcon,
+          //   Chat as ChatIcon,
+          //   Psychology as PsychologyIcon, // <-- Add this line
+          // } from '@mui/icons-material';
+          icon={<PsychologyIcon />}
         />
         <BottomNavigationAction
           label="Profile"
@@ -95,26 +75,6 @@ const BottomNav: React.FC = () => {
           icon={<PersonIcon />}
         />
       </BottomNavigation>
-
-      <Dialog
-        open={createPostOpen}
-        onClose={() => setCreatePostOpen(false)}
-        maxWidth="sm"
-        fullWidth
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-            maxHeight: '80vh',
-          },
-        }}
-      >
-        {currentUser && (
-          <CreatePostDialog
-            open={createPostOpen}
-            onClose={() => setCreatePostOpen(false)}
-          />
-        )}
-      </Dialog>
     </>
   );
 };

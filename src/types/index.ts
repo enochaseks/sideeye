@@ -52,48 +52,33 @@ export interface RecordedStream {
   title?: string;
 }
 
+export interface RoomMember {
+  userId: string;
+  username: string;
+  avatar: string;
+  role: 'owner' | 'viewer';
+  joinedAt: Date | Timestamp;
+  isMuted?: boolean;
+  isSpeaking?: boolean;
+}
+
 export interface SideRoom {
   id: string;
   name: string;
   description: string;
   ownerId: string;
-  members: RoomMember[];
+  viewers: RoomMember[];
   memberCount: number;
-  createdAt: Date;
+  createdAt: Date | Timestamp;
   isPrivate: boolean;
   password?: string;
-  tags?: string[];
-  imageUrl?: string;
-  isLive: boolean;
-  liveParticipants: string[];
-  category: string;
-  scheduledReveals: SideReveal[];
-  activeUsers: number;
-  maxParticipants?: number;
-  rules?: string[];
-  bannedUsers?: string[];
-  lastActive: Date;
+  tags: string[];
+  lastActive: Date | Timestamp;
   maxMembers: number;
+  bannedUsers: string[];
+  isLive: boolean;
+  activeUsers: number;
   style?: RoomStyle;
-  updatedAt?: Date;
-  isRecording?: boolean;
-  recordedStreams?: RecordedStream[];
-  currentRecordingId?: string;
-  currentStreamId?: string;
-  mobileStreamKey?: string;
-  mobilePlaybackId?: string;
-  mobileStreamerId?: string;
-  isMobileStreaming?: boolean;
-  thumbnailUrl?: string;
-  isOwner?: boolean;
-}
-
-export interface RoomMember {
-  userId: string;
-  username: string;
-  avatar: string;
-  role: 'owner' | 'admin' | 'moderator' | 'member' | 'viewer';
-  joinedAt: Date | FieldValue;
 }
 
 export interface SideReveal {
@@ -310,11 +295,14 @@ export interface PeerConnection {
 }
 
 // Also add the UserSideRoom interface for profile display
-export interface UserSideRoom extends Pick<SideRoom, 'id' | 'name' | 'description' | 'memberCount' | 'isPrivate' | 'category'> {
+// The 'category' property was removed from Pick as it doesn't exist on the base SideRoom interface.
+// If SideRoom *should* have a category, you'll need to add it to the SideRoom interface definition first.
+export interface UserSideRoom extends Pick<SideRoom, 'id' | 'name' | 'description' | 'memberCount' | 'isPrivate'> {
   roomId: string;
-  role: 'owner' | 'member';
+  role: 'owner' | 'viewer';
   joinedAt: Date;
   lastActive: Date;
   isOwner: boolean;
   thumbnailUrl: string | null;
+  category?: string;
 } 

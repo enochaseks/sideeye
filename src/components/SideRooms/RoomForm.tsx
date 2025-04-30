@@ -10,16 +10,15 @@ import {
   Switch,
   Box
 } from '@mui/material';
-import type { SideRoom } from '../../types/index';
+import { SideRoom } from '../../types';
 
 interface RoomFormProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (roomData: Partial<SideRoom>) => Promise<void>;
+  onSubmit: (data: Partial<SideRoom>) => void;
   initialData?: Partial<SideRoom>;
-  title: string;
-  submitButtonText: string;
-  isProcessing?: boolean;
+  title?: string;
+  submitButtonText?: string;
 }
 
 const RoomForm: React.FC<RoomFormProps> = ({
@@ -27,22 +26,20 @@ const RoomForm: React.FC<RoomFormProps> = ({
   onClose,
   onSubmit,
   initialData,
-  title,
-  submitButtonText,
-  isProcessing = false
+  title = 'Create Room',
+  submitButtonText = 'Create'
 }) => {
   const [formData, setFormData] = useState<Partial<SideRoom>>({
     name: initialData?.name || '',
     description: initialData?.description || '',
     isPrivate: initialData?.isPrivate || false,
     password: initialData?.password || '',
-    category: initialData?.category || '',
     tags: initialData?.tags || []
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    await onSubmit(formData);
+    onSubmit(formData);
   };
 
   return (
@@ -50,13 +47,12 @@ const RoomForm: React.FC<RoomFormProps> = ({
       <form onSubmit={handleSubmit}>
         <DialogTitle>{title}</DialogTitle>
         <DialogContent>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
             <TextField
-              autoFocus
-              required
-              label="Room Name"
+              label="Name"
               value={formData.name}
               onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              required
               fullWidth
             />
             <TextField
@@ -64,24 +60,8 @@ const RoomForm: React.FC<RoomFormProps> = ({
               value={formData.description}
               onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
               multiline
-              rows={4}
+              rows={3}
               fullWidth
-            />
-            <TextField
-              label="Category"
-              value={formData.category}
-              onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
-              fullWidth
-            />
-            <TextField
-              label="Tags (comma separated)"
-              value={formData.tags?.join(', ')}
-              onChange={(e) => setFormData(prev => ({ 
-                ...prev, 
-                tags: e.target.value.split(',').map(tag => tag.trim()).filter(Boolean)
-              }))}
-              fullWidth
-              helperText="Enter tags separated by commas"
             />
             <FormControlLabel
               control={
@@ -94,21 +74,29 @@ const RoomForm: React.FC<RoomFormProps> = ({
             />
             {formData.isPrivate && (
               <TextField
-                required
                 label="Password"
                 type="password"
                 value={formData.password}
                 onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+                required={formData.isPrivate}
                 fullWidth
               />
             )}
+            <TextField
+              label="Tags (comma separated)"
+              value={formData.tags?.join(', ')}
+              onChange={(e) => setFormData(prev => ({ 
+                ...prev, 
+                tags: e.target.value.split(',').map(tag => tag.trim()).filter(Boolean)
+              }))}
+              fullWidth
+              helperText="Enter tags separated by commas"
+            />
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={onClose} disabled={isProcessing}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="contained" disabled={isProcessing}>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="contained" color="primary">
             {submitButtonText}
           </Button>
         </DialogActions>

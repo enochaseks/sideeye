@@ -1,85 +1,45 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
   List,
   ListItem,
+  ListItemAvatar,
   ListItemText,
-  ListItemSecondaryAction,
+  Avatar,
   IconButton,
   Menu,
   MenuItem,
-  Avatar,
   Typography,
-  Box,
-  CircularProgress,
-  Alert
+  Box
 } from '@mui/material';
 import {
   MoreVert as MoreVertIcon,
   Mic as MicIcon,
-  MicOff as MicOffIcon
+  MicOff as MicOffIcon,
+  PersonRemove as PersonRemoveIcon
 } from '@mui/icons-material';
-import { doc, updateDoc, arrayUnion, arrayRemove, collection, query, where, getDocs, Firestore } from 'firebase/firestore';
-import { toast } from 'react-hot-toast';
+import { doc, updateDoc, Firestore } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { useAuth } from '../contexts/AuthContext';
-import { SideRoom, RoomMember } from '../types/index';
+import { RoomMember, SideRoom } from '../types';
+import { toast } from 'react-hot-toast';
 
 interface RoomMemberManagementProps {
-  open: boolean;
-  onClose: () => void;
+  members: RoomMember[];
   room: SideRoom;
-  onUpdate: (members: RoomMember[]) => void;
+  currentUserRole?: 'owner' | 'viewer';
+  onUpdate: (updatedMembers: RoomMember[]) => void;
 }
 
 const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
-  open,
-  onClose,
+  members,
   room,
+  currentUserRole,
   onUpdate
 }) => {
-  const { currentUser } = useAuth();
-  const [members, setMembers] = useState<RoomMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedMember, setSelectedMember] = useState<RoomMember | null>(null);
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    fetchMembers();
-  }, []);
-
-  const fetchMembers = async () => {
-    try {
-      const membersQuery = query(
-        collection(db as Firestore, 'rooms', room.id, 'members')
-      );
-      const querySnapshot = await getDocs(membersQuery);
-      const membersList = querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          userId: doc.id,
-          username: data.username || '',
-          avatar: data.avatar || '',
-          role: data.role || 'member',
-          joinedAt: data.joinedAt?.toDate() || new Date()
-        } as RoomMember;
-      });
-
-      setMembers(membersList);
-    } catch (error) {
-      console.error('Error fetching members:', error);
-      setError('Failed to fetch members');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, member: RoomMember) => {
+  const handleMenuClick = (event: React.MouseEvent<HTMLElement>, member: RoomMember) => {
     setAnchorEl(event.currentTarget);
     setSelectedMember(member);
   };
@@ -89,169 +49,122 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
     setSelectedMember(null);
   };
 
-  const handleRoleChange = async (newRole: 'admin' | 'moderator' | 'member') => {
-    if (!currentUser || !selectedMember || loading) return;
-
+  const handleRemoveMember = async (member: RoomMember) => {
+    if (!room || loading) return;
+    
     try {
       setLoading(true);
-      setError(null);
-
-      const roomRef = doc(db as Firestore, 'rooms', room.id);
-      const updatedMembers = members.map(member => {
-        if (member.userId === selectedMember.userId) {
-          return { ...member, role: newRole };
-        }
-        return member;
-      });
-
+      
+      // Update the members list
+      const updatedMembers = members.filter(m => m.userId !== member.userId);
+      
+      // Update in Firestore
+      const roomRef = doc(db as Firestore, 'sideRooms', room.id);
       await updateDoc(roomRef, {
-        members: updatedMembers
+        viewers: updatedMembers
       });
-
-      setMembers(updatedMembers);
+      
       onUpdate(updatedMembers);
-      handleMenuClose();
+      toast.success('Member removed successfully');
     } catch (error) {
-      console.error('Error updating member role:', error);
-      setError('Failed to update member role');
+      console.error('Error removing member:', error);
+      toast.error('Failed to remove member');
     } finally {
       setLoading(false);
+      handleMenuClose();
     }
   };
 
-  const handleKickMember = async () => {
-    if (!currentUser || !selectedMember || loading) return;
-
+  const handleToggleMute = async (member: RoomMember) => {
+    if (!room || loading) return;
+    
     try {
       setLoading(true);
-      setError(null);
-
-      const roomRef = doc(db as Firestore, 'rooms', room.id);
-      const updatedMembers = members.filter(
-        member => member.userId !== selectedMember.userId
-      );
-
-      await updateDoc(roomRef, {
-        members: updatedMembers,
-        memberCount: updatedMembers.length
+      
+      const presenceRef = doc(db as Firestore, 'sideRooms', room.id, 'presence', member.userId);
+      await updateDoc(presenceRef, {
+        isMuted: !member.isMuted
       });
-
-      setMembers(updatedMembers);
-      onUpdate(updatedMembers);
-      handleMenuClose();
+      
+      toast.success(`User ${member.isMuted ? 'unmuted' : 'muted'} successfully`);
     } catch (error) {
-      console.error('Error kicking member:', error);
-      setError('Failed to kick member');
+      console.error('Error toggling mute:', error);
+      toast.error('Failed to toggle mute status');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleToggleLive = async (member: RoomMember) => {
-    if (!db || !currentUser) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      const roomRef = doc(db as Firestore, 'rooms', room.id);
-      const isLive = room.liveParticipants.includes(member.userId);
-
-      await updateDoc(roomRef, {
-        liveParticipants: isLive
-          ? arrayRemove(member.userId)
-          : arrayUnion(member.userId)
-      });
-
-      onUpdate(members);
-    } catch (error) {
-      console.error('Error toggling live status:', error);
-      setError('Failed to toggle live status');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const canManageMember = (member: RoomMember) => {
-    if (!currentUser) return false;
-    const currentUserRole = members.find(m => m.userId === currentUser.uid)?.role;
-    const targetRole = member.role;
-
+  const canManageMember = (targetRole: 'owner' | 'viewer'): boolean => {
+    if (!currentUserRole) return false;
     if (currentUserRole === 'owner') return true;
-    if (currentUserRole === 'admin' && targetRole !== 'owner' && targetRole !== 'admin') return true;
-    if (currentUserRole === 'moderator' && targetRole === 'member') return true;
     return false;
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Room Members</DialogTitle>
-      <DialogContent>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-        
-        <List>
-          {members.map((member) => (
-            <ListItem key={member.userId}>
-              <Avatar src={member.avatar} sx={{ mr: 2 }}>
-                {member.username.charAt(0)}
-              </Avatar>
-              <ListItemText
-                primary={member.username}
-                secondary={`Role: ${member.role}`}
-              />
-              <ListItemSecondaryAction>
+    <List>
+      {members.map((member) => (
+        <ListItem
+          key={member.userId}
+          secondaryAction={
+            canManageMember(member.role) && (
+              <>
                 <IconButton
-                  onClick={() => handleToggleLive(member)}
+                  edge="end"
+                  aria-label="toggle mute"
+                  onClick={() => handleToggleMute(member)}
                   disabled={loading}
                 >
-                  {room.liveParticipants.includes(member.userId) ? (
-                    <MicIcon color="primary" />
-                  ) : (
-                    <MicOffIcon />
-                  )}
+                  {member.isMuted ? <MicOffIcon /> : <MicIcon color="primary" />}
                 </IconButton>
-                {canManageMember(member) && (
-                  <IconButton
-                    onClick={(e) => handleMenuOpen(e, member)}
-                    disabled={loading}
-                  >
-                    <MoreVertIcon />
-                  </IconButton>
-                )}
-              </ListItemSecondaryAction>
-            </ListItem>
-          ))}
-        </List>
-
-        <Menu
-          anchorEl={anchorEl}
-          open={Boolean(anchorEl)}
-          onClose={handleMenuClose}
+                <IconButton
+                  edge="end"
+                  aria-label="more"
+                  onClick={(e) => handleMenuClick(e, member)}
+                  disabled={loading || member.role === 'owner'}
+                >
+                  <MoreVertIcon />
+                </IconButton>
+              </>
+            )
+          }
         >
-          {selectedMember?.role !== 'admin' && (
-            <MenuItem onClick={() => handleRoleChange('admin')}>
-              Make Admin
-            </MenuItem>
-          )}
-          {selectedMember?.role !== 'moderator' && (
-            <MenuItem onClick={() => handleRoleChange('moderator')}>
-              Make Moderator
-            </MenuItem>
-          )}
-          {selectedMember?.role !== 'member' && (
-            <MenuItem onClick={() => handleRoleChange('member')}>
-              Make Member
-            </MenuItem>
-          )}
-          <MenuItem onClick={handleKickMember} sx={{ color: 'error.main' }}>
-            Kick Member
+          <ListItemAvatar>
+            <Avatar src={member.avatar} alt={member.username}>
+              {member.username[0]}
+            </Avatar>
+          </ListItemAvatar>
+          <ListItemText
+            primary={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography>{member.username}</Typography>
+                {member.role === 'owner' && (
+                  <Typography variant="caption" color="primary">
+                    (Owner)
+                  </Typography>
+                )}
+              </Box>
+            }
+          />
+        </ListItem>
+      ))}
+
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={handleMenuClose}
+      >
+        {selectedMember && selectedMember.role !== 'owner' && (
+          <MenuItem 
+            onClick={() => selectedMember && handleRemoveMember(selectedMember)}
+            disabled={loading}
+          >
+            <PersonRemoveIcon sx={{ mr: 1 }} />
+            Remove from Room
           </MenuItem>
-        </Menu>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
-      </DialogActions>
-    </Dialog>
+        )}
+      </Menu>
+    </List>
   );
 };
 

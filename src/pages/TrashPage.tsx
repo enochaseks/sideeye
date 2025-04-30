@@ -1,6 +1,6 @@
 import React from 'react';
 import { Container, Typography, Box } from '@mui/material';
-import DeletedPosts from '../components/DeletedPosts';
+
 
 const TrashPage: React.FC = () => {
   return (
@@ -12,7 +12,6 @@ const TrashPage: React.FC = () => {
         <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
           Posts in the trash will be automatically deleted after 24 hours. You can restore them before then.
         </Typography>
-        <DeletedPosts />
       </Box>
     </Container>
   );

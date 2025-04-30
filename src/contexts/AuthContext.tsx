@@ -8,6 +8,7 @@ import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 import bcrypt from 'bcryptjs';
 import { checkAndResetRestrictions } from '../services/contentModeration';
+import { audioService } from '../services/audioService';
 
 export interface User extends FirebaseUser {
   profile?: UserProfile;
@@ -70,17 +71,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Auth state changed:', firebaseUser ? 'User logged in' : 'No user');
       if (firebaseUser) {
         try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          // Ensure Firebase user data is fresh before fetching Firestore doc
+          console.log('Reloading Firebase user data...');
+          await firebaseUser.reload();
+          const freshFirebaseUser = auth.currentUser; // Use the reloaded user
+          console.log('Firebase user data reloaded.');
+
+          if (!freshFirebaseUser) { // Check again after reload
+            console.log('User is null after reload, signing out.');
+            setUser(null);
+            setLoading(false);
+            return;
+          }
+
+          console.log('Fetching Firestore document for:', freshFirebaseUser.uid);
+          const userDoc = await getDoc(doc(db, 'users', freshFirebaseUser.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
             setUser({
-              ...firebaseUser,
+              ...freshFirebaseUser, // Use freshFirebaseUser
               profile: userData
             });
-            console.log('User data loaded successfully:', firebaseUser.uid);
+            console.log('User data loaded successfully:', freshFirebaseUser.uid);
           } else {
-            console.error('User document not found in Firestore:', firebaseUser.uid);
-            setUser(null);
+            console.error('User document not found in Firestore:', freshFirebaseUser.uid);
+            setUser(null); // Log out if Firestore profile missing
+            firebaseSignOut(auth); // Explicitly sign out
+            console.log('Signed out due to missing Firestore document.');
           }
         } catch (error) {
           console.error('Error loading user data:', error);
@@ -369,15 +386,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
+      console.log('Starting logout process...');
+      
+      // Disconnect audio before signing out
+      console.log('Disconnecting audio service...');
+      audioService.disconnect(); 
+      console.log('Audio service disconnected.');
+
       await firebaseSignOut(auth);
-      setUser(null);
-      navigate('/login');
-    } catch (error) {
-      console.error('Error logging out:', error);
-      toast.error('Failed to log out');
-    } finally {
+      console.log('Firebase sign out successful.');
+      
+      setUser(null); // Clear user state immediately
+      setLoading(false);
+      console.log('User state cleared, navigating to /login...');
+      navigate('/login', { replace: true }); // Navigate to login page
+      console.log('Navigation to /login triggered.');
+    } catch (error: any) {
+      console.error('Error during logout:', error);
+      logError(error, 'Logout');
+      setError(getAuthErrorMessage(error.code));
       setLoading(false);
     }
   };
