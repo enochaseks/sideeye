@@ -41,17 +41,18 @@ const SadeAIPage: React.FC = () => {
 
       const fetchOptions = {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input }),
+        // headers: { 'Content-Type': 'application/json' }, // Temporarily removed
+        // body: JSON.stringify({ message: input }),        // Temporarily removed
       };
-      console.log("[SadeAIPage] Fetch options prepared:", fetchOptions);
+      console.log("[SadeAIPage] Fetch options prepared (SIMPLIFIED FOR DEBUG):", fetchOptions); // Modified log
 
-      console.log("[SadeAIPage] About to call fetch...");
+      console.log("[SadeAIPage] About to call fetch (SIMPLIFIED FOR DEBUG)..."); // Modified log
       const res = await fetch(apiUrl, fetchOptions);
-      console.log("[SadeAIPage] Fetch call completed. Response status:", res.status);
+      console.log("[SadeAIPage] Fetch call completed (SIMPLIFIED FOR DEBUG). Response status:", res.status); // Modified log
 
+      // The rest of this block will likely fail now, which is expected for this test.
       const data = await res.json();
-      console.log("[SadeAIPage] Received response data:", data);
+      console.log("[SadeAIPage] Received response data (SIMPLIFIED FOR DEBUG):", data);
       setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
     } catch (err) {
       // Log the actual error object to the console
