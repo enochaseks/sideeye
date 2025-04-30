@@ -14,6 +14,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Check Environment Variable
+        run: echo "API URL is $REACT_APP_API_URL"
+        env:
+          REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL }}
       - run: CI=false npm ci && CI=false npm run build
         env:
           REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL }}
