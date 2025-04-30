@@ -26,7 +26,18 @@ const SadeAIPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const res = await fetch('https://www.sideeye.uk/api/sade-ai', {
+      // Use environment variable for the base backend URL
+      const backendBaseUrl = process.env.REACT_APP_API_URL;
+      if (!backendBaseUrl) {
+        console.error("REACT_APP_API_URL is not defined. Please set it in your .env file.");
+        setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
+        setLoading(false);
+        return; // Stop if URL is not configured
+      }
+
+      const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+
+      const res = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: input }),

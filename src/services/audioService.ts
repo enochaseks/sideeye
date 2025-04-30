@@ -218,10 +218,10 @@ class AudioService {
 
     this.socket.on('audio-stream', (data: { audio: ArrayBuffer; userId: string }) => {
       // Buffer the incoming audio chunk
-      if (!this.audioQueue.has(data.userId)) {
-        this.audioQueue.set(data.userId, []);
-      }
-      const queue = this.audioQueue.get(data.userId);
+          if (!this.audioQueue.has(data.userId)) {
+            this.audioQueue.set(data.userId, []);
+          }
+        const queue = this.audioQueue.get(data.userId);
       if (queue) {
          // Basic check to prevent excessively large buffers
          if (queue.length < 100) { // Limit queue size
@@ -230,8 +230,8 @@ class AudioService {
            this.resetQueueProcessingTimeout(data.userId);
          } else {
            console.warn(`Audio queue for ${data.userId} is full, dropping chunk.`);
-         }
-      }
+          }
+        }
       // The processing loop still handles regular decoding
     });
 
@@ -355,7 +355,7 @@ class AudioService {
       console.log('Joined room:', roomId);
       
       this.currentUserId = userId; // Store the user ID
-
+      
       this.setupAudioRecording(roomId, userId);
       this.startSpeakingDetection();
       

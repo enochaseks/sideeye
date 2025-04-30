@@ -159,6 +159,7 @@ const AppContent: React.FC = () => {
               <DeletionDeactivatePage />
             </ProtectedRoute>
           } />
+          <Route path="/sade-ai" element={<SadeAIPage />} />
           
           {/* Redirect all other routes to home */}
           <Route path="*" element={<Navigate to="/" replace />} />
