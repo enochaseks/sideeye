@@ -22,9 +22,21 @@ const functions = require("firebase-functions"); // Still needed for config
 //   response.send("Hello from Firebase!");
 // });
 
-// Initialize admin app
-const app = admin.initializeApp();
-const db = admin.firestore();
+// DO NOT initialize admin app globally
+// const app = admin.initializeApp(); // <-- Comment out
+// const db = admin.firestore(); // <-- Comment out
+
+let adminApp;
+let firestoreDb;
+
+function initializeFirebase() {
+  if (!adminApp) {
+    console.log("Initializing Firebase Admin SDK...");
+    adminApp = admin.initializeApp();
+    firestoreDb = admin.firestore();
+    console.log("Firebase Admin SDK initialized.");
+  }
+}
 
 // Keep config reading global OR move it inside functions too.
 // Reading it here might be okay, but check errors.
@@ -51,6 +63,8 @@ const db = admin.firestore();
  * @return {Promise<Object>} A promise that resolves to a success object
  */
 exports.updateUserProfile = onCall(async (request) => {
+  initializeFirebase(); // Ensure Firebase is initialized before use
+
   if (!request.auth) {
     // Use v2 HttpsError
     throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
@@ -60,8 +74,8 @@ exports.updateUserProfile = onCall(async (request) => {
   const userId = request.auth.uid;
 
   try {
-    // Use admin.firestore() directly if initialized globally
-    await db.collection("users").doc(userId).update({
+    // Use the lazily initialized firestoreDb variable
+    await firestoreDb.collection("users").doc(userId).update({
       displayName,
       bio,
       profilePic,
@@ -78,6 +92,8 @@ exports.updateUserProfile = onCall(async (request) => {
 
 // --- Function: startVideoProcessing (Convert to v2 onCall) ---
 exports.startVideoProcessing = onCall(async (request) => { // Changed to v2 onCall
+  initializeFirebase(); // Ensure Firebase is initialized before use
+
   // 1. Authentication Check
   if (!request.auth) { // Use request.auth
     throw new HttpsError( // Use v2 HttpsError
@@ -239,7 +255,7 @@ exports.startVideoProcessing = onCall(async (request) => { // Changed to v2 onCa
     console.log(`Shotstack render submitted successfully. Render ID: ${renderId}`);
 
     // 7. Update Firestore document with Render ID
-    await db.collection("videos").doc(videoId).update({
+    await firestoreDb.collection("videos").doc(videoId).update({
       renderId: renderId,
       status: "submitted",
     });
@@ -250,7 +266,7 @@ exports.startVideoProcessing = onCall(async (request) => { // Changed to v2 onCa
     console.error(`Error starting video processing for video: ${videoId}`, error);
     // Update Firestore status to 'failed'
     try {
-      await db.collection("videos").doc(videoId).update({
+      await firestoreDb.collection("videos").doc(videoId).update({
         status: "failed",
         error: `Backend Error: ${error.message || String(error)}`,
       });
@@ -272,6 +288,8 @@ exports.startVideoProcessing = onCall(async (request) => { // Changed to v2 onCa
 
 // --- Function: processShotstackWebhook (Convert to v2 onRequest) ---
 exports.processShotstackWebhook = onRequest(async (request, response) => { // Changed to v2 onRequest
+  initializeFirebase(); // Ensure Firebase is initialized before use
+
   console.log("Received Shotstack webhook callback.");
   
   // === Read Config INSIDE the function ===
@@ -309,7 +327,7 @@ exports.processShotstackWebhook = onRequest(async (request, response) => { // Ch
   console.log(`Processing webhook for videoId: ${videoId}, renderId: ${renderId}, status: ${status}`);
 
   try {
-    const videoRef = db.collection("videos").doc(videoId);
+    const videoRef = firestoreDb.collection("videos").doc(videoId);
 
     // 4. Update Firestore based on Shotstack status
     if (status === "done") {
@@ -383,7 +401,7 @@ exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId
 
       try {
         // Fetch the recipient's user document from the 'users' collection
-        const userRef = db.collection("users").doc(recipientId);
+        const userRef = firestoreDb.collection("users").doc(recipientId);
         const userDoc = await userRef.get();
 
         if (!userDoc.exists) {
@@ -415,7 +433,7 @@ exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId
 
         // Add the email document to the 'mail' collection
         // (Ensure this collection name matches your Trigger Email extension config)
-        await db.collection("mail").add(mailData);
+        await firestoreDb.collection("mail").add(mailData);
 
         console.log(`Email queued successfully for ${recipientEmail}`);
         return null; // Indicate successful processing
