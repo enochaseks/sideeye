@@ -8,6 +8,7 @@ on:
       - main
 jobs:
   build_and_deploy:
+    environment: REACT_APP_API_URL
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
