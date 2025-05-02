@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider } from '@mui/material';
+import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip } from '@mui/material';
 
 const SadeAIPage: React.FC = () => {
   const [messages, setMessages] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Define suggestions (adding therapeutic prompts)
+  const suggestions = [
+    "I'm feeling a bit down today",
+    "Can we just talk?",
+    "Tell me a fact",
+    "What does 'wagwan' mean?",
+    "Play 'Would You Rather?'",
+    "Feeling a bit lost",
+  ];
 
   // Load chat history from localStorage on mount
   useEffect(() => {
@@ -19,32 +29,35 @@ const SadeAIPage: React.FC = () => {
     localStorage.setItem('sadeai_chat_history', JSON.stringify(messages));
   }, [messages]);
 
-  // This function would call your backend or an AI API
-  const sendMessage = async () => {
-    if (!input.trim()) return;
-    setMessages([...messages, { sender: 'user', text: input }]);
+  // Modify sendMessage to optionally accept message text directly
+  const sendMessage = async (messageToSend: string = input) => {
+    // Use messageToSend instead of input for checks and sending
+    if (!messageToSend.trim()) return;
+
+    // Add user message using messageToSend
+    setMessages(msgs => [...msgs, { sender: 'user', text: messageToSend }]);
+    setInput(''); // Clear input regardless of how message was sent
     setLoading(true);
 
     try {
-      // Use environment variable for the base backend URL
       const backendBaseUrl = process.env.REACT_APP_API_URL;
       if (!backendBaseUrl) {
         console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
         setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
         setLoading(false);
-        return; // Stop if URL is not configured
+        return;
       }
 
-      const apiUrl = `${backendBaseUrl}/api/sade-ai`; // Restore original URL
-      console.log(`[SadeAIPage] Attempting to fetch: ${apiUrl}`); // Restore log
-      console.log(`[SadeAIPage] Request Body:`, { message: input }); // Restore log
+      const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+      console.log(`[SadeAIPage] Attempting to fetch: ${apiUrl}`);
+      console.log(`[SadeAIPage] Request Body:`, { message: messageToSend }); // Use messageToSend
 
-      // --- Revert back to fetch --- 
       try {
-        const fetchOptions = { // Restore fetch options
+        const fetchOptions = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: input }),
+          // Send messageToSend in the body
+          body: JSON.stringify({ message: messageToSend }),
         };
         console.log("[SadeAIPage] Fetch options prepared:", fetchOptions);
 
@@ -57,28 +70,32 @@ const SadeAIPage: React.FC = () => {
         setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
 
       } catch (err) {
-        // Log the actual error object to the console
         console.error("[SadeAIPage] Fetch failed inside catch block:", err);
-        // Also log the error name and message separately for more detail
         if (err instanceof Error) {
           console.error(`[SadeAIPage] Error Name: ${err.name}`);
           console.error(`[SadeAIPage] Error Message: ${err.message}`);
         }
-        // Keep the user-facing message generic
         setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
       }
-      // --- End of fetch restoration ---
 
     } catch (err) {
-      console.error("[SadeAIPage] XHR request failed inside catch block:", err);
-      if (err instanceof Error) {
-        console.error(`[SadeAIPage] Error Name: ${err.name}`);
-        console.error(`[SadeAIPage] Error Message: ${err.message}`);
-      }
+      // This outer catch might be redundant now, but leave for safety
+      console.error("[SadeAIPage] Outer request failed:", err);
+       if (err instanceof Error) {
+         console.error(`[SadeAIPage] Error Name: ${err.name}`);
+         console.error(`[SadeAIPage] Error Message: ${err.message}`);
+       }
       setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
+    } finally {
+        setLoading(false);
+        // Input is already cleared at the start of the function
     }
-    setLoading(false);
-    setInput('');
+  };
+
+  // Handler for suggestion chip click
+  const handleSuggestionClick = (suggestion: string) => {
+    // Directly call sendMessage with the suggestion text
+    sendMessage(suggestion);
   };
 
   return (
@@ -147,6 +164,25 @@ const SadeAIPage: React.FC = () => {
           ))}
           {loading && <CircularProgress size={24} sx={{ display: 'block', mx: 'auto', mt: 2 }} />}
         </Box>
+
+        {/* Suggestion Chips Area */}
+        {!loading && messages.length <= 1 && ( // Show suggestions only when not loading and chat is new/empty
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center', mb: 2, px: { xs: 1, sm: 0 } }}>
+             <Typography variant="caption" sx={{ width: '100%', textAlign: 'center', color: 'text.secondary', mb: 0.5 }}>Try asking:</Typography>
+             {suggestions.map((text, index) => (
+                <Chip
+                  key={index}
+                  label={text}
+                  onClick={() => handleSuggestionClick(text)}
+                  clickable
+                  variant="outlined"
+                  size="small"
+                  disabled={loading} // Technically redundant due to outer check, but good practice
+                />
+              ))}
+            </Box>
+        )}
+
         <Box
           sx={{
             display: 'flex',
@@ -169,11 +205,13 @@ const SadeAIPage: React.FC = () => {
             placeholder="Type your message..."
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') sendMessage(); }}
+            // Ensure Enter key uses the input state
+            onKeyDown={e => { if (e.key === 'Enter' && input.trim()) sendMessage(); }}
             disabled={loading}
             sx={{ bgcolor: 'white', borderRadius: 2, boxShadow: '0 1px 4px 0 rgba(31,38,135,0.04)' }}
           />
-          <Button variant="contained" onClick={sendMessage} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
+          {/* Ensure Send button uses the input state */}
+          <Button variant="contained" onClick={() => sendMessage()} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
             Send
           </Button>
           <Button
