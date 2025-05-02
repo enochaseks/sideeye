@@ -1,10 +1,46 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip } from '@mui/material';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip, LinearProgress } from '@mui/material';
+
+// Define step type
+type BreathingStep = { text: string, duration: number };
+
+// Define breathing state type
+type BreathingState = {
+  active: boolean;
+  steps: BreathingStep[];
+  currentStepIndex: number;
+  timer: number;
+  intervalId: NodeJS.Timeout | null;
+} | null;
+
+// Define type for game state
+type GameState = {
+  gameType: 'guess_the_number';
+  targetNumber: number;
+  guessesMade: number;
+  lowerBound: number; // To provide hints
+  upperBound: number; // To provide hints
+} | null; // Can be expanded later for other games
 
 const SadeAIPage: React.FC = () => {
   const [messages, setMessages] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [activeGame, setActiveGame] = useState<GameState>(null);
+  const [breathingState, setBreathingState] = useState<BreathingState>(null); // New state for exercise
+
+  // Ref to scroll to bottom
+  const messagesEndRef = useRef<null | HTMLDivElement>(null);
+
+  // Scroll to bottom function
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Effect to scroll when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   // Define suggestions (adding therapeutic prompts)
   const suggestions = [
@@ -14,6 +50,8 @@ const SadeAIPage: React.FC = () => {
     "What does 'wagwan' mean?",
     "Play 'Would You Rather?'",
     "Feeling a bit lost",
+    "Play Guess the Number",
+    "Breathing exercise" // Added suggestion
   ];
 
   // Load chat history from localStorage on mount
@@ -29,66 +67,223 @@ const SadeAIPage: React.FC = () => {
     localStorage.setItem('sadeai_chat_history', JSON.stringify(messages));
   }, [messages]);
 
+  // --- Breathing Exercise Logic ---
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null); // Use ref to store interval ID
+
+  // Function to clear interval safely
+  const clearBreathingInterval = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+  };
+
+  // Moved endBreathingExercise up as it's called by others
+  const endBreathingExercise = () => {
+     console.log("[Frontend] endBreathingExercise called."); // Log end
+     clearBreathingInterval(); 
+     setMessages(msgs => [...msgs, { sender: 'ai', text: "Nicely done! Hope that helped you feel a bit calmer, mate. 😊" }]);
+     setBreathingState(null); 
+     setLoading(false); 
+  };
+
+  const handleTimerTick = () => {
+    setBreathingState(prevState => {
+      if (!prevState || !prevState.active) {
+        console.log("[Frontend] handleTimerTick: No active state, clearing interval."); // Log clear
+        clearBreathingInterval();
+        return null;
+      }
+      const newTimer = prevState.timer - 1;
+      console.log(`[Frontend] handleTimerTick: Prev Timer: ${prevState.timer}, New Timer: ${newTimer}, Step Index: ${prevState.currentStepIndex}`); // Log tick
+      if (newTimer <= 0) {
+        console.log("[Frontend] handleTimerTick: Timer reached 0, starting next step."); // Log step change trigger
+        setTimeout(startNextBreathingStep, 0); 
+        return { ...prevState, timer: 0 }; // Set timer to 0 while waiting for next step state change
+      } else {
+        return { ...prevState, timer: newTimer };
+      }
+    });
+  };
+
+  const startNextBreathingStep = () => {
+    console.log("[Frontend] startNextBreathingStep called."); // Log function start
+    clearBreathingInterval(); 
+
+    setBreathingState(prevState => {
+      if (!prevState || !prevState.active) { 
+          console.warn("[Frontend] startNextBreathingStep: No active breathing state found on entry.");
+          return null; 
+      }
+
+      const nextStepIndex = prevState.currentStepIndex + 1;
+      console.log(`[Frontend] startNextBreathingStep: Prev Index: ${prevState.currentStepIndex}, Next Index: ${nextStepIndex}`); // Log index change
+
+      if (nextStepIndex >= prevState.steps.length) {
+        console.log("[Frontend] startNextBreathingStep: Exercise finished."); // Log finish
+        endBreathingExercise(); 
+        return null; 
+      }
+
+      const nextStep = prevState.steps[nextStepIndex];
+      console.log("[Frontend] startNextBreathingStep: Next step details:", nextStep); // Log step details
+      
+      // Add instruction message
+      setMessages(msgs => {
+          const lastMsg = msgs[msgs.length -1];
+          if(lastMsg?.sender === 'ai' && lastMsg?.text === nextStep.text) return msgs; // Avoid duplicate message
+          return [...msgs, { sender: 'ai', text: nextStep.text }];
+      });
+
+      // Start new timer
+      timerIntervalRef.current = setInterval(handleTimerTick, 1000);
+      console.log("[Frontend] startNextBreathingStep: Interval started:", timerIntervalRef.current); // Log interval start
+
+      // Define the new state explicitly before returning
+      const newState = {
+        ...prevState,
+        currentStepIndex: nextStepIndex,
+        timer: nextStep.duration,
+        intervalId: timerIntervalRef.current
+      };
+      console.log("[Frontend] startNextBreathingStep: Setting new state:", newState); // Log state being set
+      return newState;
+    });
+  };
+
+   // Function to manually stop the exercise
+  const stopBreathingExercise = () => {
+     // Check state directly, not via event
+     setBreathingState(currentState => {
+         if (currentState?.active) {
+             console.log("[Frontend] Manually stopping breathing exercise.");
+             clearBreathingInterval();
+             setMessages(msgs => [...msgs, { sender: 'ai', text: "Okay, no worries! Stopping the exercise now." }]);
+             setLoading(false);
+             return null; // Set state to null
+         }
+         return currentState; // No change if not active
+     });
+  }
+
+  // Cleanup interval on component unmount
+  useEffect(() => {
+    return () => clearBreathingInterval();
+  }, []);
+
   // Modify sendMessage to optionally accept message text directly
   const sendMessage = async (messageToSend: string = input) => {
-    // Use messageToSend instead of input for checks and sending
     if (!messageToSend.trim()) return;
 
-    // Add user message using messageToSend
-    setMessages(msgs => [...msgs, { sender: 'user', text: messageToSend }]);
-    setInput(''); // Clear input regardless of how message was sent
-    setLoading(true);
+    const userMessage = { sender: 'user' as const, text: messageToSend };
+    setMessages(msgs => [...msgs, userMessage]);
+    setInput('');
+    setLoading(true); // Set loading true initially
 
-    try {
-      const backendBaseUrl = process.env.REACT_APP_API_URL;
-      if (!backendBaseUrl) {
-        console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
-        setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
-        setLoading(false);
+    console.log("[Frontend] sendMessage called. Current activeGame state:", activeGame);
+
+    // --- Check for STOP command during active exercise --- Note: setLoading(false) called within stopBreathingExercise
+    if (breathingState?.active && messageToSend.toLowerCase().includes('stop')) {
+        stopBreathingExercise();
+        // setLoading(false); // Already handled in stopBreathingExercise
         return;
-      }
+    }
+    // Block regular messages during breathing exercise (unless it's 'stop')
+     if (breathingState?.active) {
+         setMessages(msgs => [...msgs, { sender: 'ai', text: "Let's focus on breathing for now. You can type 'stop' if you need to." }]);
+         // setLoading(false); // Don't set loading if blocking
+         return;
+     }
 
-      const apiUrl = `${backendBaseUrl}/api/sade-ai`;
-      console.log(`[SadeAIPage] Attempting to fetch: ${apiUrl}`);
-      console.log(`[SadeAIPage] Request Body:`, { message: messageToSend }); // Use messageToSend
-
-      try {
-        const fetchOptions = {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          // Send messageToSend in the body
-          body: JSON.stringify({ message: messageToSend }),
-        };
-        console.log("[SadeAIPage] Fetch options prepared:", fetchOptions);
-
-        console.log("[SadeAIPage] About to call fetch...");
-        const res = await fetch(apiUrl, fetchOptions);
-        console.log("[SadeAIPage] Fetch call completed. Response status:", res.status);
-
-        const data = await res.json();
-        console.log("[SadeAIPage] Received response data:", data);
-        setMessages(msgs => [...msgs, { sender: 'ai', text: data.response || "Sorry, I couldn't think of a reply." }]);
-
-      } catch (err) {
-        console.error("[SadeAIPage] Fetch failed inside catch block:", err);
-        if (err instanceof Error) {
-          console.error(`[SadeAIPage] Error Name: ${err.name}`);
-          console.error(`[SadeAIPage] Error Message: ${err.message}`);
+    // --- Game Logic Check (Guess the Number) ---
+    if (activeGame && activeGame.gameType === 'guess_the_number') {
+        console.log("[Frontend] Guess the Number game is active. Processing locally.");
+        const guessAttempt = parseInt(messageToSend, 10);
+        const lowerCaseMessage = messageToSend.toLowerCase();
+        if (!isNaN(guessAttempt)) {
+            console.log("[Frontend] Input is a number. Routing to handleGuess.");
+            handleGuess(guessAttempt);
         }
-        setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
-      }
+        else if (lowerCaseMessage.includes('even') || lowerCaseMessage.includes('odd')) {
+             console.log("[Frontend] Hint request detected: even/odd.");
+             const isEven = activeGame.targetNumber % 2 === 0;
+             const hintResponse = isEven
+                 ? "Okay, cheeky hint for you... It's an **even** number! 😉"
+                 : "Alright, since you asked nicely... It's an **odd** number! 🤔";
+             setMessages(msgs => [...msgs, { sender: 'ai', text: hintResponse }]);
+        }
+        // Add more hint checks here if desired (e.g., higher/lower than 50)
+        // else if (lowerCaseMessage.includes('higher than 50') || lowerCaseMessage.includes('over 50')) { ... }
+
+        // If it's not a number and not a recognized hint
+        else {
+            console.log("[Frontend] Input is not a number or recognized hint.");
+            const nonGuessResponse = "Ah, trying to be clever? 😉 Just give me a number guess between 1 and 100!";
+            setMessages(msgs => [...msgs, { sender: 'ai', text: nonGuessResponse }]);
+        }
+
+        // setLoading(false); // Game logic is local, no loading needed
+        return; 
+    }
+
+    // --- Send to Backend --- Only set loading if we are actually sending
+    setLoading(true); 
+    console.log("[Frontend] No active game/exercise. Sending message to backend.");
+    try {
+        const backendBaseUrl = process.env.REACT_APP_API_URL;
+        if (!backendBaseUrl) {
+            console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
+            setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
+            setLoading(false);
+            return;
+        }
+        const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+        const fetchOptions = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: messageToSend }),
+        };
+        const res = await fetch(apiUrl, fetchOptions);
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const data = await res.json();
+        console.log("[Frontend] Backend response data:", data);
+        setLoading(false); // Turn off loading after getting response
+
+        // --- Handle Backend Response ---
+        if (data.startBreathingExercise && data.steps) {
+           console.log("[Frontend] sendMessage: Received signal to start breathing exercise.");
+           setLoading(false);
+           setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]); 
+           // Log the state right before setting it
+           const initialBreathingState = {
+               active: true,
+               steps: data.steps,
+               currentStepIndex: -1, 
+               timer: 0,
+               intervalId: null
+           };
+           console.log("[Frontend] sendMessage: Initializing breathingState:", initialBreathingState);
+           setBreathingState(initialBreathingState);
+           // Use timeout to ensure state is processed
+           setTimeout(startNextBreathingStep, 100); 
+
+        } else if (data.startGame === 'guess_the_number' && data.response) {
+          // Ensure loading is off before starting game UI
+           setLoading(false);
+          startGame('guess_the_number', data.response);
+        } else if (data.response) {
+          setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]); 
+        } else {
+           console.error("[SadeAIPage] Received unexpected response structure:", data);
+           setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I got a bit confused there." }]);
+        }
 
     } catch (err) {
-      // This outer catch might be redundant now, but leave for safety
-      console.error("[SadeAIPage] Outer request failed:", err);
-       if (err instanceof Error) {
-         console.error(`[SadeAIPage] Error Name: ${err.name}`);
-         console.error(`[SadeAIPage] Error Message: ${err.message}`);
-       }
-      setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting to Sade AI." }]);
-    } finally {
-        setLoading(false);
-        // Input is already cleared at the start of the function
+        console.error("[SadeAIPage] Fetch failed:", err);
+        setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting. Please try again." }]);
+        setLoading(false); 
     }
   };
 
@@ -98,12 +293,82 @@ const SadeAIPage: React.FC = () => {
     sendMessage(suggestion);
   };
 
+  // --- Game Logic ---
+
+  const startGame = (gameType: 'guess_the_number', initialMessage: string) => {
+    if (gameType === 'guess_the_number') {
+      const target = Math.floor(Math.random() * 100) + 1;
+      const newGameState = {
+        gameType: 'guess_the_number' as const,
+        targetNumber: target,
+        guessesMade: 0,
+        lowerBound: 1,
+        upperBound: 100
+      };
+      console.log(`[Frontend] startGame called. Setting activeGame state to:`, newGameState);
+      setActiveGame(newGameState);
+      // Add Sade's starting message to the chat
+      setMessages(msgs => [...msgs, { sender: 'ai', text: initialMessage }]);
+    }
+    // Can add else if for other game types later
+  };
+
+  const handleGuess = (guess: number) => {
+    if (!activeGame || activeGame.gameType !== 'guess_the_number') return;
+
+    let responseText = '';
+    const guesses = activeGame.guessesMade + 1;
+    let newLowerBound = activeGame.lowerBound;
+    let newUpperBound = activeGame.upperBound;
+    let gameFinished = false;
+
+    console.log(`[Frontend] handleGuess called with valid number: ${guess}`); // Removed duplicate log
+
+    // Simplified check - assuming guess is a valid number now
+    if (guess < 1 || guess > 100) {
+        responseText = "Whoops! That number's not between 1 and 100, mate. Try again!";
+        console.log("[Frontend] handleGuess: Input out of bounds.");
+    } else if (guess === activeGame.targetNumber) {
+        responseText = `Yes! You got it in ${guesses} guesses! Proper smart. 🎉 Fancy another round? (Just ask!)`;
+        gameFinished = true;
+    } else if (guess < activeGame.targetNumber) {
+        responseText = `A bit higher than ${guess}... 😉`;
+        newLowerBound = Math.max(activeGame.lowerBound, guess + 1);
+    } else { // guess > activeGame.targetNumber
+        responseText = `Lower than ${guess}, try again! 👇`;
+        newUpperBound = Math.min(activeGame.upperBound, guess - 1);
+    }
+
+    setMessages(msgs => [...msgs, { sender: 'ai', text: responseText }]);
+
+    if (gameFinished) {
+        setActiveGame(null);
+    } else if (guess >= 1 && guess <= 100) { // Only update state for valid bounds guesses
+        setActiveGame({
+           ...activeGame,
+           guessesMade: guesses,
+           lowerBound: newLowerBound,
+           upperBound: newUpperBound
+         });
+    }
+  };
+
+  // Calculate progress for LinearProgress
+  const isBreathingActive = breathingState?.active;
+  const currentStepIndex = breathingState?.currentStepIndex ?? -1;
+  const currentStep = isBreathingActive && currentStepIndex >= 0 ? breathingState.steps[currentStepIndex] : null;
+  const currentStepDuration = currentStep?.duration ?? 0;
+  const currentTimer = breathingState?.timer ?? 0;
+  const timerProgress = currentStepDuration > 0 ? ((currentStepDuration - currentTimer) / currentStepDuration) * 100 : 0;
+
+  // Log values used for rendering timer UI
+  console.log(`[Frontend Render] breathingState Active: ${isBreathingActive}, Step Index: ${currentStepIndex}, Current Step Duration: ${currentStepDuration}, Current Timer: ${currentTimer}, Progress: ${timerProgress}`);
+
   return (
     <Box
       sx={{
         minHeight: '100vh',
-        bgcolor: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
-        background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+        background: 'linear-gradient(135deg, #FFF8DC 0%, #FFC0CB 100%)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -112,9 +377,23 @@ const SadeAIPage: React.FC = () => {
         pt: { xs: 2, sm: 6 },
       }}
     >
-      <Paper elevation={3} sx={{ width: '100%', maxWidth: 500, p: { xs: 2, sm: 4 }, borderRadius: 4, mb: 2, mt: 2, boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)' }}>
-        <Typography variant="h4" align="center" fontWeight={700} color="primary.main" gutterBottom sx={{ letterSpacing: 1 }}>
-          Sade AI <span style={{ fontWeight: 400, fontSize: '1.2rem', color: '#888' }}>(SHA-DEY)</span>
+      <Paper 
+        elevation={6}
+        sx={{ 
+          width: '100%', 
+          maxWidth: 500, 
+          p: { xs: 2, sm: 4 }, 
+          borderRadius: 4,
+          mb: 2, 
+          mt: 2, 
+          bgcolor: '#fffefa',
+          boxShadow: '0 12px 40px rgba(0, 0, 0, 0.12)'
+      }}>
+        <Typography variant="h4" align="center" fontWeight={700} color="primary.dark" gutterBottom sx={{ letterSpacing: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          Sade AI ✨
+          <Typography component="span" variant="body1" sx={{ ml: 1.5, fontWeight: 400, fontSize: '1.1rem', color: 'text.secondary' }}>
+            (SHA-DEY)
+          </Typography>
         </Typography>
         <Divider sx={{ mb: 2 }} />
         <Box
@@ -122,11 +401,11 @@ const SadeAIPage: React.FC = () => {
             minHeight: 320,
             maxHeight: { xs: 350, sm: 400 },
             overflowY: 'auto',
-            bgcolor: 'rgba(255,255,255,0.7)',
+            bgcolor: 'rgba(255, 255, 255, 0.6)',
             borderRadius: 3,
             p: 2,
             mb: 2,
-            boxShadow: '0 2px 8px 0 rgba(31, 38, 135, 0.05)',
+            boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.05)',
             transition: 'background 0.3s',
           }}
         >
@@ -162,13 +441,13 @@ const SadeAIPage: React.FC = () => {
               </Box>
             </Box>
           ))}
-          {loading && <CircularProgress size={24} sx={{ display: 'block', mx: 'auto', mt: 2 }} />}
+          {loading && !activeGame && <CircularProgress size={24} sx={{ display: 'block', mx: 'auto', mt: 2 }} />}
+          <div ref={messagesEndRef} />
         </Box>
 
-        {/* Suggestion Chips Area */}
-        {!loading && messages.length <= 1 && ( // Show suggestions only when not loading and chat is new/empty
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center', mb: 2, px: { xs: 1, sm: 0 } }}>
-             <Typography variant="caption" sx={{ width: '100%', textAlign: 'center', color: 'text.secondary', mb: 0.5 }}>Try asking:</Typography>
+        {!loading && !activeGame && !breathingState?.active && messages.length <= 1 && (
+             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center', mb: 2, px: { xs: 1, sm: 0 } }}>
+             <Typography variant="caption" sx={{ width: '100%', textAlign: 'center', color: 'text.secondary', mb: 0.5 }} >Try asking:</Typography>
              {suggestions.map((text, index) => (
                 <Chip
                   key={index}
@@ -176,10 +455,34 @@ const SadeAIPage: React.FC = () => {
                   onClick={() => handleSuggestionClick(text)}
                   clickable
                   variant="outlined"
+                  color="primary"
                   size="small"
-                  disabled={loading} // Technically redundant due to outer check, but good practice
+                  disabled={loading}
+                  sx={{ fontWeight: 500 }}
                 />
               ))}
+            </Box>
+        )}
+
+        {activeGame && !breathingState?.active && activeGame.gameType === 'guess_the_number' && (
+           <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mb: 1, color: 'text.secondary' }}>
+             Guessing between {activeGame.lowerBound} and {activeGame.upperBound} (Guess #{activeGame.guessesMade + 1})
+           </Typography>
+        )}
+
+        {isBreathingActive && currentStepIndex >= 0 && (
+           <Box sx={{ p: 1, mt: 1, border: '1px dashed grey', borderRadius: 2, textAlign: 'center', bgcolor: 'rgba(255,255,255,0.7)' }}>
+                <Typography variant="caption" display="block" sx={{ mb: 0.5, fontWeight: 500 }}> 
+                    {currentStep?.text} 
+                </Typography>
+                <LinearProgress
+                    variant="determinate"
+                    value={timerProgress} 
+                    sx={{ height: 8, borderRadius: 4, mb: 0.5, '& .MuiLinearProgress-bar': { transition: 'transform .2s linear'} }}
+                 />
+                 <Typography variant="caption" display="block">
+                    {currentTimer}s remaining... (type 'stop' to end)
+                 </Typography>
             </Box>
         )}
 
@@ -202,30 +505,34 @@ const SadeAIPage: React.FC = () => {
           <TextField
             fullWidth
             variant="outlined"
-            placeholder="Type your message..."
+            placeholder={ 
+                breathingState?.active ? "Focus on breathing... (or type 'stop')" :
+                activeGame ? "Enter your guess..." :
+                "Type your message..."
+            }
             value={input}
             onChange={e => setInput(e.target.value)}
-            // Ensure Enter key uses the input state
             onKeyDown={e => { if (e.key === 'Enter' && input.trim()) sendMessage(); }}
-            disabled={loading}
+            disabled={loading} // Simpler disabled logic - always disabled if loading
+            type={activeGame?.gameType === 'guess_the_number' ? 'number' : 'text'}
             sx={{ bgcolor: 'white', borderRadius: 2, boxShadow: '0 1px 4px 0 rgba(31,38,135,0.04)' }}
           />
-          {/* Ensure Send button uses the input state */}
-          <Button variant="contained" onClick={() => sendMessage()} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
-            Send
-          </Button>
-          <Button
-            variant="outlined"
-            color="secondary"
-            onClick={() => {
-              setMessages([]);
-              localStorage.removeItem('sadeai_chat_history');
-            }}
-            disabled={loading}
-            sx={{ minWidth: 90, fontWeight: 500 }}
-          >
-            Clear Chat
-          </Button>
+           
+          {breathingState?.active ? (
+              <Button variant="contained" color="secondary" onClick={stopBreathingExercise} sx={{ minWidth: 80, fontWeight: 600 }}>
+                Stop
+              </Button>
+          ) : (
+              <Button variant="contained" onClick={() => sendMessage()} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
+                {activeGame ? "Guess" : "Send"}
+              </Button>
+          )}
+           
+          {!activeGame && !breathingState?.active && ( 
+             <Button variant="outlined" color="secondary" onClick={() => { setMessages([]); localStorage.removeItem('sadeai_chat_history'); setActiveGame(null); /* Explicitly nullify game too */ }} disabled={loading} sx={{ minWidth: 90, fontWeight: 500 }} >
+              Clear Chat
+             </Button>
+          )}
         </Box>
       </Paper>
     </Box>
