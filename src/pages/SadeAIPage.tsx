@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip, LinearProgress } from '@mui/material';
+import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip, LinearProgress, IconButton, Avatar } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
 
 // Define step type
 type BreathingStep = { text: string, duration: number };
@@ -28,6 +29,7 @@ const SadeAIPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [activeGame, setActiveGame] = useState<GameState>(null);
   const [breathingState, setBreathingState] = useState<BreathingState>(null); // New state for exercise
+  const [forceSearchNext, setForceSearchNext] = useState(false); // New state for explicit search
 
   // Ref to scroll to bottom
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
@@ -171,16 +173,19 @@ const SadeAIPage: React.FC = () => {
     return () => clearBreathingInterval();
   }, []);
 
-  // Modify sendMessage to optionally accept message text directly
-  const sendMessage = async (messageToSend: string = input) => {
+  // Modify sendMessage to optionally accept message text directly AND handle forceSearch
+  const sendMessage = async (messageToSend: string = input, forceSearch: boolean = false) => {
     if (!messageToSend.trim()) return;
 
     const userMessage = { sender: 'user' as const, text: messageToSend };
     setMessages(msgs => [...msgs, userMessage]);
     setInput('');
-    setLoading(true); // Set loading true initially
+    setLoading(true); // Set loading true only when actually sending to backend
 
-    console.log("[Frontend] sendMessage called. Current activeGame state:", activeGame);
+    console.log("[Frontend] sendMessage called. forceSearch=", forceSearch, "Current activeGame state:", activeGame);
+
+    // Reset force search flag immediately after capturing it for this call
+    setForceSearchNext(false); 
 
     // --- Check for STOP command during active exercise --- Note: setLoading(false) called within stopBreathingExercise
     if (breathingState?.active && messageToSend.toLowerCase().includes('stop')) {
@@ -195,9 +200,10 @@ const SadeAIPage: React.FC = () => {
          return;
      }
 
-    // --- Game Logic Check (Guess the Number) ---
+    // --- Game Logic Check (Guess the Number) --- Set loading false here as it's local
     if (activeGame && activeGame.gameType === 'guess_the_number') {
         console.log("[Frontend] Guess the Number game is active. Processing locally.");
+        setLoading(false); // Ensure loading is off for local game logic
         const guessAttempt = parseInt(messageToSend, 10);
         const lowerCaseMessage = messageToSend.toLowerCase();
         if (!isNaN(guessAttempt)) {
@@ -221,14 +227,12 @@ const SadeAIPage: React.FC = () => {
             const nonGuessResponse = "Ah, trying to be clever? 😉 Just give me a number guess between 1 and 100!";
             setMessages(msgs => [...msgs, { sender: 'ai', text: nonGuessResponse }]);
         }
-
-        // setLoading(false); // Game logic is local, no loading needed
         return; 
     }
 
     // --- Send to Backend --- Only set loading if we are actually sending
-    setLoading(true); 
-    console.log("[Frontend] No active game/exercise. Sending message to backend.");
+    setLoading(true);
+    console.log("[Frontend] No active game/exercise or local action. Sending message to backend.");
     try {
         const backendBaseUrl = process.env.REACT_APP_API_URL;
         if (!backendBaseUrl) {
@@ -238,10 +242,15 @@ const SadeAIPage: React.FC = () => {
             return;
         }
         const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+        const requestBody = {
+            message: messageToSend,
+            forceSearch: forceSearch // Include the flag in the request body
+        };
+        console.log("[Frontend] Sending request body:", requestBody); // Log the body being sent
         const fetchOptions = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: messageToSend }),
+            body: JSON.stringify(requestBody), // Send the updated body
         };
         const res = await fetch(apiUrl, fetchOptions);
         if (!res.ok) {
@@ -411,7 +420,9 @@ const SadeAIPage: React.FC = () => {
         >
           {messages.length === 0 && (
             <Typography color="text.secondary" align="center" sx={{ mt: 8 }}>
-              Say hello to <b>Sade AI</b>, your friendly AI therapist! 🌸
+              Say hello to <b>Sade AI</b>, your friendly AI chatbot! 🌸
+              <br />
+              Ask me anything! Search the web for information, or just chat.
             </Typography>
           )}
           {messages.map((msg, idx) => (
@@ -419,10 +430,18 @@ const SadeAIPage: React.FC = () => {
               key={idx}
               sx={{
                 display: 'flex',
+                alignItems: msg.sender === 'ai' ? 'flex-start' : 'flex-end',
                 justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start',
                 mb: 1.5,
               }}
             >
+              {msg.sender === 'ai' && (
+                <Avatar 
+                  src="/images/sade-avatar.jpg"
+                  alt="Sade AI Avatar" 
+                  sx={{ width: 36, height: 36, mr: 1.5 }} 
+                />
+              )}
               <Box
                 sx={{
                   bgcolor: msg.sender === 'user' ? 'primary.main' : '#f3f6fb',
@@ -446,22 +465,43 @@ const SadeAIPage: React.FC = () => {
         </Box>
 
         {!loading && !activeGame && !breathingState?.active && messages.length <= 1 && (
-             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center', mb: 2, px: { xs: 1, sm: 0 } }}>
-             <Typography variant="caption" sx={{ width: '100%', textAlign: 'center', color: 'text.secondary', mb: 0.5 }} >Try asking:</Typography>
-             {suggestions.map((text, index) => (
-                <Chip
-                  key={index}
-                  label={text}
-                  onClick={() => handleSuggestionClick(text)}
-                  clickable
-                  variant="outlined"
-                  color="primary"
-                  size="small"
-                  disabled={loading}
-                  sx={{ fontWeight: 500 }}
-                />
-              ))}
-            </Box>
+             <Box sx={{
+                 pt: 1, // Add some padding top
+                 pb: 1.5, // Add some padding bottom
+                 mb: 2, // Keep margin bottom
+                 overflow: 'hidden', // Hide potential vertical overflow from scrollbar area
+             }}>
+                 <Typography variant="caption" sx={{ width: '100%', textAlign: 'center', color: 'text.secondary', mb: 1 }} >Try asking:</Typography>
+                 <Box sx={{
+                     display: 'flex',
+                     gap: 1,
+                     flexWrap: 'nowrap', // Force single line
+                     overflowX: 'auto', // Enable horizontal scroll
+                     justifyContent: 'flex-start', // Align items to the start
+                     px: { xs: 2, sm: 0 }, // Add horizontal padding for breathing room
+                     pb: 1, // Padding at the bottom for scrollbar space if visible
+                     // Hide scrollbar visually but keep functionality
+                     '&::-webkit-scrollbar': {
+                         display: 'none', // For Chrome, Safari, Opera
+                     },
+                     scrollbarWidth: 'none', // For Firefox
+                     '-ms-overflow-style': 'none', // For IE/Edge
+                 }}>
+                 {suggestions.map((text, index) => (
+                    <Chip
+                      key={index}
+                      label={text}
+                      onClick={() => handleSuggestionClick(text)}
+                      clickable
+                      variant="outlined"
+                      color="primary"
+                      size="small"
+                      disabled={loading}
+                      sx={{ fontWeight: 500 }}
+                    />
+                  ))}
+                </Box>
+             </Box>
         )}
 
         {activeGame && !breathingState?.active && activeGame.gameType === 'guess_the_number' && (
@@ -512,7 +552,7 @@ const SadeAIPage: React.FC = () => {
             }
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && input.trim()) sendMessage(); }}
+            onKeyDown={e => { if (e.key === 'Enter' && input.trim()) sendMessage(input, forceSearchNext); }}
             disabled={loading} // Simpler disabled logic - always disabled if loading
             type={activeGame?.gameType === 'guess_the_number' ? 'number' : 'text'}
             sx={{ bgcolor: 'white', borderRadius: 2, boxShadow: '0 1px 4px 0 rgba(31,38,135,0.04)' }}
@@ -523,13 +563,26 @@ const SadeAIPage: React.FC = () => {
                 Stop
               </Button>
           ) : (
-              <Button variant="contained" onClick={() => sendMessage()} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
+             <>
+              {/* Send Button */}
+              <Button variant="contained" onClick={() => sendMessage(input, false)} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
                 {activeGame ? "Guess" : "Send"}
               </Button>
+              {/* Search Button - Added */}
+              <IconButton
+                 color="primary"
+                 onClick={() => sendMessage(input, true)}
+                 disabled={loading || !input.trim()}
+                 sx={{ border: '1px solid', borderColor: 'primary.main', ml: 0.5 }}
+                 title="Search the web for this query"
+              >
+                  <SearchIcon />
+              </IconButton>
+             </>
           )}
            
           {!activeGame && !breathingState?.active && ( 
-             <Button variant="outlined" color="secondary" onClick={() => { setMessages([]); localStorage.removeItem('sadeai_chat_history'); setActiveGame(null); /* Explicitly nullify game too */ }} disabled={loading} sx={{ minWidth: 90, fontWeight: 500 }} >
+             <Button variant="outlined" color="secondary" onClick={() => { setMessages([]); localStorage.removeItem('sadeai_chat_history'); setActiveGame(null); setBreathingState(null); /* Clear all states on clear */ }} disabled={loading} sx={{ minWidth: 90, fontWeight: 500 }} >
               Clear Chat
              </Button>
           )}
