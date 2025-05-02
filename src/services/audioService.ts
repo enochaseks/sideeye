@@ -60,6 +60,18 @@ class AudioService {
     audioDeviceManager.onDeviceChange(() => {
       this.deviceChangeCallbacks.forEach(callback => callback());
     });
+
+    // Add listener for page unload/hide
+    window.addEventListener('pagehide', this.handlePageHide);
+  }
+
+  private handlePageHide = () => {
+    console.log('[AudioService] Page hide event detected. Forcing audio cleanup.');
+    this.stopAllAudioProcessing();
+    // Optionally, also disconnect the socket cleanly if appropriate
+    // if (this.socket) {
+    //   this.socket.disconnect();
+    // }
   }
 
   private setupAudioElement() {
@@ -406,10 +418,11 @@ class AudioService {
       };
 
       // Connect audio processing chain
+      // Mic -> Compressor -> Analyser (for speaking detection)
+      // DO NOT connect the analyser back to the output gainNode/destination
       this.microphoneNode
         .connect(compressor)
-        .connect(this.analyser as AnalyserNode)
-        .connect(this.gainNode as GainNode);
+        .connect(this.analyser as AnalyserNode); // Stop the chain here
 
       // Start recording with smaller chunks for lower latency
       this.isRecording = true;
@@ -464,9 +477,12 @@ class AudioService {
     // Stop and cleanup microphone stream
     if (this.stream) {
       this.stream.getTracks().forEach(track => {
+        console.log(`[AudioService] Stopping track: ${track.kind}, state: ${track.readyState}`);
         track.stop();
       });
       this.stream = null;
+    } else {
+        console.log('[AudioService] stopAllAudioProcessing: this.stream is null, cannot stop tracks.');
     }
 
     // Disconnect microphone node
@@ -493,10 +509,14 @@ class AudioService {
     // Clear all timeouts
     this.silenceTimeouts.forEach(timeout => clearTimeout(timeout));
     this.silenceTimeouts.clear();
+    this.stopAudioProcessingLoop(); // Ensure queue processing stops
   }
 
   public disconnect() {
     console.log('Disconnecting AudioService...');
+    // Remove the pagehide listener
+    window.removeEventListener('pagehide', this.handlePageHide);
+
     this.stopAllAudioProcessing();
     this.stopAudioProcessingLoop(); // Stop the queue processing
     this.currentUserId = null; // Clear stored user ID

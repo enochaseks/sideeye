@@ -144,14 +144,26 @@ const SideRoomComponent: React.FC = () => {
         }
     }, [roomId, currentUser?.uid, isMicMuted]);
 
-    // --- Cleanup on unmount ---
+    // --- Cleanup on unmount --- Effect to leave the audio room when the component unmounts
     useEffect(() => {
+        // Store roomId and userId in constants for use in cleanup
+        const componentRoomId = roomId;
+        const componentUserId = currentUser?.uid;
+
         return () => {
-            if (isAudioConnected && roomId && currentUser?.uid) {
-                audioService.leaveRoom(roomId, currentUser.uid);
+            // This function runs when the component unmounts (e.g., user navigates away)
+            console.log(`[SideRoomComponent] Unmounting room ${componentRoomId} for user ${componentUserId}. Attempting audio cleanup.`);
+            // Always attempt to leave the room audio on unmount
+            if (componentRoomId && componentUserId) {
+                // Call the leaveRoom function from the audio service
+                // This should handle stopping mic tracks, closing connections, etc.
+                audioService.leaveRoom(componentRoomId, componentUserId);
+                // It's generally better to let the audioService manage internal state like isAudioConnected
+                // rather than relying on component state during unmount.
             }
         };
-    }, [isAudioConnected, roomId, currentUser?.uid]);
+    // Effect dependencies: only run setup/cleanup when roomId or user changes
+    }, [roomId, currentUser?.uid]);
 
     // --- Room Listener ---
     useEffect(() => {

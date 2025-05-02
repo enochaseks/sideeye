@@ -4,6 +4,7 @@ import {
   BottomNavigation,
   BottomNavigationAction,
   Box,
+  Avatar,
 } from '@mui/material';
 import {
   Home as HomeIcon,
@@ -52,22 +53,12 @@ const BottomNav: React.FC = () => {
         <BottomNavigationAction
           label="Sade AI"
           value="/sade-ai"
-          // Note: To resolve the 'Cannot find name PsychologyIcon' error,
-          // you need to import the icon at the top of this file (`side-eye/frontend/src/components/BottomNav.tsx`).
-          // Find the line that starts with:
-          // import { Home as HomeIcon, ... } from '@mui/icons-material';
-          // Add 'Psychology as PsychologyIcon' to the list inside the curly braces {}.
-          // For example:
-          // import {
-          //   Home as HomeIcon,
-          //   MeetingRoom as MeetingRoomIcon,
-          //   TrendingUp as TrendingUpIcon,
-          //   Person as PersonIcon,
-          //   Store as StoreIcon,
-          //   Chat as ChatIcon,
-          //   Psychology as PsychologyIcon, // <-- Add this line
-          // } from '@mui/icons-material';
-          icon={<PsychologyIcon />}
+          icon={
+            <Avatar 
+              src="/images/sade-avatar.jpg" 
+              sx={{ width: 24, height: 24 }}
+            />
+          }
         />
         <BottomNavigationAction
           label="Profile"

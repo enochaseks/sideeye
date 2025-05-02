@@ -18,17 +18,11 @@ class AudioDeviceManager {
   }
 
   private async initDeviceListener() {
-    // Request initial device permissions
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (error) {
-      console.error('Failed to get initial audio permissions:', error);
-    }
-
     // Listen for device changes
     navigator.mediaDevices.addEventListener('devicechange', this.handleDeviceChange.bind(this));
     
-    // Get initial device list
+    // Get initial device list (enumerateDevices might still work without prior permission, 
+    // but the user will be properly prompted when getAudioStream is called later)
     await this.updateDeviceList();
   }
 
