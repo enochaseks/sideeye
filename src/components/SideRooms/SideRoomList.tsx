@@ -26,7 +26,8 @@ import {
   Select,
   MenuItem,
   Grid,
-  Paper
+  Paper,
+  CardMedia
 } from '@mui/material';
 import {
   LocalFireDepartment,
@@ -35,7 +36,9 @@ import {
   Add,
   Lock,
   Search as SearchIcon,
-  FilterList as FilterIcon
+  FilterList as FilterIcon,
+  Visibility as VisibilityIcon,
+  AccessTime as AccessTimeIcon
 } from '@mui/icons-material';
 import CreateSideRoom from '../CreateSideRoom';
 import { useFirestore } from '../../context/FirestoreContext';
@@ -63,6 +66,7 @@ interface SideRoomData {
   genre?: string;
   tags?: string[];
   category?: string;
+  thumbnailUrl?: string;
 }
 
 const GENRES = [
@@ -126,7 +130,8 @@ const SideRoomList: React.FC = () => {
               password: data.password,
               genre: data.genre,
               tags: data.tags as string[] | undefined,
-              category: data.category
+              category: data.category,
+              thumbnailUrl: data.thumbnailUrl
             } as SideRoomData;
           });
           
@@ -198,270 +203,239 @@ const SideRoomList: React.FC = () => {
   }, [rooms, searchQuery, selectedGenre, sortBy]); // Re-run filtering when data or filters change
 
   const handleJoinRoom = async (room: SideRoomData) => {
-    if (!db || !currentUser) {
-      toast.error('Not authenticated');
+    if (!currentUser || !db) {
+      toast.error("You must be logged in to join a room.");
       return;
     }
 
     if (room.isPrivate) {
       setSelectedRoom(room);
       setShowPasswordDialog(true);
-    } else {
-      try {
-        setIsProcessing(true);
-        const roomRef = doc(db, 'sideRooms', room.id);
-        
-        // Add user as a viewer first
-        await runTransaction(db, async (transaction) => {
-          const roomDoc = await transaction.get(roomRef);
-          if (!roomDoc.exists()) {
-            throw new Error('Room not found');
-          }
+      return;
+    }
 
-          const roomData = roomDoc.data();
-          const viewers = roomData.viewers || [];
-          
-          // Check if user is already a viewer
-          const isViewer = viewers.some((viewer: any) => viewer.userId === currentUser.uid);
-          
-          if (!isViewer) {
-            // Add user as a viewer
-            const viewerData = {
-              userId: currentUser.uid,
-              username: currentUser.displayName || 'Anonymous',
-              avatar: currentUser.photoURL || '',
-              role: 'viewer',
-              joinedAt: new Date()
-            };
-
-            transaction.update(roomRef, {
-              viewers: arrayUnion(viewerData),
-              viewerCount: increment(1),
-              activeUsers: increment(1),
-              lastActive: serverTimestamp()
-            });
-          } else {
-            // Just update active users count
-            transaction.update(roomRef, {
-              activeUsers: increment(1),
-              lastActive: serverTimestamp()
-            });
-          }
-        });
-
-        toast.success('Joined room successfully');
-        navigate(`/side-room/${room.id}`);
-      } catch (error) {
-        console.error('Error joining room:', error);
-        if (error instanceof Error) {
-          toast.error(error.message);
-        } else {
-          toast.error('Failed to join room');
+    setIsProcessing(true);
+    try {
+      const roomRef = doc(db, 'sideRooms', room.id);
+      await runTransaction(db, async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if (!roomDoc.exists()) {
+          throw new Error("Room does not exist!");
         }
-      } finally {
-        setIsProcessing(false);
-      }
+        const currentViewers = roomDoc.data()?.viewers || [];
+        const isAlreadyViewer = currentUser && currentViewers.some((v: SideRoomMember) => v.userId === currentUser.uid);
+        if (currentUser && !isAlreadyViewer) {
+          const newViewer: SideRoomMember = {
+            userId: currentUser.uid,
+            username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+            avatar: currentUser.photoURL || '',
+            role: 'viewer',
+            joinedAt: serverTimestamp()
+          };
+          transaction.update(roomRef, {
+            viewers: arrayUnion(newViewer),
+            viewerCount: increment(1)
+          });
+        }
+      });
+      navigate(`/side-room/${room.id}`);
+    } catch (error: any) {
+      console.error("Error joining room:", error);
+      toast.error(`Failed to join room: ${error?.message || error}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handlePasswordSubmit = async () => {
-    if (!selectedRoom || !db || !currentUser) return;
+    if (!currentUser || !selectedRoom || !password || !db) return;
 
-    if (password === selectedRoom.password) {
-      try {
-        setIsProcessing(true);
-        const roomRef = doc(db, 'sideRooms', selectedRoom.id);
-        
-        // Add user as a member and track active users
-        await runTransaction(db, async (transaction) => {
-          const roomDoc = await transaction.get(roomRef);
-          if (!roomDoc.exists()) {
-            throw new Error('Room not found');
-          }
+    setIsProcessing(true);
+    try {
+      const roomRef = doc(db, 'sideRooms', selectedRoom.id);
+      const roomSnapshot = await getDoc(roomRef);
 
-          const roomData = roomDoc.data();
-          const members = roomData.viewers || [];
-          
-          // Check if user is already a member
-          const isMember = members.some((member: any) => member.userId === currentUser.uid);
-          
-          if (!isMember) {
-            // Add user as a member
-            transaction.update(roomRef, {
-              viewers: arrayUnion({
-                userId: currentUser.uid,
-                username: currentUser.displayName || 'Anonymous',
-                avatar: currentUser.photoURL || '',
-                role: 'member',
-                joinedAt: new Date()
-              }),
-              viewerCount: increment(1),
-              activeUsers: increment(1),
-              lastActive: serverTimestamp()
-            });
-          } else {
-            // Just update active users count
-            transaction.update(roomRef, {
-              activeUsers: increment(1),
-              lastActive: serverTimestamp()
-            });
-          }
-        });
-
-        toast.success('Joined room successfully');
-        setShowPasswordDialog(false);
-        setPassword('');
-        setSelectedRoom(null);
-        navigate(`/side-room/${selectedRoom.id}`);
-      } catch (error) {
-        console.error('Error joining room:', error);
-        toast.error('Failed to join room');
-      } finally {
+      if (!roomSnapshot.exists() || roomSnapshot.data()?.password !== password) {
+        toast.error("Incorrect password");
         setIsProcessing(false);
+        return;
       }
-    } else {
-      toast.error('Incorrect password');
+
+      await runTransaction(db, async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if (!roomDoc.exists()) {
+          throw new Error("Room does not exist!");
+        }
+        const currentViewers = roomDoc.data()?.viewers || [];
+        const isAlreadyViewer = currentUser && currentViewers.some((v: SideRoomMember) => v.userId === currentUser.uid);
+        if (currentUser && !isAlreadyViewer) {
+          const newViewer: SideRoomMember = {
+            userId: currentUser.uid,
+            username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
+            avatar: currentUser.photoURL || '',
+            role: 'viewer',
+            joinedAt: serverTimestamp()
+          };
+          transaction.update(roomRef, {
+            viewers: arrayUnion(newViewer),
+            viewerCount: increment(1)
+          });
+        }
+      });
+
+      setShowPasswordDialog(false);
+      setPassword('');
+      navigate(`/side-room/${selectedRoom.id}`);
+    } catch (error: any) {
+      console.error("Error joining private room:", error);
+      toast.error(`Failed to join room: ${error?.message || error}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error}</div>;
+  const formatTimestamp = (timestamp: Timestamp | null | undefined): string => {
+    if (!timestamp) return 'N/A';
+    const date = timestamp.toDate();
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return <Typography color="error">Error: {error}</Typography>;
+  }
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ flexGrow: 1, p: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1">
-          Side Rooms 🎭
-        </Typography>
+        <Typography variant="h4">Side Rooms</Typography>
         <Button
           variant="contained"
-          color="primary"
           startIcon={<Add />}
           onClick={() => setShowCreateRoom(true)}
+          disabled={!currentUser}
         >
           Create Room
         </Button>
       </Box>
 
-      {showCreateRoom && (
-        <CreateSideRoom open={showCreateRoom} onClose={() => setShowCreateRoom(false)} />
-      )}
-
-      <Paper sx={{ p: 2, mb: 3 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={4}>
-            <TextField
-              fullWidth
-              placeholder="Search rooms by name or genre..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Grid>
-          <Grid item xs={12} md={3}>
-            <FormControl fullWidth>
-              <InputLabel>Genre/Category</InputLabel>
-              <Select
-                value={selectedGenre}
-                label="Genre/Category"
-                onChange={(e) => setSelectedGenre(e.target.value)}
-              >
-                {GENRES.map((genre) => (
-                  <MenuItem key={genre} value={genre}>
-                    {genre}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={3}>
-            <FormControl fullWidth>
-              <InputLabel>Sort by</InputLabel>
-              <Select
-                value={sortBy}
-                label="Sort by"
-                onChange={(e) => setSortBy(e.target.value)}
-              >
-                <MenuItem value="newest">Newest First</MenuItem>
-                <MenuItem value="oldest">Oldest First</MenuItem>
-                <MenuItem value="members">Most Members</MenuItem>
-                <MenuItem value="activity">Most Active</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-        </Grid>
+      <Paper elevation={1} sx={{ p: 2, mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+        <TextField
+          size="small"
+          placeholder="Search rooms..."
+          variant="outlined"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            ),
+          }}
+          sx={{ flexGrow: 1, minWidth: '200px' }}
+        />
+        <FormControl size="small" sx={{ minWidth: 150 }}>
+          <InputLabel>Category</InputLabel>
+          <Select
+            value={selectedGenre}
+            label="Category"
+            onChange={(e) => setSelectedGenre(e.target.value)}
+          >
+            {GENRES.map((genre) => (
+              <MenuItem key={genre} value={genre}>{genre}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 150 }}>
+          <InputLabel>Sort By</InputLabel>
+          <Select
+            value={sortBy}
+            label="Sort By"
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <MenuItem value="newest">Newest</MenuItem>
+            <MenuItem value="oldest">Oldest</MenuItem>
+            <MenuItem value="members">Most Viewers</MenuItem>
+            <MenuItem value="activity">Last Active</MenuItem>
+          </Select>
+        </FormControl>
       </Paper>
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-        {filteredRooms.length === 0 ? (
-          <Typography variant="body1" sx={{ width: '100%', textAlign: 'center', mt: 4 }}>
-            No rooms found matching your criteria
-          </Typography>
-        ) : (
+      <Grid container spacing={3}>
+        {filteredRooms.length > 0 ? (
           filteredRooms.map((room) => (
-            <Card key={room.id} sx={{ width: 300, display: 'flex', flexDirection: 'column' }}>
-              <CardContent sx={{ flexGrow: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                  <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                    {room.name}
-                  </Typography>
-                  {room.isPrivate && (
-                    <Tooltip title="Private Room">
-                      <Lock fontSize="small" />
-                    </Tooltip>
-                  )}
-                </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  {room.description}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  {(room.category || room.genre) && (
-                    <Chip
-                      size="small"
-                      label={room.category || room.genre}
-                      color="secondary"
-                      variant="outlined"
-                    />
-                  )}
-                  {room.tags?.map(tag => (
-                    <Chip key={tag} size="small" label={tag} variant="outlined" />
-                  ))}
-                </Box>
-                <Chip
-                  size="small"
-                  icon={<Group />}
-                  label={`${room.viewerCount || 0} viewers`}
-                  variant="outlined"
+            <Grid item xs={12} md={6} lg={4} key={room.id}>
+              <Card sx={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                height: '100%', // Ensure cards in the same row have the same height
+                borderRadius: 2, 
+                transition: 'box-shadow 0.3s', 
+                '&:hover': {
+                  boxShadow: 3,
+                }
+              }}>
+                <CardMedia
+                  component="img"
+                  height="140"
+                  image={room.thumbnailUrl || '/default-room.jpg'}
+                  alt={room.name}
+                  sx={{ objectFit: 'cover' }}
                 />
-              </CardContent>
-              <CardActions>
-                <Button
-                  fullWidth
-                  variant="contained"
-                  onClick={() => handleJoinRoom(room)}
-                  disabled={isProcessing || room.viewerCount >= room.maxViewers}
-                  sx={{ 
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}
-                >
-                  {isProcessing ? <CircularProgress size={24} /> : 
-                   (room.viewerCount >= room.maxViewers ? 'Room Full' : 'Join Room')}
-                </Button>
-              </CardActions>
-            </Card>
+                <CardContent sx={{ flexGrow: 1 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                    <Typography variant="h6" component="div">
+                      {room.name}
+                    </Typography>
+                    {room.isPrivate && (
+                      <Tooltip title="Private Room" arrow>
+                        <Lock fontSize="small" color="action" />
+                      </Tooltip>
+                    )}
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    {room.description}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                    <Chip icon={<VisibilityIcon fontSize='small' />} label={`${room.viewerCount || 0} Viewing`} size="small" variant="outlined" />
+                    <Chip icon={<AccessTimeIcon fontSize='small' />} label={`Active: ${formatTimestamp(room.lastActive)}`} size="small" variant="outlined" />
+                    {room.category && <Chip label={room.category} size="small" variant="outlined" color="primary" />}
+                  </Box>
+                </CardContent>
+                <CardActions sx={{ justifyContent: 'flex-end', p: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={() => handleJoinRoom(room)}
+                    disabled={isProcessing}
+                  >
+                    Join Room
+                  </Button>
+                </CardActions>
+              </Card>
+            </Grid>
           ))
+        ) : (
+          <Typography sx={{ width: '100%', textAlign: 'center', mt: 4 }}>
+            No rooms found. Why not create one?
+          </Typography>
         )}
-      </Box>
+      </Grid>
 
-      <Dialog open={showPasswordDialog} onClose={() => !isProcessing && setShowPasswordDialog(false)}>
+      <CreateSideRoom
+        open={showCreateRoom}
+        onClose={() => setShowCreateRoom(false)}
+      />
+
+      <Dialog open={showPasswordDialog} onClose={() => setShowPasswordDialog(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Enter Room Password</DialogTitle>
         <DialogContent>
           <TextField
@@ -470,23 +444,15 @@ const SideRoomList: React.FC = () => {
             label="Password"
             type="password"
             fullWidth
+            variant="standard"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            disabled={isProcessing}
+            onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
           />
         </DialogContent>
         <DialogActions>
-          <Button 
-            onClick={() => setShowPasswordDialog(false)}
-            disabled={isProcessing}
-          >
-            Cancel
-          </Button>
-          <Button 
-            onClick={handlePasswordSubmit} 
-            variant="contained"
-            disabled={isProcessing || !password}
-          >
+          <Button onClick={() => setShowPasswordDialog(false)} disabled={isProcessing}>Cancel</Button>
+          <Button onClick={handlePasswordSubmit} disabled={isProcessing || !password}>
             {isProcessing ? <CircularProgress size={24} /> : 'Join'}
           </Button>
         </DialogActions>

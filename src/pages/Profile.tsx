@@ -48,6 +48,21 @@ interface ProfileProps {
   userId?: string;
 }
 
+// Simple component to display when a profile is deactivated
+const DeactivatedProfileMessage: React.FC = () => (
+  <Container maxWidth="sm" sx={{ mt: 4, textAlign: 'center' }}>
+    <Paper elevation={2} sx={{ p: 3 }}>
+      <LockIcon sx={{ fontSize: 40, mb: 2 }} color="action" />
+      <Typography variant="h6" gutterBottom>
+        Account Deactivated
+      </Typography>
+      <Typography color="text.secondary">
+        This user's account is currently deactivated.
+      </Typography>
+    </Paper>
+  </Container>
+);
+
 const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -76,6 +91,7 @@ const Profile: React.FC = () => {
   const [editedUsername, setEditedUsername] = useState('');
   const [joinedRooms, setJoinedRooms] = useState<UserSideRoom[]>([]);
   const [createdRooms, setCreatedRooms] = useState<UserSideRoom[]>([]);
+  const [isDeactivated, setIsDeactivated] = useState(false);
   const navigate = useNavigate();
 
   const userId = targetUserId || currentUser?.uid || '';
@@ -97,6 +113,7 @@ const Profile: React.FC = () => {
     try {
       setIsLoading(true);
       setError(null);
+      setIsDeactivated(false);
 
       const userRef = doc(db, 'users', targetUserId);
       const userDoc = await getDoc(userRef);
@@ -108,6 +125,14 @@ const Profile: React.FC = () => {
       }
 
       const userData = userDoc.data() as UserProfile;
+
+      if (userData.isActive === false) {
+        setIsDeactivated(true);
+        setError(null);
+        setIsLoading(false);
+        return;
+      }
+
       const isPrivateAccount = userData.isPrivate || false;
       const isOwnProfile = currentUser?.uid === targetUserId;
       
@@ -346,6 +371,10 @@ const Profile: React.FC = () => {
         </Box>
       </Container>
     );
+  }
+
+  if (isDeactivated) {
+    return <DeactivatedProfileMessage />;
   }
 
   return (

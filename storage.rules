@@ -71,6 +71,18 @@ service firebase.storage {
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Rules for Side Room Thumbnails
+    match /sideRoomThumbnails/{roomId}/{fileName} {
+      // Allow anyone to read thumbnails (adjust if needed)
+      allow read: if true;
+      // Allow authenticated users to upload (create/update) thumbnails
+      allow write: if request.auth != null;
+      // Optional: Add size and content type validation
+      // allow write: if request.auth != null &&
+      //               request.resource.size < 2 * 1024 * 1024 && // 2MB limit
+      //               request.resource.contentType.matches('image/.*');
+    }
+
     // Default deny all other access
     match /{allPaths=**} {
       allow read, write: if false;

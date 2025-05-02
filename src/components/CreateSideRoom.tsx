@@ -22,11 +22,14 @@ import {
 } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { collection, addDoc, serverTimestamp, Firestore, Timestamp, getDoc, doc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
+import { storage } from '../services/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { SideRoom, RoomMember } from '../types/index';
 import { toast } from 'react-hot-toast';
+import RoomForm from './SideRooms/RoomForm';
 
 interface CreateSideRoomProps {
   open: boolean;
@@ -64,6 +67,7 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
   const [newRule, setNewRule] = useState('');
   const [enableLiveSessions, setEnableLiveSessions] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,6 +127,26 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
         lastActive: serverTimestamp()
       });
 
+      // --- Thumbnail Upload Logic ---
+      if (thumbnailFile) {
+        toast.loading('Uploading thumbnail...', { id: 'thumbnail-upload' });
+        try {
+          const storageRef = ref(storage, `sideRoomThumbnails/${roomRef.id}/${thumbnailFile.name}`);
+          const snapshot = await uploadBytes(storageRef, thumbnailFile);
+          const thumbnailUrl = await getDownloadURL(snapshot.ref);
+          // Update the Firestore document with the URL
+          await updateDoc(roomRef, { thumbnailUrl: thumbnailUrl });
+          toast.dismiss('thumbnail-upload');
+          toast.success('Thumbnail uploaded!');
+        } catch (uploadError) {
+          console.error("Error uploading thumbnail:", uploadError);
+          toast.dismiss('thumbnail-upload');
+          toast.error("Failed to upload thumbnail, but room created.");
+          // Continue without thumbnail
+        }
+      }
+      // --- End Thumbnail Upload Logic ---
+
       toast.success('Room created successfully!');
       onClose();
       navigate(`/side-room/${roomRef.id}`);
@@ -154,6 +178,14 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
 
   const handleRemoveRule = (ruleToRemove: string) => {
     setRules(rules.filter(rule => rule !== ruleToRemove));
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      setThumbnailFile(event.target.files[0]);
+    } else {
+      setThumbnailFile(null);
+    }
   };
 
   return (
@@ -282,6 +314,28 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
             helperText={!formData.password.trim() ? "Password is required for private rooms" : ""}
           />
         )}
+
+        {/* File Input for Thumbnail */}
+        <Box sx={{ mt: 2, mb: 1 }}>
+          <Button
+            variant="outlined"
+            component="label"
+            fullWidth
+          >
+            Upload Thumbnail (Optional)
+            <input
+              type="file"
+              hidden
+              accept="image/*" // Accept only images
+              onChange={handleFileChange}
+            />
+          </Button>
+          {thumbnailFile && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
+              Selected: {thumbnailFile.name}
+            </Typography>
+          )}
+        </Box>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>

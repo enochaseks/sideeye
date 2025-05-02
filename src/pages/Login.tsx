@@ -3,6 +3,9 @@ import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import { TextField, Button, Container, Typography, Box, Link as MuiLink, Paper, Alert, Grid } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { CircularProgress } from '@mui/material';
+import { doc, getDoc, updateDoc, deleteField } from "firebase/firestore";
+import { db } from '../services/firebase';
+import { toast } from 'react-hot-toast';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -62,9 +65,43 @@ const Login: React.FC = () => {
       setLocalLoading(true);
       setStatusMessage({type: 'info', message: 'Logging in...'});
       
+      // Perform login
       await login(email.trim(), password);
+      // login function should update the currentUser state via onAuthStateChanged
+      // We will rely on currentUser from context which updates shortly after login.
+
+      // NOTE: There's a potential timing issue here. If the component proceeds
+      // immediately after await login(), currentUser might not be updated yet.
+      // A more robust solution might involve checking within the AuthProvider's 
+      // onAuthStateChanged listener, but for simplicity, we check here.
+      // We add a small delay or check if currentUser becomes available.
+
+      // Get the currentUser AFTER the login attempt. 
+      // It might be null immediately after await, so we access it from the context state.
+      // We might need to handle the case where it's still null if navigation happens too fast.
       
-      // Login success message - though this might not show if redirected quickly
+      // Let's assume AuthContext updates currentUser reliably upon successful login.
+      // We access the currentUser *value* that exists *after* the login await completes.
+      if (currentUser) { // Check the currentUser from context state
+        const userRef = doc(db, "users", currentUser.uid);
+        const userDoc = await getDoc(userRef);
+
+        if (userDoc.exists() && userDoc.data()?.isActive === false) {
+          console.log("[Login] Reactivating account for user:", currentUser.uid);
+          await updateDoc(userRef, {
+            isActive: true,
+            deactivatedAt: deleteField() // Remove the deactivatedAt field
+          });
+          toast.success("Welcome back! Your account has been reactivated.");
+        }
+      } else {
+          // This case might happen if the component logic proceeds before 
+          // the AuthContext state is fully updated after login.
+          console.warn("[Login] currentUser not available immediately after login for reactivation check.");
+      }
+      // --- End Reactivation Check ---
+      
+      // Login success message - shows briefly before potential redirect
       setStatusMessage({type: 'success', message: 'Login successful! Redirecting...'});
       
     } catch (err: any) {

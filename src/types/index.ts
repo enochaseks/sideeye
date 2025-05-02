@@ -79,6 +79,8 @@ export interface SideRoom {
   isLive: boolean;
   activeUsers: number;
   style?: RoomStyle;
+  thumbnailUrl?: string;
+  category?: string;
 }
 
 export interface SideReveal {

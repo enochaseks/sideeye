@@ -55,6 +55,8 @@ import type { SideRoom, RoomMember } from '../../types/index';
 import RoomForm from './RoomForm';
 import { audioService } from '../../services/audioService';
 import AudioDeviceSelector from '../AudioDeviceSelector';
+import { storage } from '../../services/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface PresenceData {
     userId: string;
@@ -532,10 +534,36 @@ const SideRoomComponent: React.FC = () => {
                 <RoomForm
                     open={showEditDialog}
                     onClose={() => setShowEditDialog(false)}
-                    onSubmit={async (data) => {
+                    onSubmit={async (data, thumbnailFile) => {
+                        setIsProcessing(true);
                         try {
+                            if (!roomId) throw new Error("Room ID is missing");
                             const roomRef = doc(db, 'sideRooms', roomId!);
-                            await updateDoc(roomRef, data);
+                            let thumbnailUrl = data.thumbnailUrl;
+
+                            if (thumbnailFile) {
+                                toast.loading('Uploading thumbnail...', { id: 'thumbnail-edit-upload' });
+                                try {
+                                    const storageRef = ref(storage, `sideRoomThumbnails/${roomId}/${thumbnailFile.name}`);
+                                    const snapshot = await uploadBytes(storageRef, thumbnailFile);
+                                    thumbnailUrl = await getDownloadURL(snapshot.ref);
+                                    toast.dismiss('thumbnail-edit-upload');
+                                    toast.success('Thumbnail updated!');
+                                } catch (uploadError) {
+                                    console.error("Error uploading thumbnail during edit:", uploadError);
+                                    toast.dismiss('thumbnail-edit-upload');
+                                    toast.error("Failed to upload new thumbnail.");
+                                    thumbnailUrl = room?.thumbnailUrl;
+                                }
+                            }
+
+                            const updateData: Partial<SideRoom> = { ...data };
+
+                            if (typeof thumbnailUrl === 'string' && thumbnailUrl) {
+                                updateData.thumbnailUrl = thumbnailUrl;
+                            }
+
+                            await updateDoc(roomRef, updateData);
                             toast.success('Room updated successfully');
                             setShowEditDialog(false);
                         } catch (error) {

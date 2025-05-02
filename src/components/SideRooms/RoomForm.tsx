@@ -8,14 +8,15 @@ import {
   Button,
   FormControlLabel,
   Switch,
-  Box
+  Box,
+  Typography
 } from '@mui/material';
 import { SideRoom } from '../../types';
 
 interface RoomFormProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: Partial<SideRoom>) => void;
+  onSubmit: (data: Partial<SideRoom>, file?: File | null) => void;
   initialData?: Partial<SideRoom>;
   title?: string;
   submitButtonText?: string;
@@ -34,12 +35,22 @@ const RoomForm: React.FC<RoomFormProps> = ({
     description: initialData?.description || '',
     isPrivate: initialData?.isPrivate || false,
     password: initialData?.password || '',
-    tags: initialData?.tags || []
+    tags: initialData?.tags || [],
   });
+
+  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      setThumbnailFile(event.target.files[0]);
+    } else {
+      setThumbnailFile(null);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(formData);
+    onSubmit(formData, thumbnailFile);
   };
 
   return (
@@ -82,6 +93,31 @@ const RoomForm: React.FC<RoomFormProps> = ({
                 fullWidth
               />
             )}
+            <Box sx={{ mt: 1 }}>
+              <Button
+                variant="outlined"
+                component="label"
+                fullWidth
+              >
+                Upload Thumbnail
+                <input
+                  type="file"
+                  hidden
+                  accept="image/*"
+                  onChange={handleFileChange}
+                />
+              </Button>
+              {thumbnailFile && (
+                <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
+                  Selected: {thumbnailFile.name}
+                </Typography>
+              )}
+              {!thumbnailFile && initialData?.thumbnailUrl && (
+                <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
+                  Current: {initialData.thumbnailUrl.substring(initialData.thumbnailUrl.lastIndexOf('/') + 1)}
+                </Typography>
+              )}
+            </Box>
             <TextField
               label="Tags (comma separated)"
               value={formData.tags?.join(', ')}

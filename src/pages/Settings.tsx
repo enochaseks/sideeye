@@ -21,7 +21,8 @@ import {
   Button,
   Alert,
   Avatar,
-  TextField
+  TextField,
+  ListItemButton
 } from '@mui/material';
 import {
   Security as SecurityIcon,
@@ -39,9 +40,12 @@ import {
   PersonAdd as PersonAddIcon,
   Check as CheckIcon,
   Close as CloseIcon,
-  Code as CodeIcon
+  Code as CodeIcon,
+  HelpOutline as HelpOutlineIcon,
+  ReportProblem as ReportProblemIcon,
+  Chat as ChatIcon
 } from '@mui/icons-material';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAuth, usePrivacy } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -60,50 +64,67 @@ interface FollowRequest {
 const DeviceSelector = () => {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioDevice, setSelectedAudioDevice] = useState('');
+  const navigate = useNavigate();
 
   useEffect(() => {
     const getDevices = async () => {
-      const deviceInfos: MediaDeviceInfo[] = await navigator.mediaDevices.enumerateDevices();
-      setDevices(deviceInfos);
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (err) {
+        console.warn("Error requesting media permissions for device enumeration:", err);
+      }
+      try {
+        const deviceInfos: MediaDeviceInfo[] = await navigator.mediaDevices.enumerateDevices();
+        setDevices(deviceInfos.filter(d => d.deviceId));
+        const defaultAudioInput = deviceInfos.find(d => d.kind === 'audioinput');
+        if (defaultAudioInput && !selectedAudioDevice) {
+          setSelectedAudioDevice(defaultAudioInput.deviceId);
+        }
+      } catch (error) {
+        console.error("Error enumerating devices:", error);
+      }
     };
 
+    navigator.mediaDevices.addEventListener('devicechange', getDevices);
     getDevices();
+
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', getDevices);
+    };
   }, []);
 
-  const handleAudioChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedAudioDevice(event.target.value);
-  };
-
-  const startAudio = async () => {
-    const constraints = {
-      audio: { deviceId: selectedAudioDevice ? { exact: selectedAudioDevice } : undefined }
-    };
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      // Handle the audio stream for Side Rooms and Spaces
-    } catch (error) {
-      console.error('Error accessing audio devices.', error);
-    }
+  const handleAudioChange = (value: string) => {
+    setSelectedAudioDevice(value);
+    console.log("Selected Audio Input:", value);
   };
 
   return (
-    <div>
-      <h3>Audio Device Settings</h3>
-      <div>
-        <label>Microphone:</label>
-        <select onChange={handleAudioChange} value={selectedAudioDevice}>
-          {devices
+    <Box sx={{ my: 2 }}>
+      <Typography variant="subtitle1" gutterBottom>Audio Input Device</Typography>
+      <TextField
+        select
+        SelectProps={{ native: true }}
+        value={selectedAudioDevice}
+        onChange={(event) => handleAudioChange(event.target.value)}
+        label="Microphone"
+        fullWidth
+        variant="outlined"
+        size="small"
+        disabled={devices.filter((device) => device.kind === 'audioinput').length === 0}
+      >
+        {devices.filter((device) => device.kind === 'audioinput').length > 0 ? (
+          devices
             .filter((device) => device.kind === 'audioinput')
             .map((device) => (
               <option key={device.deviceId} value={device.deviceId}>
-                {device.label || `Microphone ${device.deviceId}`}
+                {device.label || `Microphone ${device.deviceId.substring(0, 8)}...`}
               </option>
-            ))}
-        </select>
-      </div>
-      <button onClick={startAudio}>Test Audio</button>
-    </div>
+            ))
+        ) : (
+          <option value="">No microphones found</option>
+        )}
+      </TextField>
+    </Box>
   );
 };
 
@@ -113,9 +134,7 @@ const Settings: React.FC = () => {
   const { isDarkMode, toggleDarkMode } = useThemeContext();
   const { currentUser, userProfile } = useAuth();
   const { canViewProfile, canViewContent } = usePrivacy();
-  const [devices, setDevices] = useState<Array<{ id: string; name: string; lastActive: string }>>([]);
   const [showDeviceDialog, setShowDeviceDialog] = useState(false);
-  const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPrivate, setIsPrivate] = useState(false);
   const [followRequests, setFollowRequests] = useState<FollowRequest[]>([]);
@@ -132,152 +151,56 @@ const Settings: React.FC = () => {
   const [registrationSourceCode, setRegistrationSourceCode] = useState('');
   const [showSourceCodeDialog, setShowSourceCodeDialog] = useState(false);
   const [sourceCode, setSourceCode] = useState('');
+  const navigate = useNavigate();
 
-  const settingsItems = [
-    {
-      title: 'Audio Settings',
-      icon: <DevicesIcon />,
-      path: '#',
-      description: 'Manage your audio devices and microphone settings',
-      onClick: () => setShowDeviceDialog(true)
-    },
-    {
-      title: 'Security & Authentication',
-      icon: <SecurityIcon />,
-      path: '/security',
-      description: 'Learn about our authentication flow and security features'
-    },
-    {
-      title: 'Account Management',
-      icon: <ManageAccountsIcon />,
-      path: '/account-management',
-      description: 'Manage your account settings and preferences'
-    },
-    {
-      title: 'Safety & Community Guidelines',
-      icon: <ShieldIcon />,
-      path: '/safety',
-      description: 'Review our audio chat guidelines and community standards'
-    },
-    {
-      title: 'About',
-      icon: <InfoIcon />,
-      path: '/about',
-      description: 'Learn more about SideEye and our mission'
-    },
-    {
-      title: 'Privacy Policy',
-      icon: <PolicyIcon />,
-      path: '/privacy-policy',
-      description: 'Read our privacy policy and data handling practices'
-    },
-    {
-      title: 'Terms of Service',
-      icon: <PolicyIcon />,
-      path: '/terms',
-      description: 'Review our terms of service and community guidelines'
-    },
-    {
-      title: 'Cookie Policy',
-      icon: <CookieIcon />,
-      path: '/cookies',
-      description: 'Learn about how we use cookies and similar technologies'
-    }
-  ];
-
-  useEffect(() => {
-    if (currentUser) {
-      // Add real-time listener for privacy settings and stats
-      const userRef = doc(db, 'users', currentUser.uid);
-      const unsubscribe = onSnapshot(userRef, (doc) => {
-        if (doc.exists()) {
-          const userData = doc.data();
-          setIsPrivate(userData.isPrivate || false);
-          
-          // Update privacy stats
-          setPrivacyStats({
-            followers: userData.followers?.length || 0,
-            following: userData.following?.length || 0,
-            pendingRequests: followRequests.length,
-            audioRooms: userData.audioRooms?.length || 0
-          });
-        }
-      });
-
-      // Fetch follow requests
-      const fetchFollowRequests = async () => {
-        const requestsQuery = query(
-          collection(db, `users/${currentUser.uid}/followRequests`),
-          orderBy('timestamp', 'desc')
-        );
-        const snapshot = await getDocs(requestsQuery);
-        const requests = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            userId: data.userId,
-            username: data.username,
-            timestamp: data.timestamp
-          } as FollowRequest;
-        });
-        setFollowRequests(requests);
-      };
-
-      fetchFollowRequests();
-      return () => unsubscribe();
-    }
-  }, [currentUser, followRequests.length]);
-
-  const handleRemoveDevice = async (deviceId: string) => {
-    if (!currentUser) return;
+  const handlePrivacyToggle = async () => {
+    if (!currentUser?.uid) return;
+    const newPrivacyState = !isPrivate;
 
     try {
       const userRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userRef, {
-        devices: arrayRemove(deviceId)
-      });
-      setDevices(devices.filter(device => device.id !== deviceId));
-      setShowDeviceDialog(false);
-      setSelectedDevice(null);
-    } catch (err) {
-      setError('Failed to remove device');
-      console.error('Error removing device:', err);
-    }
-  };
-
-  const handlePrivacyToggle = async () => {
-    if (!currentUser?.uid) return;
-    try {
-      await updateDoc(doc(db, 'users', currentUser.uid), {
-        isPrivate: !isPrivate,
+        isPrivate: newPrivacyState,
         updatedAt: serverTimestamp()
       });
-      
-      // If switching to public, auto-accept all pending follow requests
-      if (!isPrivate) {
-        for (const request of followRequests) {
-          await handleFollowRequest(request.id, request.userId, true);
-        }
+
+      setIsPrivate(newPrivacyState);
+      toast.success(`Account set to ${newPrivacyState ? 'Private' : 'Public'}`);
+
+      if (!newPrivacyState && followRequests.length > 0) {
+        toast.loading('Accepting pending requests...', { id: 'accepting-requests' });
+        const acceptPromises = followRequests.map(request =>
+          handleFollowRequest(request.id, request.userId, true)
+        );
+        await Promise.all(acceptPromises);
+        toast.dismiss('accepting-requests');
+        toast.success('All pending requests accepted.');
       }
     } catch (error) {
       console.error('Error updating privacy settings:', error);
       toast.error('Failed to update privacy settings');
+      setIsPrivate(!newPrivacyState);
     }
   };
 
   const handleFollowRequest = async (requestId: string, userId: string, accept: boolean) => {
     if (!currentUser) return;
+    const currentUserUid = currentUser.uid;
+
+    const requestRef = doc(db, `users/${currentUserUid}/followRequests`, requestId);
+    const followerRef = doc(db, `users/${currentUserUid}/followers`, userId);
+    const followingRef = doc(db, `users/${userId}/following`, currentUserUid);
+
     try {
-      // Delete the request
-      await deleteDoc(doc(db, `users/${currentUser.uid}/followRequests`, requestId));
+      await deleteDoc(requestRef);
 
       if (accept) {
-        // Add to followers
-        await setDoc(doc(db, `users/${currentUser.uid}/followers`, userId), {
+        await setDoc(followerRef, {
+          userId: userId,
           timestamp: serverTimestamp()
         });
-        // Add to following for the requester
-        await setDoc(doc(db, `users/${userId}/following`, currentUser.uid), {
+        await setDoc(followingRef, {
+          userId: currentUserUid,
           timestamp: serverTimestamp()
         });
         toast.success('Follow request accepted');
@@ -285,8 +208,6 @@ const Settings: React.FC = () => {
         toast.success('Follow request declined');
       }
 
-      // Update local state
-      setFollowRequests(prev => prev.filter(req => req.id !== requestId));
     } catch (error) {
       console.error('Error handling follow request:', error);
       toast.error('Failed to process follow request');
@@ -302,13 +223,14 @@ const Settings: React.FC = () => {
       
       if (userDoc.exists()) {
         const userData = userDoc.data();
-        if (userData.verificationCode) {
-          // User has a verification code, show verification dialog
+        const codeField = userData.sourceCodeHash || userData.verificationCode;
+        if (codeField) {
           setShowVerificationDialog(true);
         } else {
-          // User needs to create a verification code
           setShowCreateCodeDialog(true);
         }
+      } else {
+        toast.error("User data not found.");
       }
     } catch (error) {
       console.error('Error checking verification code:', error);
@@ -317,16 +239,24 @@ const Settings: React.FC = () => {
   };
 
   const handleCreateVerificationCode = async () => {
-    if (!currentUser || !newVerificationCode) return;
+    if (!currentUser || !newVerificationCode || newVerificationCode.length < 4) {
+      toast.error("Verification code must be at least 4 digits.");
+      return;
+    }
+    if (!/^\d+$/.test(newVerificationCode)) {
+      toast.error("Verification code must contain only digits.");
+      return;
+    }
 
     try {
       const userRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userRef, {
-        verificationCode: newVerificationCode
+        verificationCode: newVerificationCode,
+        updatedAt: serverTimestamp()
       });
+      setNewVerificationCode('');
       setShowCreateCodeDialog(false);
-      setShowVerificationDialog(true);
-      toast.success('Verification code created successfully');
+      toast.success('Verification code created successfully. You can now view your Registration Code.');
     } catch (error) {
       console.error('Error creating verification code:', error);
       toast.error('Failed to create verification code');
@@ -334,7 +264,7 @@ const Settings: React.FC = () => {
   };
 
   const handleVerifyCode = async () => {
-    if (!currentUser) return;
+    if (!currentUser || !verificationCode) return;
 
     try {
       const userRef = doc(db, 'users', currentUser.uid);
@@ -342,15 +272,20 @@ const Settings: React.FC = () => {
       
       if (userDoc.exists()) {
         const userData = userDoc.data();
-        if (userData.verificationCode === verificationCode) {
-          // Show the source code
-          setSourceCode(userData.sourceCodeHash ? verificationCode : '');
+        const storedCode = userData.verificationCode;
+
+        if (storedCode === verificationCode) {
+          const registrationCode = userData.registrationSourceCode || `REG-${currentUser.uid}`;
+          setSourceCode(registrationCode);
           setShowSourceCodeDialog(true);
           setShowVerificationDialog(false);
+          setVerificationCode('');
           toast.success('Code verified successfully');
         } else {
           toast.error('Invalid verification code');
         }
+      } else {
+        toast.error("User data not found.");
       }
     } catch (error) {
       console.error('Error verifying code:', error);
@@ -358,319 +293,409 @@ const Settings: React.FC = () => {
     }
   };
 
+  const settingsItems = [
+    {
+      title: 'Audio Settings',
+      icon: <DevicesIcon />,
+      description: 'Manage your audio devices and microphone settings',
+      onClick: () => setShowDeviceDialog(true),
+      isSetting: true
+    },
+    {
+      title: 'Security & Authentication',
+      icon: <SecurityIcon />,
+      path: '/security',
+      description: 'Learn about our authentication flow and security features',
+      isSetting: true
+    },
+    {
+      title: 'Account Management',
+      icon: <ManageAccountsIcon />,
+      path: '/account-management',
+      description: 'Manage your account settings and preferences',
+      isSetting: true
+    },
+    {
+      title: 'View Registration Code',
+      icon: <CodeIcon />,
+      description: 'View your unique registration code for new devices',
+      onClick: handleViewSourceCode,
+      isSetting: true
+    },
+    {
+      title: 'Report an Issue',
+      icon: <ReportProblemIcon />,
+      path: '/report',
+      description: 'Report a bug, user, or other problem',
+      isHelp: true
+    },
+    {
+      title: 'Get Help via Sade AI',
+      icon: <ChatIcon />,
+      description: 'Chat with Sade AI for general help or assistance',
+      onClick: () => {
+        navigate('/sade-ai?intent=help');
+      },
+      isHelp: true
+    },
+    {
+      title: 'Safety & Community Guidelines',
+      icon: <ShieldIcon />,
+      path: '/safety',
+      description: 'Review our audio chat guidelines and community standards',
+      isHelp: true
+    },
+    {
+      title: 'About SideEye',
+      icon: <InfoIcon />,
+      path: '/about',
+      description: 'Learn more about SideEye and our mission',
+      isHelp: true
+    },
+    {
+      title: 'Privacy Policy',
+      icon: <PolicyIcon />,
+      path: '/privacy-policy',
+      description: 'Read our privacy policy and data handling practices',
+      isHelp: true
+    },
+    {
+      title: 'Terms of Service',
+      icon: <PolicyIcon />,
+      path: '/terms',
+      description: 'Review our terms of service',
+      isHelp: true
+    },
+    {
+      title: 'Cookie Policy',
+      icon: <CookieIcon />,
+      path: '/cookies',
+      description: 'Learn about how we use cookies',
+      isHelp: true
+    }
+  ];
+
+  useEffect(() => {
+    if (currentUser) {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const unsubscribeUser = onSnapshot(userRef, (doc) => {
+        if (doc.exists()) {
+          const userData = doc.data();
+          setIsPrivate(userData.isPrivate || false);
+          
+          setPrivacyStats(prev => ({
+            ...prev,
+            followers: userData.followers?.length || 0,
+            following: userData.following?.length || 0,
+            audioRooms: userData.audioRooms?.length || 0
+          }));
+        }
+      });
+
+      const requestsQuery = query(
+        collection(db, `users/${currentUser.uid}/followRequests`),
+        orderBy('timestamp', 'desc')
+      );
+      const unsubscribeRequests = onSnapshot(requestsQuery, (snapshot) => {
+        const requests = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            userId: data.userId,
+            username: data.username || `User_${data.userId.substring(0, 5)}`,
+            timestamp: data.timestamp
+          } as FollowRequest;
+        });
+        setFollowRequests(requests);
+        
+        setPrivacyStats(prev => ({
+           ...prev,
+           pendingRequests: requests.length
+        }));
+      }, (error) => {
+        console.error("Error fetching follow requests:", error);
+      });
+
+      return () => {
+        unsubscribeUser();
+        unsubscribeRequests();
+      };
+    }
+  }, [currentUser]);
+
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
-      <Box sx={{ py: 4 }}>
-        <Typography variant="h4" sx={{ mb: 3, fontWeight: 'bold' }}>
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h4" sx={{ mb: 2, fontWeight: 'bold' }}>
           Settings
         </Typography>
-        
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
           </Alert>
         )}
-
-        <Paper elevation={0} sx={{ borderRadius: 2 }}>
-          <List>
-            {settingsItems.map((item, index) => (
-              <React.Fragment key={item.title}>
-                <ListItem 
-                  component={item.path ? Link : 'div'}
-                  to={item.path}
-                  onClick={item.onClick}
-                  sx={{
-                    '&:hover': {
-                      backgroundColor: 'action.hover',
-                    },
-                    textDecoration: 'none',
-                    color: 'inherit',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <ListItemIcon>
-                    {item.icon}
-                  </ListItemIcon>
-                  <ListItemText
-                    primary={item.title}
-                    secondary={item.description}
-                  />
-                </ListItem>
-                {index < settingsItems.length - 1 && <Divider />}
-              </React.Fragment>
-            ))}
+        <Paper elevation={0} sx={{ borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
+          <List disablePadding>
+            {settingsItems
+              .filter(item => item.isSetting)
+              .map((item, index, arr) => (
+                <React.Fragment key={item.title}>
+                  <ListItemButton
+                    component={item.path ? Link : 'div'}
+                    to={item.path}
+                    onClick={item.onClick}
+                    sx={{ py: 1.5, px: 2 }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 40 }}>
+                      {item.icon}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={item.title}
+                      secondary={item.description}
+                      primaryTypographyProps={{ fontWeight: 500 }}
+                    />
+                  </ListItemButton>
+                  {index < arr.length - 1 && <Divider />}
+                </React.Fragment>
+              ))}
           </List>
         </Paper>
-
-        <Dialog
-          open={showDeviceDialog}
-          onClose={() => setShowDeviceDialog(false)}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle>Audio Device Settings</DialogTitle>
-          <DialogContent>
-            <List>
-              <ListItem>
-                <ListItemIcon>
-                  <DarkModeIcon />
-                </ListItemIcon>
-                <ListItemText
-                  primary="Dark Mode"
-                  secondary="Toggle between light and dark mode"
-                />
-                <ListItemSecondaryAction>
-                  <Switch
-                    checked={isDarkMode}
-                    onChange={toggleDarkMode}
-                    color="primary"
-                  />
-                </ListItemSecondaryAction>
-              </ListItem>
-              <Divider />
-              <Typography variant="subtitle1" sx={{ px: 2, py: 1, fontWeight: 'bold' }}>
-                Connected Devices
-              </Typography>
-              {devices.map((device) => (
-                <ListItem key={device.id}>
-                  <ListItemText
-                    primary={device.name}
-                    secondary={`Last active: ${device.lastActive}`}
-                  />
-                  <IconButton
-                    edge="end"
-                    onClick={() => {
-                      setSelectedDevice(device.id);
-                      handleRemoveDevice(device.id);
-                    }}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                </ListItem>
-              ))}
-              {devices.length === 0 && (
-                <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 2 }}>
-                  No devices connected
-                </Typography>
-              )}
-              <DeviceSelector />
-            </List>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setShowDeviceDialog(false)}>Close</Button>
-          </DialogActions>
-        </Dialog>
-
-        <Box sx={{ mb: 4, mt: 4 }}>
-          <Typography variant="h6" gutterBottom>Privacy Settings</Typography>
-          <Paper elevation={2} sx={{ p: 3 }}>
-            <Box sx={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'space-between',
-              mb: 2
-            }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                {isPrivate ? <LockIcon color="primary" /> : <LockOpenIcon color="primary" />}
-                <Box>
-                  <Typography variant="subtitle1">Private Account</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {isPrivate 
-                      ? 'Only approved followers can join your audio rooms' 
-                      : 'Anyone can join your audio rooms'}
-                  </Typography>
-                </Box>
-              </Box>
-              <Switch
-                checked={isPrivate}
-                onChange={handlePrivacyToggle}
-                color="primary"
-              />
-            </Box>
-
-            <Box sx={{ 
-              display: 'flex', 
-              gap: 3, 
-              mt: 2,
-              p: 2,
-              bgcolor: 'background.default',
-              borderRadius: 1
-            }}>
-              <Box>
-                <Typography variant="subtitle2" color="text.secondary">Followers</Typography>
-                <Typography variant="h6">{privacyStats.followers}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="subtitle2" color="text.secondary">Following</Typography>
-                <Typography variant="h6">{privacyStats.following}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="subtitle2" color="text.secondary">Audio Rooms</Typography>
-                <Typography variant="h6">{privacyStats.audioRooms}</Typography>
-              </Box>
-              {isPrivate && (
-                <Box>
-                  <Typography variant="subtitle2" color="text.secondary">Pending Requests</Typography>
-                  <Typography variant="h6">{privacyStats.pendingRequests}</Typography>
-                </Box>
-              )}
-            </Box>
-
-            <Alert severity="info" sx={{ mt: 2 }}>
-              {isPrivate 
-                ? 'When your account is private, only approved followers can join your audio rooms. New followers must send a follow request.'
-                : 'When your account is public, anyone can join your audio rooms and follow you without approval.'}
-            </Alert>
-          </Paper>
-        </Box>
-
-        {/* Create Verification Code Dialog */}
-        <Dialog
-          open={showCreateCodeDialog}
-          onClose={() => setShowCreateCodeDialog(false)}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle>Create Verification Code</DialogTitle>
-          <DialogContent>
-            <TextField
-              label="Create a verification code"
-              value={newVerificationCode}
-              onChange={(e) => setNewVerificationCode(e.target.value)}
-              fullWidth
-              margin="normal"
-              type="password"
-              inputProps={{
-                maxLength: 8,
-                inputMode: 'numeric',
-                pattern: '[0-9]*'
-              }}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setShowCreateCodeDialog(false)}>Cancel</Button>
-            <Button onClick={handleCreateVerificationCode} variant="contained">Create</Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Verify Code Dialog */}
-        <Dialog
-          open={showVerificationDialog}
-          onClose={() => setShowVerificationDialog(false)}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle>Verify Code</DialogTitle>
-          <DialogContent>
-            <TextField
-              label="Enter your verification code"
-              value={verificationCode}
-              onChange={(e) => setVerificationCode(e.target.value)}
-              fullWidth
-              margin="normal"
-              type="password"
-              inputProps={{
-                maxLength: 8,
-                inputMode: 'numeric',
-                pattern: '[0-9]*'
-              }}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setShowVerificationDialog(false)}>Cancel</Button>
-            <Button onClick={handleVerifyCode} variant="contained">Verify</Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* View Source Code Dialog */}
-        <Dialog
-          open={showSourceCodeDialog}
-          onClose={() => setShowSourceCodeDialog(false)}
-          maxWidth="md"
-          fullWidth
-        >
-          <DialogTitle>Your Registration Source Code</DialogTitle>
-          <DialogContent>
-            <Box sx={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: 1, 
-              mb: 3,
-              color: 'info.main'
-            }}>
-              <InfoIcon color="info" />
-              <Typography sx={{ 
-                color: 'info.main',
-                fontSize: '1rem'
-              }}>
-                When your account is used on another device, you will need this Source Code to register your account.
-              </Typography>
-            </Box>
-            <Box sx={{ 
-              p: 2, 
-              bgcolor: 'background.paper', 
-              borderRadius: 1,
-              fontFamily: 'monospace',
-              whiteSpace: 'pre-wrap',
-              overflow: 'auto',
-              maxHeight: '60vh',
-              fontSize: '24px',
-              textAlign: 'center'
-            }}>
-              {sourceCode}
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setShowSourceCodeDialog(false)}>Close</Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Follow Requests */}
-        {isPrivate && followRequests.length > 0 && (
-          <Box sx={{ mt: 3 }}>
-            <Typography variant="subtitle1" gutterBottom>Follow Requests</Typography>
-            <List>
-              {followRequests.map(request => (
-                <ListItem
-                  key={request.id}
-                  sx={{
-                    bgcolor: 'background.paper',
-                    borderRadius: 1,
-                    mb: 1,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Avatar>{request.username[0]}</Avatar>
-                    <Box>
-                      <Typography variant="subtitle1">@{request.username}</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {new Date(request.timestamp?.toDate()).toLocaleDateString()}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <IconButton
-                      color="success"
-                      onClick={() => handleFollowRequest(request.id, request.userId, true)}
-                    >
-                      <CheckIcon />
-                    </IconButton>
-                    <IconButton
-                      color="error"
-                      onClick={() => handleFollowRequest(request.id, request.userId, false)}
-                    >
-                      <CloseIcon />
-                    </IconButton>
-                  </Box>
-                </ListItem>
-              ))}
-            </List>
-          </Box>
-        )}
       </Box>
+
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>Privacy</Typography>
+        <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              {isPrivate ? <LockIcon color="action" /> : <LockOpenIcon color="action" />}
+              <Box>
+                <Typography variant="body1" sx={{ fontWeight: 500 }}>Private Account</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {isPrivate
+                    ? 'Only approved followers can join your audio rooms.'
+                    : 'Anyone can join your audio rooms.'}
+                </Typography>
+              </Box>
+            </Box>
+            <Switch
+              checked={isPrivate}
+              onChange={handlePrivacyToggle}
+              color="primary"
+            />
+          </Box>
+          <Divider sx={{ my: 2 }} />
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block">Followers</Typography>
+              <Typography variant="body1" sx={{ fontWeight: 500 }}>{privacyStats.followers}</Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block">Following</Typography>
+              <Typography variant="body1" sx={{ fontWeight: 500 }}>{privacyStats.following}</Typography>
+            </Box>
+            {isPrivate && (
+              <Box>
+                <Typography variant="caption" color="text.secondary" display="block">Pending Requests</Typography>
+                <Typography variant="body1" sx={{ fontWeight: 500 }}>{privacyStats.pendingRequests}</Typography>
+              </Box>
+            )}
+          </Box>
+          {isPrivate && followRequests.length > 0 && (
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 500 }}>Follow Requests</Typography>
+              <List disablePadding>
+                {followRequests.map(request => (
+                  <ListItem
+                    key={request.id}
+                    disablePadding
+                    secondaryAction={
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        <IconButton
+                          size="small"
+                          color="success"
+                          onClick={() => handleFollowRequest(request.id, request.userId, true)}
+                          title="Accept"
+                        >
+                          <CheckIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => handleFollowRequest(request.id, request.userId, false)}
+                          title="Decline"
+                        >
+                          <CloseIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    }
+                    sx={{ mb: 1 }}
+                  >
+                    <ListItemButton sx={{ borderRadius: 1, py: 0.5 }}>
+                       <ListItemIcon sx={{ minWidth: 40 }}>
+                           <Avatar sx={{ width: 28, height: 28, fontSize: '0.8rem' }}>{request.username ? request.username[0].toUpperCase() : '?'}</Avatar>
+                       </ListItemIcon>
+                       <ListItemText
+                           primary={`@${request.username}`}
+                           secondary={request.timestamp ? `Requested on ${new Date(request.timestamp?.toDate()).toLocaleDateString()}` : 'Requested recently'}
+                           primaryTypographyProps={{ variant: 'body2', fontWeight: 500 }}
+                           secondaryTypographyProps={{ variant: 'caption' }}
+                       />
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          )}
+        </Paper>
+      </Box>
+
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>Help & Support</Typography>
+        <Paper elevation={0} sx={{ borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
+          <List disablePadding>
+            {settingsItems
+              .filter(item => item.isHelp)
+              .map((item, index, arr) => (
+                <React.Fragment key={item.title}>
+                  <ListItemButton
+                    component={item.path ? Link : 'div'}
+                    to={item.path}
+                    onClick={item.onClick}
+                    sx={{ py: 1.5, px: 2 }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 40 }}>
+                      {item.icon}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={item.title}
+                      secondary={item.description}
+                      primaryTypographyProps={{ fontWeight: 500 }}
+                    />
+                  </ListItemButton>
+                  {index < arr.length - 1 && <Divider />}
+                </React.Fragment>
+              ))}
+          </List>
+        </Paper>
+      </Box>
+
+      <Dialog
+        open={showDeviceDialog}
+        onClose={() => setShowDeviceDialog(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Audio Settings</DialogTitle>
+        <DialogContent>
+          <ListItem disablePadding>
+             <ListItemIcon sx={{ minWidth: 40 }}>
+                 <DarkModeIcon />
+             </ListItemIcon>
+             <ListItemText
+                 primary="Dark Mode"
+             />
+             <Switch
+                 checked={isDarkMode}
+                 onChange={toggleDarkMode}
+                 color="primary"
+                 edge="end"
+             />
+          </ListItem>
+          <Divider sx={{ my: 2 }}/>
+          <DeviceSelector />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowDeviceDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={showCreateCodeDialog} onClose={() => setShowCreateCodeDialog(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Create Verification Code</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            Create a numeric code (4-8 digits) to verify your identity when viewing sensitive information like your registration code.
+          </Typography>
+          <TextField
+            label="New Verification Code"
+            value={newVerificationCode}
+            onChange={(e) => setNewVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
+            fullWidth
+            margin="normal"
+            type="password"
+            inputProps={{
+              maxLength: 8,
+              inputMode: 'numeric',
+              pattern: '[0-9]*',
+              minLength: 4
+            }}
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCreateCodeDialog(false)}>Cancel</Button>
+          <Button onClick={handleCreateVerificationCode} variant="contained" disabled={newVerificationCode.length < 4}>Create</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={showVerificationDialog} onClose={() => setShowVerificationDialog(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Enter Verification Code</DialogTitle>
+        <DialogContent>
+           <Typography variant="body2" color="text.secondary" gutterBottom>
+            Enter the numeric verification code you created.
+          </Typography>
+          <TextField
+            label="Verification Code"
+            value={verificationCode}
+            onChange={(e) => setVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
+            fullWidth
+            margin="normal"
+            type="password"
+            inputProps={{
+              maxLength: 8,
+              inputMode: 'numeric',
+              pattern: '[0-9]*'
+            }}
+            autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter') handleVerifyCode(); }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowVerificationDialog(false)}>Cancel</Button>
+          <Button onClick={handleVerifyCode} variant="contained" disabled={!verificationCode}>Verify</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={showSourceCodeDialog} onClose={() => setShowSourceCodeDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Your Registration Code</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" icon={<InfoIcon />} sx={{ mb: 2 }}>
+             Keep this code safe and private. You'll need it to log in on new devices. Do not share it.
+          </Alert>
+          <Typography variant="body2" gutterBottom>Registration Code:</Typography>
+          <Paper elevation={0} sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+             <Typography sx={{
+               fontFamily: 'monospace',
+               wordBreak: 'break-all',
+               fontSize: '1.1rem',
+               textAlign: 'center'
+             }}>
+               {sourceCode || "No registration code found."}
+             </Typography>
+          </Paper>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowSourceCodeDialog(false)}>Close</Button>
+           <Button
+               onClick={() => {
+                   navigator.clipboard.writeText(sourceCode);
+                   toast.success("Registration code copied!");
+               }}
+               disabled={!sourceCode}
+           >
+               Copy Code
+           </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };

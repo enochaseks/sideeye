@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip, LinearProgress, IconButton, Avatar } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
+import { io, Socket } from "socket.io-client";
+import { useLocation } from 'react-router-dom';
 
 // Define step type
 type BreathingStep = { text: string, duration: number };
@@ -23,13 +25,18 @@ type GameState = {
   upperBound: number; // To provide hints
 } | null; // Can be expanded later for other games
 
+// Define type for messages
+type Message = { sender: 'user' | 'ai', text: string };
+
 const SadeAIPage: React.FC = () => {
-  const [messages, setMessages] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeGame, setActiveGame] = useState<GameState>(null);
-  const [breathingState, setBreathingState] = useState<BreathingState>(null); // New state for exercise
-  const [forceSearchNext, setForceSearchNext] = useState(false); // New state for explicit search
+  const [breathingState, setBreathingState] = useState<BreathingState>(null);
+  const [forceSearchNext, setForceSearchNext] = useState(false);
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const location = useLocation();
 
   // Ref to scroll to bottom
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
@@ -44,7 +51,7 @@ const SadeAIPage: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
-  // Define suggestions (adding therapeutic prompts)
+  // Define suggestions
   const suggestions = [
     "I'm feeling a bit down today",
     "Can we just talk?",
@@ -53,8 +60,89 @@ const SadeAIPage: React.FC = () => {
     "Play 'Would You Rather?'",
     "Feeling a bit lost",
     "Play Guess the Number",
-    "Breathing exercise" // Added suggestion
+    "Breathing exercise"
   ];
+
+  // --- Socket.IO Connection Setup ---
+  useEffect(() => {
+    // Determine backend URL (adjust if your API URL isn't the base URL)
+    // For local dev, usually the same origin or localhost:PORT
+    const backendUrl = process.env.REACT_APP_SOCKET_URL || process.env.REACT_APP_API_URL || window.location.origin;
+    console.log(`[Frontend] Connecting Socket.IO to: ${backendUrl}`);
+
+    // Initialize socket connection
+    const newSocket = io(backendUrl, {
+        // Optional: Add withCredentials if needed for cookies/sessions, depends on CORS setup
+        // withCredentials: true,
+    });
+    setSocket(newSocket);
+
+    newSocket.on('connect', () => {
+        console.log('[Frontend] Socket connected:', newSocket.id);
+    });
+
+    newSocket.on('disconnect', (reason) => {
+        console.log('[Frontend] Socket disconnected:', reason);
+        // Optional: Implement reconnection logic if needed
+    });
+
+    newSocket.on('connect_error', (error) => {
+        console.error('[Frontend] Socket connection error:', error);
+    });
+
+    // Cleanup function to disconnect socket on component unmount
+    return () => {
+        console.log('[Frontend] Disconnecting socket...');
+        newSocket.disconnect();
+        setSocket(null);
+    };
+    // Run only once on component mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- Listener for AI Messages (including moderation alerts if using 'ai-message') ---
+  useEffect(() => {
+    if (socket) { // Only set up listener if socket is connected
+      const handleAiMessage = (data: { sender: string, text: string }) => {
+        // Basic validation
+        if (data && data.sender === 'ai' && typeof data.text === 'string') {
+          console.log("[Frontend] Received 'ai-message' via Socket:", data);
+          // Add the message to the chat state
+          setMessages(msgs => [...msgs, { sender: 'ai', text: data.text }]);
+        } else {
+          console.warn("[Frontend] Received malformed 'ai-message' data via Socket:", data);
+        }
+      };
+
+      // Listen for the event emitted by the backend
+      socket.on('ai-message', handleAiMessage);
+
+      // Cleanup listener on component unmount or when socket changes
+      return () => {
+        console.log("[Frontend] Removing 'ai-message' listener");
+        socket.off('ai-message', handleAiMessage);
+      };
+    }
+  }, [socket]); // Dependency array includes socket instance
+
+  // --- Handle Initial Intent from URL ---
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const intent = params.get('intent');
+
+    if (intent === 'help' && messages.length === 0) { // Check messages.length to avoid adding on re-renders if chat history exists
+      console.log("[Frontend] Detected intent=help from URL params.");
+      const initialHelpMessage: Message = {
+        sender: 'ai',
+        text: "Hi there! Looks like you clicked 'Get Help' in settings. How can I assist you today? Just type your question below. 😊"
+      };
+      // Add message directly, avoiding sending to backend initially
+      setMessages([initialHelpMessage]);
+    }
+    // Only run once on initial load based on location search string
+    // Note: If chat history is loaded later, this might run before history and get overwritten.
+    // Consider integrating with history loading logic if needed.
+  }, [location.search]); // Rerun if the search string changes
 
   // Load chat history from localStorage on mount
   useEffect(() => {
@@ -83,10 +171,10 @@ const SadeAIPage: React.FC = () => {
   // Moved endBreathingExercise up as it's called by others
   const endBreathingExercise = () => {
      console.log("[Frontend] endBreathingExercise called."); // Log end
-     clearBreathingInterval(); 
+     clearBreathingInterval();
      setMessages(msgs => [...msgs, { sender: 'ai', text: "Nicely done! Hope that helped you feel a bit calmer, mate. 😊" }]);
-     setBreathingState(null); 
-     setLoading(false); 
+     setBreathingState(null);
+     setLoading(false);
   };
 
   const handleTimerTick = () => {
@@ -100,7 +188,7 @@ const SadeAIPage: React.FC = () => {
       console.log(`[Frontend] handleTimerTick: Prev Timer: ${prevState.timer}, New Timer: ${newTimer}, Step Index: ${prevState.currentStepIndex}`); // Log tick
       if (newTimer <= 0) {
         console.log("[Frontend] handleTimerTick: Timer reached 0, starting next step."); // Log step change trigger
-        setTimeout(startNextBreathingStep, 0); 
+        setTimeout(startNextBreathingStep, 0);
         return { ...prevState, timer: 0 }; // Set timer to 0 while waiting for next step state change
       } else {
         return { ...prevState, timer: newTimer };
@@ -110,12 +198,12 @@ const SadeAIPage: React.FC = () => {
 
   const startNextBreathingStep = () => {
     console.log("[Frontend] startNextBreathingStep called."); // Log function start
-    clearBreathingInterval(); 
+    clearBreathingInterval();
 
     setBreathingState(prevState => {
-      if (!prevState || !prevState.active) { 
+      if (!prevState || !prevState.active) {
           console.warn("[Frontend] startNextBreathingStep: No active breathing state found on entry.");
-          return null; 
+          return null;
       }
 
       const nextStepIndex = prevState.currentStepIndex + 1;
@@ -123,13 +211,13 @@ const SadeAIPage: React.FC = () => {
 
       if (nextStepIndex >= prevState.steps.length) {
         console.log("[Frontend] startNextBreathingStep: Exercise finished."); // Log finish
-        endBreathingExercise(); 
-        return null; 
+        endBreathingExercise();
+        return null;
       }
 
       const nextStep = prevState.steps[nextStepIndex];
       console.log("[Frontend] startNextBreathingStep: Next step details:", nextStep); // Log step details
-      
+
       // Add instruction message
       setMessages(msgs => {
           const lastMsg = msgs[msgs.length -1];
@@ -177,122 +265,119 @@ const SadeAIPage: React.FC = () => {
   const sendMessage = async (messageToSend: string = input, forceSearch: boolean = false) => {
     if (!messageToSend.trim()) return;
 
-    const userMessage = { sender: 'user' as const, text: messageToSend };
+    const userMessage: Message = { sender: 'user' as const, text: messageToSend };
     setMessages(msgs => [...msgs, userMessage]);
     setInput('');
-    setLoading(true); // Set loading true only when actually sending to backend
+    setLoading(true); // Set loading true ONCE at the beginning
+    setForceSearchNext(false); // Reset force search flag
 
-    console.log("[Frontend] sendMessage called. forceSearch=", forceSearch, "Current activeGame state:", activeGame);
+    try { // Wrap main logic in try block
+      console.log("[Frontend] sendMessage called. forceSearch=", forceSearch, "Current activeGame/breathing state:", activeGame, breathingState);
 
-    // Reset force search flag immediately after capturing it for this call
-    setForceSearchNext(false); 
+      // --- Check for STOP command during active exercise ---
+      if (breathingState?.active && messageToSend.toLowerCase().includes('stop')) {
+          stopBreathingExercise(); // This function already sets loading to false internally
+          return; // Exit early, finally block will still run
+      }
 
-    // --- Check for STOP command during active exercise --- Note: setLoading(false) called within stopBreathingExercise
-    if (breathingState?.active && messageToSend.toLowerCase().includes('stop')) {
-        stopBreathingExercise();
-        // setLoading(false); // Already handled in stopBreathingExercise
-        return;
-    }
-    // Block regular messages during breathing exercise (unless it's 'stop')
-     if (breathingState?.active) {
-         setMessages(msgs => [...msgs, { sender: 'ai', text: "Let's focus on breathing for now. You can type 'stop' if you need to." }]);
-         // setLoading(false); // Don't set loading if blocking
-         return;
-     }
+      // Block regular messages during breathing exercise (unless it's 'stop')
+      if (breathingState?.active) {
+          setMessages(msgs => [...msgs, { sender: 'ai', text: "Let's focus on breathing for now. You can type 'stop' if you need to." }]);
+          // setLoading(false); // No need, finally block handles it
+          return; // Exit early, finally block will still run
+      }
 
-    // --- Game Logic Check (Guess the Number) --- Set loading false here as it's local
-    if (activeGame && activeGame.gameType === 'guess_the_number') {
-        console.log("[Frontend] Guess the Number game is active. Processing locally.");
-        setLoading(false); // Ensure loading is off for local game logic
-        const guessAttempt = parseInt(messageToSend, 10);
-        const lowerCaseMessage = messageToSend.toLowerCase();
-        if (!isNaN(guessAttempt)) {
-            console.log("[Frontend] Input is a number. Routing to handleGuess.");
-            handleGuess(guessAttempt);
-        }
-        else if (lowerCaseMessage.includes('even') || lowerCaseMessage.includes('odd')) {
-             console.log("[Frontend] Hint request detected: even/odd.");
-             const isEven = activeGame.targetNumber % 2 === 0;
-             const hintResponse = isEven
-                 ? "Okay, cheeky hint for you... It's an **even** number! 😉"
-                 : "Alright, since you asked nicely... It's an **odd** number! 🤔";
-             setMessages(msgs => [...msgs, { sender: 'ai', text: hintResponse }]);
-        }
-        // Add more hint checks here if desired (e.g., higher/lower than 50)
-        // else if (lowerCaseMessage.includes('higher than 50') || lowerCaseMessage.includes('over 50')) { ... }
+      // --- Game Logic Check (Guess the Number) ---
+      if (activeGame && activeGame.gameType === 'guess_the_number') {
+          console.log("[Frontend] Guess the Number game is active. Processing locally.");
+          // setLoading(false); // No need, finally block handles it
+          const guessAttempt = parseInt(messageToSend, 10);
+          const lowerCaseMessage = messageToSend.toLowerCase();
+          if (!isNaN(guessAttempt)) {
+              handleGuess(guessAttempt);
+          }
+          else if (lowerCaseMessage.includes('even') || lowerCaseMessage.includes('odd')) {
+               const isEven = activeGame.targetNumber % 2 === 0;
+               const hintResponse = isEven
+                   ? "Okay, cheeky hint for you... It's an **even** number! 😉"
+                   : "Alright, since you asked nicely... It's an **odd** number! 🤔";
+               setMessages(msgs => [...msgs, { sender: 'ai', text: hintResponse }]);
+          }
+          else {
+              const nonGuessResponse = "Ah, trying to be clever? 😉 Just give me a number guess between 1 and 100!";
+              setMessages(msgs => [...msgs, { sender: 'ai', text: nonGuessResponse }]);
+          }
+          return; // Exit early after handling game logic, finally block will still run
+      }
 
-        // If it's not a number and not a recognized hint
-        else {
-            console.log("[Frontend] Input is not a number or recognized hint.");
-            const nonGuessResponse = "Ah, trying to be clever? 😉 Just give me a number guess between 1 and 100!";
-            setMessages(msgs => [...msgs, { sender: 'ai', text: nonGuessResponse }]);
-        }
-        return; 
-    }
+      // --- Send to Backend (if no game/breathing logic handled it) ---
+      console.log("[Frontend] No active game/exercise or local action. Sending message to backend via HTTP.");
+      // setLoading(true); // Already set at the start
 
-    // --- Send to Backend --- Only set loading if we are actually sending
-    setLoading(true);
-    console.log("[Frontend] No active game/exercise or local action. Sending message to backend.");
-    try {
-        const backendBaseUrl = process.env.REACT_APP_API_URL;
-        if (!backendBaseUrl) {
-            console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
-            setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
-            setLoading(false);
-            return;
-        }
-        const apiUrl = `${backendBaseUrl}/api/sade-ai`;
-        const requestBody = {
-            message: messageToSend,
-            forceSearch: forceSearch // Include the flag in the request body
-        };
-        console.log("[Frontend] Sending request body:", requestBody); // Log the body being sent
-        const fetchOptions = {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody), // Send the updated body
-        };
-        const res = await fetch(apiUrl, fetchOptions);
-        if (!res.ok) {
-            throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        const data = await res.json();
-        console.log("[Frontend] Backend response data:", data);
-        setLoading(false); // Turn off loading after getting response
+      const backendBaseUrl = process.env.REACT_APP_API_URL;
+      if (!backendBaseUrl) {
+          console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
+          setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
+          // setLoading(false); // No need, finally block handles it
+          return; // Exit on config error
+      }
+      const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+      const requestBody = {
+          message: messageToSend,
+          forceSearch: forceSearch
+      };
+      console.log("[Frontend] Sending HTTP request body:", requestBody);
+      const fetchOptions = {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+      };
+      const res = await fetch(apiUrl, fetchOptions);
+      if (!res.ok) {
+           let errorMsg = `HTTP error! status: ${res.status}`;
+           try {
+               const errorData = await res.json();
+               errorMsg = errorData.error || errorMsg;
+           } catch (e) { /* Ignore */ }
+           throw new Error(errorMsg); // Throw error to be caught by catch block
+      }
+      const data = await res.json();
+      console.log("[Frontend] HTTP Backend response data:", data);
+      // setLoading(false); // No need, finally block handles it
 
-        // --- Handle Backend Response ---
-        if (data.startBreathingExercise && data.steps) {
-           console.log("[Frontend] sendMessage: Received signal to start breathing exercise.");
-           setLoading(false);
-           setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]); 
-           // Log the state right before setting it
-           const initialBreathingState = {
-               active: true,
-               steps: data.steps,
-               currentStepIndex: -1, 
-               timer: 0,
-               intervalId: null
-           };
-           console.log("[Frontend] sendMessage: Initializing breathingState:", initialBreathingState);
-           setBreathingState(initialBreathingState);
-           // Use timeout to ensure state is processed
-           setTimeout(startNextBreathingStep, 100); 
+      // --- Handle Backend Response ---
+      if (data.startBreathingExercise && data.steps) {
+         console.log("[Frontend] sendMessage: Received signal to start breathing exercise.");
+         // setLoading(false); // No need, finally block handles it
+         setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+         const initialBreathingState = {
+             active: true,
+             steps: data.steps,
+             currentStepIndex: -1,
+             timer: 0,
+             intervalId: null
+         };
+         setBreathingState(initialBreathingState);
+         setTimeout(startNextBreathingStep, 100);
 
-        } else if (data.startGame === 'guess_the_number' && data.response) {
-          // Ensure loading is off before starting game UI
-           setLoading(false);
-          startGame('guess_the_number', data.response);
-        } else if (data.response) {
-          setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]); 
-        } else {
-           console.error("[SadeAIPage] Received unexpected response structure:", data);
-           setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I got a bit confused there." }]);
-        }
+      } else if (data.startGame === 'guess_the_number' && data.response) {
+        // setLoading(false); // No need, finally block handles it
+        startGame('guess_the_number', data.response);
+      } else if (data.response) {
+        setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+      } else {
+         console.error("[SadeAIPage] Received unexpected HTTP response structure:", data);
+         setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I got a bit confused there." }]);
+      }
 
-    } catch (err) {
-        console.error("[SadeAIPage] Fetch failed:", err);
-        setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, there was an error connecting. Please try again." }]);
-        setLoading(false); 
+    } catch (err: any) { // Catch errors from fetch or other logic within try
+      console.error("[SadeAIPage] sendMessage Error:", err);
+      setMessages(msgs => [...msgs, { sender: 'ai', text: `Sorry, there was an error: ${err.message || 'Unknown error'}` }]);
+      // setLoading(false); // No need, finally block handles it
+    } finally {
+      // This block ALWAYS runs, ensuring loading is set to false
+      console.log("[SadeAIPage sendMessage finally] Setting loading to false.");
+      setLoading(false);
     }
   };
 
@@ -331,7 +416,7 @@ const SadeAIPage: React.FC = () => {
     let newUpperBound = activeGame.upperBound;
     let gameFinished = false;
 
-    console.log(`[Frontend] handleGuess called with valid number: ${guess}`); // Removed duplicate log
+    console.log(`[Frontend] handleGuess called with valid number: ${guess}`);
 
     // Simplified check - assuming guess is a valid number now
     if (guess < 1 || guess > 100) {
@@ -371,7 +456,7 @@ const SadeAIPage: React.FC = () => {
   const timerProgress = currentStepDuration > 0 ? ((currentStepDuration - currentTimer) / currentStepDuration) * 100 : 0;
 
   // Log values used for rendering timer UI
-  console.log(`[Frontend Render] breathingState Active: ${isBreathingActive}, Step Index: ${currentStepIndex}, Current Step Duration: ${currentStepDuration}, Current Timer: ${currentTimer}, Progress: ${timerProgress}`);
+  // console.log(`[Frontend Render] breathingState Active: ${isBreathingActive}, Step Index: ${currentStepIndex}, Current Step Duration: ${currentStepDuration}, Current Timer: ${currentTimer}, Progress: ${timerProgress}`);
 
   return (
     <Box
@@ -386,15 +471,15 @@ const SadeAIPage: React.FC = () => {
         pt: { xs: 2, sm: 6 },
       }}
     >
-      <Paper 
+      <Paper
         elevation={6}
-        sx={{ 
-          width: '100%', 
-          maxWidth: 500, 
-          p: { xs: 2, sm: 4 }, 
+        sx={{
+          width: '100%',
+          maxWidth: 500,
+          p: { xs: 2, sm: 4 },
           borderRadius: 4,
-          mb: 2, 
-          mt: 2, 
+          mb: 2,
+          mt: 2,
           bgcolor: '#fffefa',
           boxShadow: '0 12px 40px rgba(0, 0, 0, 0.12)'
       }}>
@@ -436,10 +521,10 @@ const SadeAIPage: React.FC = () => {
               }}
             >
               {msg.sender === 'ai' && (
-                <Avatar 
+                <Avatar
                   src="/images/sade-avatar.jpg"
-                  alt="Sade AI Avatar" 
-                  sx={{ width: 36, height: 36, mr: 1.5 }} 
+                  alt="Sade AI Avatar"
+                  sx={{ width: 36, height: 36, mr: 1.5 }}
                 />
               )}
               <Box
@@ -512,12 +597,12 @@ const SadeAIPage: React.FC = () => {
 
         {isBreathingActive && currentStepIndex >= 0 && (
            <Box sx={{ p: 1, mt: 1, border: '1px dashed grey', borderRadius: 2, textAlign: 'center', bgcolor: 'rgba(255,255,255,0.7)' }}>
-                <Typography variant="caption" display="block" sx={{ mb: 0.5, fontWeight: 500 }}> 
-                    {currentStep?.text} 
+                <Typography variant="caption" display="block" sx={{ mb: 0.5, fontWeight: 500 }}>
+                    {currentStep?.text}
                 </Typography>
                 <LinearProgress
                     variant="determinate"
-                    value={timerProgress} 
+                    value={timerProgress}
                     sx={{ height: 8, borderRadius: 4, mb: 0.5, '& .MuiLinearProgress-bar': { transition: 'transform .2s linear'} }}
                  />
                  <Typography variant="caption" display="block">
@@ -545,7 +630,7 @@ const SadeAIPage: React.FC = () => {
           <TextField
             fullWidth
             variant="outlined"
-            placeholder={ 
+            placeholder={
                 breathingState?.active ? "Focus on breathing... (or type 'stop')" :
                 activeGame ? "Enter your guess..." :
                 "Type your message..."
@@ -553,11 +638,11 @@ const SadeAIPage: React.FC = () => {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && input.trim()) sendMessage(input, forceSearchNext); }}
-            disabled={loading} // Simpler disabled logic - always disabled if loading
+            disabled={loading || !socket?.connected}
             type={activeGame?.gameType === 'guess_the_number' ? 'number' : 'text'}
             sx={{ bgcolor: 'white', borderRadius: 2, boxShadow: '0 1px 4px 0 rgba(31,38,135,0.04)' }}
           />
-           
+
           {breathingState?.active ? (
               <Button variant="contained" color="secondary" onClick={stopBreathingExercise} sx={{ minWidth: 80, fontWeight: 600 }}>
                 Stop
@@ -565,14 +650,14 @@ const SadeAIPage: React.FC = () => {
           ) : (
              <>
               {/* Send Button */}
-              <Button variant="contained" onClick={() => sendMessage(input, false)} disabled={loading || !input.trim()} sx={{ minWidth: 80, fontWeight: 600 }}>
+              <Button variant="contained" onClick={() => sendMessage(input, false)} disabled={loading || !input.trim() || !socket?.connected} sx={{ minWidth: 80, fontWeight: 600 }}>
                 {activeGame ? "Guess" : "Send"}
               </Button>
               {/* Search Button - Added */}
               <IconButton
                  color="primary"
                  onClick={() => sendMessage(input, true)}
-                 disabled={loading || !input.trim()}
+                 disabled={loading || !input.trim() || !socket?.connected}
                  sx={{ border: '1px solid', borderColor: 'primary.main', ml: 0.5 }}
                  title="Search the web for this query"
               >
@@ -580,8 +665,8 @@ const SadeAIPage: React.FC = () => {
               </IconButton>
              </>
           )}
-           
-          {!activeGame && !breathingState?.active && ( 
+
+          {!activeGame && !breathingState?.active && (
              <Button variant="outlined" color="secondary" onClick={() => { setMessages([]); localStorage.removeItem('sadeai_chat_history'); setActiveGame(null); setBreathingState(null); /* Clear all states on clear */ }} disabled={loading} sx={{ minWidth: 90, fontWeight: 500 }} >
               Clear Chat
              </Button>

@@ -52,6 +52,7 @@ import CookieConsent from './components/CookieConsent';
 import BottomNav from './components/BottomNav';
 import './App.css';
 import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
+import ReportPage from './pages/ReportPage';
 
 
 const BottomNavWrapper: React.FC = () => {
@@ -157,6 +158,11 @@ const AppContent: React.FC = () => {
           <Route path="/account-management" element={
             <ProtectedRoute>
               <DeletionDeactivatePage />
+            </ProtectedRoute>
+          } />
+          <Route path="/report" element={
+            <ProtectedRoute>
+              <ReportPage />
             </ProtectedRoute>
           } />
           <Route path="/sade-ai" element={<SadeAIPage />} />

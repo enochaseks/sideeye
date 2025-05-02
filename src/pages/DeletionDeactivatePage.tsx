@@ -23,12 +23,12 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { deleteUser, EmailAuthProvider, reauthenticateWithCredential, getAuth } from 'firebase/auth';
 import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 
 const DeletionDeactivatePage: React.FC = () => {
-  const { currentUser, logout } = useAuth();
+  const { currentUser: contextUser, logout } = useAuth();
   const navigate = useNavigate();
   
   const [openDeactivateDialog, setOpenDeactivateDialog] = useState(false);
@@ -40,7 +40,7 @@ const DeletionDeactivatePage: React.FC = () => {
 
   // Function to handle account deactivation
   const handleDeactivateAccount = async () => {
-    if (!currentUser) {
+    if (!contextUser) {
       setError('You must be logged in to deactivate your account');
       return;
     }
@@ -50,7 +50,7 @@ const DeletionDeactivatePage: React.FC = () => {
 
     try {
       // Update the user document to mark it as deactivated
-      const userRef = doc(db, 'users', currentUser.uid);
+      const userRef = doc(db, 'users', contextUser.uid);
       await updateDoc(userRef, {
         isActive: false,
         deactivatedAt: new Date().toISOString()
@@ -71,8 +71,12 @@ const DeletionDeactivatePage: React.FC = () => {
 
   // Function to handle account deletion
   const handleDeleteAccount = async () => {
-    if (!currentUser) {
+    const auth = getAuth();
+    const user = auth.currentUser;
+
+    if (!user) {
       setError('You must be logged in to delete your account');
+      toast.error('Authentication error. Please log in again.');
       return;
     }
 
@@ -85,38 +89,50 @@ const DeletionDeactivatePage: React.FC = () => {
     setError(null);
 
     try {
-      // Re-authenticate the user before deleting
+      if (!user.email) {
+        throw new Error("User email is not available for re-authentication.");
+      }
       const credential = EmailAuthProvider.credential(
-        currentUser.email || '',
+        user.email,
         password
       );
       
-      await reauthenticateWithCredential(currentUser, credential);
+      await reauthenticateWithCredential(user, credential);
+      console.log("Re-authentication successful");
 
-      // Delete user data from Firestore
-      const userRef = doc(db, 'users', currentUser.uid);
+      const userRef = doc(db, 'users', user.uid);
       await deleteDoc(userRef);
+      console.log("Firestore user document deleted");
 
-      // Delete posts, comments, and other user-related data
-      // This would typically be handled by Cloud Functions in a production environment
-      // to ensure complete deletion of all related data
+      console.log("Cloud Function 'onUserDeleted' will handle further data cleanup.");
 
-      // Delete the Firebase Auth user
-      await deleteUser(currentUser);
+      await deleteUser(user);
+      console.log("Firebase Auth user deleted");
       
       toast.success('Your account has been permanently deleted.');
       navigate('/login');
     } catch (err: any) {
       console.error('Error deleting account:', err);
-      if (err.code === 'auth/wrong-password') {
+      if (err.code === 'auth/wrong-password' || err.message.includes('auth/wrong-password')) {
         setError('Incorrect password. Please try again.');
+        toast.error('Incorrect password.');
+      } else if (err.code === 'auth/requires-recent-login' || err.message.includes('auth/requires-recent-login')) {
+          setError('This operation requires a recent login. Please log out and log back in before deleting.');
+          toast.error('Please log out and log back in to delete your account.');
       } else {
-        setError('Failed to delete account. Please try again.');
+        setError(`Failed to delete account: ${err.message || err.code || 'Unknown error'}`);
+        toast.error('An error occurred during deletion.');
       }
     } finally {
       setLoading(false);
-      setConfirmDeleteDialog(false);
-      setOpenDeleteDialog(false);
+      setPassword('');
+      if (error) {
+          setConfirmDeleteDialog(true);
+          setOpenDeleteDialog(true);
+      } else {
+          setConfirmDeleteDialog(false);
+          setOpenDeleteDialog(false);
+      }
     }
   };
 

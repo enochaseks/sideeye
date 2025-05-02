@@ -9,7 +9,7 @@
 
 // Use v2 imports consistently
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore"); // Import v2 Firestore trigger
+const { onDocumentCreated, onDocumentDeleted } = require("firebase-functions/v2/firestore"); // Import v2 Firestore triggers
 const admin = require("firebase-admin");
 const Shotstack = require("shotstack-sdk"); 
 const functions = require("firebase-functions"); // Still needed for config
@@ -91,6 +91,7 @@ exports.updateUserProfile = onCall(async (request) => {
 });
 
 // --- Function: startVideoProcessing (Convert to v2 onCall) ---
+/*
 exports.startVideoProcessing = onCall(async (request) => { // Changed to v2 onCall
   initializeFirebase(); // Ensure Firebase is initialized before use
 
@@ -284,9 +285,10 @@ exports.startVideoProcessing = onCall(async (request) => { // Changed to v2 onCa
       }
   }
 });
-
+*/
 
 // --- Function: processShotstackWebhook (Convert to v2 onRequest) ---
+/*
 exports.processShotstackWebhook = onRequest(async (request, response) => { // Changed to v2 onRequest
   initializeFirebase(); // Ensure Firebase is initialized before use
 
@@ -367,6 +369,7 @@ exports.processShotstackWebhook = onRequest(async (request, response) => { // Ch
     response.status(500).send("Internal Server Error processing webhook.");
   }
 });
+*/
 
 // --- NEW FUNCTION: Send Email Notification on Notification Creation ---
 
@@ -443,3 +446,89 @@ exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId
         return null; // Avoid retrying indefinitely for this kind of error
       }
     });
+
+// --- NEW FUNCTION: Handle User Deletion Cascade ---
+
+/**
+ * Cleans up user data across Firestore when a user document is deleted.
+ * Triggered by the deletion of a document in the 'users' collection.
+ * @param {Event<QueryDocumentSnapshot>} event - The Firestore event.
+ */
+exports.onUserDeleted = onDocumentDeleted("users/{userId}", async (event) => {
+  initializeFirebase(); // Ensure Firebase is initialized
+
+  const userId = event.params.userId; // Get userId from parameters
+  const batch = firestoreDb.batch(); // Use the initialized DB batch
+
+  console.log(`Starting deletion cascade for user: ${userId}`);
+
+  try {
+    // --- Add Deletion Logic Here --- 
+    // Remember to adjust collection names and field names if they differ!
+
+    // 1. Delete User's Side Rooms
+    const createdRoomsQuery = firestoreDb.collection('sideRooms').where('ownerId', '==', userId);
+    const createdRoomsSnapshot = await createdRoomsQuery.get();
+    createdRoomsSnapshot.forEach(doc => {
+        console.log(`[Delete User ${userId}] Deleting created room: ${doc.id}`);
+        batch.delete(doc.ref);
+        // TODO: Add logic to delete subcollections within rooms if necessary (e.g., presence)
+        // This would likely require another batch or separate operations.
+    });
+
+    // 2. Delete User's Notifications (where they are the recipient)
+    const notificationsQuery = firestoreDb.collection('notifications').where('recipientId', '==', userId);
+    const notificationsSnapshot = await notificationsQuery.get();
+    notificationsSnapshot.forEach(doc => {
+        console.log(`[Delete User ${userId}] Deleting notification: ${doc.id}`);
+        batch.delete(doc.ref);
+    });
+
+    // 3. Remove user from others' Following lists (based on the deleted user's Followers list)
+    const followersQuery = firestoreDb.collection(`users/${userId}/followers`);
+    const followersSnapshot = await followersQuery.get();
+    followersSnapshot.forEach(doc => {
+        const followerId = doc.id;
+        const followingRef = firestoreDb.doc(`users/${followerId}/following/${userId}`);
+        console.log(`[Delete User ${userId}] Removing from ${followerId}'s following list`);
+        batch.delete(followingRef);
+        // Also delete the follower doc from the *deleted user's* subcollection
+        batch.delete(doc.ref);
+    });
+
+    // 4. Remove user from others' Followers lists (based on the deleted user's Following list)
+    const followingQuery = firestoreDb.collection(`users/${userId}/following`);
+    const followingSnapshot = await followingQuery.get();
+    followingSnapshot.forEach(doc => {
+        const followedId = doc.id;
+        const followerRef = firestoreDb.doc(`users/${followedId}/followers/${userId}`);
+        console.log(`[Delete User ${userId}] Removing from ${followedId}'s followers list`);
+        batch.delete(followerRef);
+        // Also delete the following doc from the *deleted user's* subcollection
+        batch.delete(doc.ref);
+    });
+    
+    // 5. Delete Follow Requests sent TO the deleted user
+    const followRequestsQuery = firestoreDb.collection(`users/${userId}/followRequests`);
+    const followRequestsSnapshot = await followRequestsQuery.get();
+    followRequestsSnapshot.forEach(doc => {
+        console.log(`[Delete User ${userId}] Deleting follow request: ${doc.id}`);
+        batch.delete(doc.ref);
+    });
+    
+    // TODO: Add logic for other data cleanup (posts, comments, messages, vibits, etc.)
+    // Examples:
+    // const postsQuery = firestoreDb.collection('posts').where('authorId', '==', userId);
+    // const vibitsQuery = firestoreDb.collection('vibits').where('userId', '==', userId);
+    // const messagesQuery = firestoreDb.collection('messages').where('senderId', '==', userId); // Might need complex query for chats
+    // ... fetch snapshots and batch delete ...
+
+    // --- Commit the Batch --- 
+    await batch.commit();
+    console.log(`Successfully completed deletion cascade for user: ${userId}`);
+
+  } catch (error) {
+    console.error(`Error during deletion cascade for user ${userId}:`, error);
+    // Consider adding specific error handling or logging
+  }
+});

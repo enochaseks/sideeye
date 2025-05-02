@@ -77,12 +77,13 @@ interface UserProfile {
   id: string;
   username: string;
   name: string;
-  profilePic: string;
-  bio: string;
+  profilePic?: string;
+  bio?: string;
   coverPhoto?: string;
-  isPublic: boolean;
+  isPublic?: boolean;
   isAuthenticated?: boolean;
   createdAt: Timestamp;
+  isActive?: boolean;
 }
 
 interface Room {
@@ -101,6 +102,7 @@ interface Room {
   maxMembers: number;
   activeUsers: number;
   isLive: boolean;
+  thumbnailUrl?: string; // Add thumbnailUrl
 }
 
 interface FirestoreUser extends DocumentData {
@@ -136,6 +138,7 @@ interface FirestoreRoom extends DocumentData {
   isPrivate: boolean;
   activeUsers: number;
   isLive: boolean;
+  thumbnailUrl?: string; // Add thumbnailUrl
 }
 
 interface Video {
@@ -190,7 +193,15 @@ const Discover: React.FC = () => {
       const querySnapshot = await getDocs(q);
       const usersData = querySnapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        username: doc.data().username || '',
+        name: doc.data().name || '',
+        profilePic: doc.data().profilePic,
+        bio: doc.data().bio,
+        coverPhoto: doc.data().coverPhoto,
+        isPublic: doc.data().isPublic,
+        isAuthenticated: doc.data().isAuthenticated,
+        createdAt: doc.data().createdAt,
+        isActive: doc.data().isActive
       })) as UserProfile[];
       
       setUsers(usersData);
@@ -244,7 +255,8 @@ const Discover: React.FC = () => {
           lastActive: data.lastActive?.toDate() || new Date(),
           maxMembers: data.maxMembers || 50,
           activeUsers: data.activeUsers || 0,
-          isLive: data.isLive || false
+          isLive: data.isLive || false,
+          thumbnailUrl: data.thumbnailUrl || null // Fetch thumbnailUrl
         };
       }));
 
@@ -285,7 +297,8 @@ const Discover: React.FC = () => {
               lastActive: data.lastActive?.toDate() || new Date(),
               maxMembers: data.maxMembers || 50,
               activeUsers: data.activeUsers || 0,
-              isLive: data.isLive || false
+              isLive: data.isLive || false,
+              thumbnailUrl: data.thumbnailUrl || null // Fetch thumbnailUrl for new rooms
             };
 
             setRooms(prevRooms => {
@@ -620,16 +633,17 @@ const Discover: React.FC = () => {
           name: doc.data().name || '',
           bio: doc.data().bio || '',
           profilePic: doc.data().profilePic || '',
-          isPublic: true,
-          isAuthenticated: true,
-          createdAt: doc.data().createdAt
+          isPublic: doc.data().isPublic ?? true,
+          isAuthenticated: doc.data().isAuthenticated,
+          createdAt: doc.data().createdAt,
+          isActive: doc.data().isActive
         }));
 
         // If no results by username, try searching by name
-        if (usersData.length === 0) {
+        if (usersData.length === 0 && searchTerm) {
           const nameQuery = firestoreQuery(
             usersRef,
-            orderBy('name'),
+            orderBy('name_lower'),
             startAt(searchTerm),
             endAt(searchTerm + '\uf8ff'),
             limit(20)
@@ -641,9 +655,10 @@ const Discover: React.FC = () => {
             name: doc.data().name || '',
             bio: doc.data().bio || '',
             profilePic: doc.data().profilePic || '',
-            isPublic: true,
-            isAuthenticated: true,
-            createdAt: doc.data().createdAt
+            isPublic: doc.data().isPublic ?? true,
+            isAuthenticated: doc.data().isAuthenticated,
+            createdAt: doc.data().createdAt,
+            isActive: doc.data().isActive
           }));
         }
 
@@ -660,7 +675,8 @@ const Discover: React.FC = () => {
             tags: data.tags || [],
             isPrivate: data.isPrivate || false,
             activeUsers: data.activeUsers || 0,
-            isLive: data.isLive || false
+            isLive: data.isLive || false,
+            thumbnailUrl: data.thumbnailUrl || undefined // Map null to undefined
           };
 
           let creatorData: FirestoreUser | null = null;
@@ -687,7 +703,8 @@ const Discover: React.FC = () => {
             lastActive: roomData.lastActive?.toDate() || new Date(),
             maxMembers: data.maxMembers || 50,
             activeUsers: roomData.activeUsers,
-            isLive: roomData.isLive
+            isLive: roomData.isLive,
+            thumbnailUrl: roomData.thumbnailUrl || undefined // Map null to undefined
           };
         }));
 
@@ -705,6 +722,7 @@ const Discover: React.FC = () => {
   const handleSearchSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       handleSearch(searchQuery, true);
+      setShowDropdown(false);
     }
   };
 
@@ -721,52 +739,47 @@ const Discover: React.FC = () => {
       const searchTerm = query.toLowerCase();
       const usersRef = collection(db, 'users');
       
+      const mapDocToUser = (doc: DocumentSnapshot<DocumentData>): UserProfile => ({
+        id: doc.id,
+        username: doc.data()?.username || '',
+        name: doc.data()?.name || '',
+        bio: doc.data()?.bio,
+        profilePic: doc.data()?.profilePic,
+        isPublic: doc.data()?.isPublic ?? true,
+        isAuthenticated: doc.data()?.isAuthenticated,
+        createdAt: doc.data()?.createdAt,
+        isActive: doc.data()?.isActive
+      });
+      
       // Modified query to search by username
       const usersQuery = firestoreQuery(
         usersRef,
-        orderBy('username'),
+        orderBy('username_lower'),
         startAt(searchTerm),
         endAt(searchTerm + '\uf8ff'),
         limit(5)
       );
 
       const usersSnapshot = await getDocs(usersQuery);
+      let usersData = usersSnapshot.docs.map(mapDocToUser);
       
-      if (usersSnapshot.empty) {
-        // If no results with username, try searching by display name
+      if (usersData.length < 5) {
+        // If not enough results with username, try searching by display name
         const nameQuery = firestoreQuery(
           usersRef,
-          orderBy('name'),
+          orderBy('name_lower'),
           startAt(searchTerm),
           endAt(searchTerm + '\uf8ff'),
-          limit(5)
+          limit(5 - usersData.length)
         );
         const nameSnapshot = await getDocs(nameQuery);
-        const usersData = nameSnapshot.docs.map(doc => ({
-          id: doc.id,
-          username: doc.data().username || '',
-          name: doc.data().name || '',
-          bio: doc.data().bio || '',
-          profilePic: doc.data().profilePic || '',
-          isPublic: true,
-          isAuthenticated: true,
-          createdAt: doc.data().createdAt
-        }));
-        setDropdownUsers(usersData);
-      } else {
-        const usersData = usersSnapshot.docs.map(doc => ({
-          id: doc.id,
-          username: doc.data().username || '',
-          name: doc.data().name || '',
-          bio: doc.data().bio || '',
-          profilePic: doc.data().profilePic || '',
-          isPublic: true,
-          isAuthenticated: true,
-          createdAt: doc.data().createdAt
-        }));
-        setDropdownUsers(usersData);
-      }
+        const nameUsersData = nameSnapshot.docs.map(mapDocToUser);
+        // Combine and remove duplicates
+        const combined = [...usersData, ...nameUsersData];
+        usersData = Array.from(new Map(combined.map(u => [u.id, u])).values());
+      } 
       
+      setDropdownUsers(usersData.slice(0, 5));
       setShowDropdown(true);
     } catch (error) {
       console.error('Instant search error:', error);
@@ -821,12 +834,14 @@ const Discover: React.FC = () => {
         setRooms(prevRooms => {
           const updatedRooms = [...prevRooms];
           const roomIndex = updatedRooms.findIndex(r => r.id === roomId);
-          if (roomIndex !== -1) {
+          if (roomIndex !== -1 && snapshot.exists()) { // Check if snapshot exists
+            const roomData = snapshot.data(); // Get data here
             updatedRooms[roomIndex] = {
               ...updatedRooms[roomIndex],
               isLive: Boolean(roomData.isLive),  // Ensure boolean here too
               activeUsers: roomData.activeUsers || 0,
-              lastActive: roomData.lastActive?.toDate() || new Date()
+              lastActive: roomData.lastActive?.toDate() || new Date(),
+              thumbnailUrl: roomData.thumbnailUrl || updatedRooms[roomIndex].thumbnailUrl // Update thumbnail if changed
             };
           }
           return updatedRooms;
@@ -838,7 +853,7 @@ const Discover: React.FC = () => {
     setRoomListeners(prevListeners => [...prevListeners, presenceUnsubscribe, roomUnsubscribe]);
   };
 
-  if (loading) {
+  if (loading && !isSearchView) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
@@ -944,11 +959,11 @@ const Discover: React.FC = () => {
                               >
                                 <ListItemAvatar>
                                   <Avatar 
-                                    src={user.profilePic} 
+                                    src={user.isActive === false ? undefined : user.profilePic}
                                     alt={user.name}
                                     sx={{ width: 32, height: 32 }}
                                   >
-                                    {user.name[0]}
+                                    {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
                                   </Avatar>
                                 </ListItemAvatar>
                                 <ListItemText
@@ -1042,11 +1057,11 @@ const Discover: React.FC = () => {
                       >
                         <ListItemAvatar>
                           <Avatar 
-                            src={user.profilePic} 
+                            src={user.isActive === false ? undefined : user.profilePic}
                             alt={user.name}
                             sx={{ width: 50, height: 50 }}
                           >
-                            {user.name[0]}
+                            {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
                           </Avatar>
                         </ListItemAvatar>
                         <ListItemText
@@ -1120,7 +1135,6 @@ const Discover: React.FC = () => {
                     <Grid item xs={12} sm={6} md={4} key={room.id}>
                       <Card 
                         sx={{ 
-                          height: '100%',
                           display: 'flex',
                           flexDirection: 'column',
                           cursor: 'pointer',
@@ -1139,7 +1153,7 @@ const Discover: React.FC = () => {
                           <CardMedia
                             component="img"
                             height={isMobile ? "220" : "280"}
-                            image={room.creatorAvatar || '/default-room.jpg'}
+                            image={room.thumbnailUrl || room.creatorAvatar || '/default-room.jpg'}
                             alt={room.name}
                             sx={{ 
                               objectFit: 'cover',
@@ -1269,7 +1283,6 @@ const Discover: React.FC = () => {
               <Grid item xs={12} sm={6} md={4} key={room.id}>
                 <Card 
                   sx={{ 
-                    height: '100%',
                     display: 'flex',
                     flexDirection: 'column',
                     cursor: 'pointer',
@@ -1288,7 +1301,7 @@ const Discover: React.FC = () => {
                     <CardMedia
                       component="img"
                       height={isMobile ? "220" : "280"}
-                      image={room.creatorAvatar || '/default-room.jpg'}
+                      image={room.thumbnailUrl || room.creatorAvatar || '/default-room.jpg'}
                       alt={room.name}
                       sx={{ 
                         objectFit: 'cover',
@@ -1400,7 +1413,7 @@ const Discover: React.FC = () => {
           </Grid>
         )}
 
-        {loading && (
+        {loading && isSearchView && (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
             <CircularProgress />
           </Box>
