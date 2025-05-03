@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip, LinearProgress, IconButton, Avatar } from '@mui/material';
+import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, Chip, LinearProgress, IconButton, Avatar, Grid } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import { io, Socket } from "socket.io-client";
 import { useLocation } from 'react-router-dom';
@@ -30,6 +30,84 @@ type GameState = {
 // Define type for messages
 type Message = { sender: 'user' | 'ai', text: string };
 
+// Define type for Connect 4 game state
+type Connect4GameState = {
+  gameType: 'connect_4';
+  board: string[][]; // The 2D array representing the board
+  turn: 'User' | 'AI'; // Whose turn is it?
+  gameOver: boolean;
+  winner: 'User' | 'AI' | 'Draw' | null;
+} | null; // Null when no game is active
+
+// Define the specific emoji types allowed as keys
+type PlayerEmoji = '🔴' | '🟡' | '⚪';
+
+// --- NEW Connect 4 Board Component ---
+const Connect4Board: React.FC<{ board: string[][] }> = ({ board }) => {
+  const rows = board.length;
+  const cols = board[0]?.length || 0; // Handle case of empty board array initially
+
+  // Define colors using the PlayerEmoji type for keys
+  const PLAYER_COLORS: Record<PlayerEmoji, string> = { // Use Record<PlayerEmoji, string>
+    '🔴': '#ff4136', // Red
+    '🟡': '#ffdc00', // Yellow
+    '⚪': '#dddddd', // Empty slot (greyish)
+  };
+
+  return (
+    <Box
+      sx={{
+        bgcolor: '#0074D9', // Blue background for the board frame
+        p: 1,
+        borderRadius: 2,
+        mb: 2, // Margin below the board
+        display: 'inline-block', // Fit content
+        boxShadow: '0 4px 10px rgba(0, 0, 0, 0.2)',
+      }}
+    >
+      <Grid container spacing={0.5} sx={{ width: 'auto' }}> {/* Adjust spacing */}
+        {board.map((row, rowIndex) => (
+          <Grid container item key={rowIndex} xs={12} justifyContent="center" spacing={0.5}>
+            {row.map((cell, colIndex) => (
+              <Grid item key={`${rowIndex}-${colIndex}`}>
+                <Box
+                  sx={{
+                    width: { xs: 30, sm: 35 }, // Responsive cell size
+                    height: { xs: 30, sm: 35 },
+                    borderRadius: '50%',
+                    // Use type assertion here: cell as PlayerEmoji
+                    bgcolor: PLAYER_COLORS[cell as PlayerEmoji] || '#FFFFFF',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)', // Inner shadow for depth
+                    // Optional: Add transition for potential future animations
+                    // transition: 'background-color 0.3s ease-in-out',
+                  }}
+                >
+                  {/* We can use background color instead of rendering emojis directly */}
+                  {/* cell */}
+                </Box>
+              </Grid>
+            ))}
+          </Grid>
+        ))}
+         {/* Column Numbers (Optional but helpful) */}
+         <Grid container item xs={12} justifyContent="center" spacing={0.5} sx={{ mt: 0.5 }}>
+            {Array.from({ length: cols }).map((_, colIndex) => (
+                 <Grid item key={`label-${colIndex}`} sx={{ width: { xs: 30, sm: 35 }, textAlign: 'center' }}>
+                     <Typography variant="caption" sx={{ color: 'white', fontWeight: 'bold'}}>
+                         {colIndex + 1}
+                     </Typography>
+                 </Grid>
+             ))}
+         </Grid>
+      </Grid>
+    </Box>
+  );
+};
+// --- END Connect 4 Board Component ---
+
 const SadeAIPage: React.FC = () => {
   const { currentUser } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -40,6 +118,10 @@ const SadeAIPage: React.FC = () => {
   const [forceSearchNext, setForceSearchNext] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
   const location = useLocation();
+
+  // --- NEW Connect 4 State ---
+  const [connect4Game, setConnect4Game] = useState<Connect4GameState>(null);
+  // --- END NEW Connect 4 State ---
 
   // Ref to scroll to bottom
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
@@ -56,6 +138,7 @@ const SadeAIPage: React.FC = () => {
 
   // Define suggestions
   const suggestions = [
+    "Play Connect 4",
     "I'm feeling a bit down today",
     "Can we just talk?",
     "Tell me a fact",
@@ -268,7 +351,7 @@ const SadeAIPage: React.FC = () => {
   const sendMessage = async (messageToSend: string = input, forceSearch: boolean = false) => {
     if (!messageToSend.trim()) return;
 
-    // --- Add check for currentUser --- 
+    // --- Add check for currentUser ---
     if (!currentUser) {
         console.error("[SadeAIPage] Error: No user logged in. Cannot send message.");
         setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I can't send messages if you're not logged in." }]);
@@ -283,19 +366,18 @@ const SadeAIPage: React.FC = () => {
     setForceSearchNext(false); // Reset force search flag
 
     try { // Wrap main logic in try block
-      console.log("[Frontend] sendMessage called. forceSearch=", forceSearch, "Current activeGame/breathing state:", activeGame, breathingState);
+      console.log("[Frontend] sendMessage called. forceSearch=", forceSearch, "Connect4Game:", connect4Game, "ActiveGame:", activeGame, "BreathingState:", breathingState); // Updated log
 
       // --- Check for STOP command during active exercise ---
       if (breathingState?.active && messageToSend.toLowerCase().includes('stop')) {
-          stopBreathingExercise(); // This function already sets loading to false internally
-          return; // Exit early, finally block will still run
+          stopBreathingExercise();
+          return;
       }
 
       // Block regular messages during breathing exercise (unless it's 'stop')
       if (breathingState?.active) {
           setMessages(msgs => [...msgs, { sender: 'ai', text: "Let's focus on breathing for now. You can type 'stop' if you need to." }]);
-          // setLoading(false); // No need, finally block handles it
-          return; // Exit early, finally block will still run
+          return;
       }
 
       // --- Game Logic Check (Guess the Number) ---
@@ -321,9 +403,98 @@ const SadeAIPage: React.FC = () => {
           return; // Exit early after handling game logic, finally block will still run
       }
 
-      // --- Send to Backend (if no game/breathing logic handled it) ---
+      // --- NEW: Connect 4 Move Check ---
+      else if (connect4Game && connect4Game.gameType === 'connect_4' && !connect4Game.gameOver && connect4Game.turn === 'User') {
+          console.log("[Frontend] Connect 4 game is active and it's User's turn. Processing input as move.");
+          const columnChoice = parseInt(messageToSend.trim(), 10);
+
+          // Validate the input is a number between 1 and 7
+          if (!isNaN(columnChoice) && columnChoice >= 1 && columnChoice <= 7) {
+              // Input is a valid column number!
+              // We'll send this specific move to the backend.
+              console.log(`[Frontend] Sending Connect 4 move (column ${columnChoice}) to backend.`);
+
+              // --- Send Move to Backend ---
+              const backendBaseUrl = process.env.REACT_APP_API_URL;
+              if (!backendBaseUrl) {
+                  console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
+                  throw new Error("Configuration error: Backend URL not set."); // Throw error to be caught
+              }
+              const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+
+              // Send a specific structure for the game move
+              const requestBody = {
+                  message: `connect4_move_${columnChoice}`, // Special identifier + column
+                  userId: currentUser.uid,
+                  // No history needed for direct game move processing
+                  // No forceSearch needed
+              };
+
+              console.log("[Frontend] Sending Connect 4 move request body:", requestBody);
+              const fetchOptions = {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(requestBody),
+              };
+              const res = await fetch(apiUrl, fetchOptions);
+              if (!res.ok) {
+                  let errorMsg = `HTTP error! status: ${res.status}`;
+                  try {
+                      const errorData = await res.json();
+                      errorMsg = errorData.error || errorMsg;
+                  } catch (e) { /* Ignore */ }
+                  throw new Error(errorMsg);
+              }
+              const data = await res.json();
+              console.log("[Frontend] Connect 4 move response data:", data);
+
+              // --- Handle Backend Response (Update Game State) ---
+              if (data.gameUpdate === 'connect_4' && data.board && data.response) {
+                  console.log("[Frontend] Received Connect 4 game update from backend.");
+                  // Update the game state with the new board, turn, etc.
+                   const updatedConnect4State: Connect4GameState = {
+                       gameType: 'connect_4',
+                       board: data.board,
+                       turn: data.turn, // Get turn from backend
+                       gameOver: data.gameOver,
+                       winner: data.winner
+                   };
+                   setConnect4Game(updatedConnect4State);
+
+                   // Add Sade's response message (e.g., "Okay, I placed my piece...", "You win!", etc.)
+                   setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+
+                   // If game is over, maybe clear state after a short delay or based on message?
+                   if(data.gameOver) {
+                       console.log("[Frontend] Connect 4 game is over. Winner:", data.winner);
+                       // Optionally clear connect4Game state after a small delay
+                       // setTimeout(() => setConnect4Game(null), 5000);
+                   }
+
+              } else if (data.error) { // Handle specific error from backend (e.g., invalid move)
+                 setMessages(msgs => [...msgs, { sender: 'ai', text: data.error }]);
+                 // Don't clear game state on invalid move error
+              }
+              else {
+                   // Handle unexpected response after sending a move
+                   console.error("[SadeAIPage] Received unexpected response structure after Connect 4 move:", data);
+                   setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, something went wrong with the game." }]);
+                   setConnect4Game(null); // Clear game state on unexpected error
+              }
+              // --- End Handling Backend Response ---
+
+          } else {
+              // Input was not a valid column number
+              console.log("[Frontend] Connect 4 active, but input is not a valid column number (1-7).");
+              setMessages(msgs => [...msgs, { sender: 'ai', text: "Please enter a column number from 1 to 7 to make your move, mate." }]);
+              // Don't send to backend, just prompt user again.
+          }
+          return; // Exit early after handling game logic
+      }
+      // --- END Connect 4 Move Check ---
+
+      // --- Send to Backend (if no game/breathing/connect4 logic handled it) ---
       console.log("[Frontend] No active game/exercise or local action. Sending message to backend via HTTP.");
-      // setLoading(true); // Already set at the start
 
       const backendBaseUrl = process.env.REACT_APP_API_URL;
       if (!backendBaseUrl) {
@@ -379,12 +550,36 @@ const SadeAIPage: React.FC = () => {
          };
          setBreathingState(initialBreathingState);
          setTimeout(startNextBreathingStep, 100);
+         setConnect4Game(null); // Ensure Connect 4 state is cleared
+         setActiveGame(null);   // Ensure Guess the Number state is cleared
 
       } else if (data.startGame === 'guess_the_number' && data.response) {
         // setLoading(false); // No need, finally block handles it
         startGame('guess_the_number', data.response);
-      } else if (data.response) {
-        setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+        setConnect4Game(null);    // Ensure Connect 4 state is cleared
+        setBreathingState(null); // Ensure breathing state is cleared
+
+      } else if (data.startGame === 'connect_4' && data.board && data.response) { // --- NEW Connect 4 Check ---
+         console.log("[Frontend] sendMessage: Received signal to start Connect 4 game.");
+         // Add the initial game message from Sade (which includes the text board)
+         setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+
+         // Set the Connect 4 game state
+         const newConnect4State: Connect4GameState = {
+            gameType: 'connect_4',
+            board: data.board, // Use the board from the backend
+            turn: 'User',      // User always starts
+            gameOver: false,
+            winner: null
+         };
+         setConnect4Game(newConnect4State);
+         setActiveGame(null);     // Clear other game states
+         setBreathingState(null); // Clear other game states
+
+      } else if (data.response) { // General AI response (no game/exercise started)
+         setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+         // Potentially clear game states here too if a general message implies the game ended?
+         // For now, only clear when another activity explicitly starts.
       } else {
          console.error("[SadeAIPage] Received unexpected HTTP response structure:", data);
          setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I got a bit confused there." }]);
@@ -657,6 +852,14 @@ const SadeAIPage: React.FC = () => {
                  </Typography>
             </Box>
         )}
+
+        {/* --- NEW: Render Connect 4 Board if active --- */}
+        {connect4Game && connect4Game.gameType === 'connect_4' && !connect4Game.gameOver && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', width: '100%', mb: 2 }}>
+             <Connect4Board board={connect4Game.board} />
+          </Box>
+        )}
+        {/* --- END: Render Connect 4 Board --- */}
 
         <Box
           sx={{
