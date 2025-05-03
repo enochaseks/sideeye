@@ -66,6 +66,7 @@ import { audioService } from '../../services/audioService';
 import AudioDeviceSelector from '../AudioDeviceSelector';
 import { storage } from '../../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import TypingIndicator from '../TypingIndicator';
 
 // Define type for Sade AI messages
 type SadeMessage = { sender: 'user' | 'ai', text: string };
@@ -911,9 +912,20 @@ const SideRoomComponent: React.FC = () => {
                 return;
             }
             const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+
+            // --- Ensure userId is included, remove client-side history --- 
+            if (!currentUser?.uid) {
+                console.error("[SideRoomComponent - SadeAI] ERROR: User ID not available.");
+                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: "Error: Could not identify user." }]);
+                setSadeLoading(false);
+                return;
+            }
+
             const requestBody = {
                 message: trimmedMessage, // Send trimmed message
-                forceSearch: forceSearch // Include forceSearch flag
+                forceSearch: forceSearch, // Include forceSearch flag
+                userId: currentUser.uid // ADD USER ID
+                // history: sadeMessages.slice(-10) // REMOVE client history - backend uses Firestore
             };
             console.log("[SideRoomComponent - SadeAI] Sending HTTP request body:", requestBody);
             const fetchOptions = {
@@ -1112,7 +1124,33 @@ const SideRoomComponent: React.FC = () => {
                                 </Box>
                             </Box>
                         ))}
-                         {sadeLoading && <CircularProgress size={20} sx={{ display: 'block', mx: 'auto', my: 1 }} />}
+                         {sadeLoading && (
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                justifyContent: 'flex-start',
+                                mb: 1.5,
+                              }}
+                            >
+                              <Avatar
+                                src="/images/sade-avatar.jpg"
+                                alt="Sade AI Avatar"
+                                sx={{ width: 32, height: 32, mr: 1 }} // Match style
+                              />
+                              <Box
+                                sx={{
+                                  bgcolor: '#f0f0f0', // Match AI bubble style
+                                  borderRadius: '16px 16px 16px 4px',
+                                  px: 1,
+                                  py: 0.5,
+                                  display: 'inline-block',
+                                }}
+                              >
+                                <TypingIndicator />
+                              </Box>
+                            </Box>
+                         )}
                          <div ref={sadeMessagesEndRef} /> {/* Target for scrolling */}
                     </Box>
                     {/* Input area */}
