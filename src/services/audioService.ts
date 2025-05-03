@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { toast } from 'react-hot-toast';
 import { audioDeviceManager } from './audioDeviceManager';
+import { useNavigate } from 'react-router-dom';
 
 interface AudioLevelCallback {
   (userId: string, isSpeaking: boolean): void;
@@ -8,6 +9,11 @@ interface AudioLevelCallback {
 
 interface DeviceChangeCallback {
   (): void;
+}
+
+// --- Add type for User Left Callback --- 
+interface UserLeftCallback {
+  (userId: string): void;
 }
 
 class AudioService {
@@ -38,6 +44,9 @@ class AudioService {
   private queueProcessingTimeouts: Map<string, NodeJS.Timeout> = new Map(); // Track timeouts for processing incomplete buffers
   private readonly QUEUE_MAX_WAIT_MS = 500; // Max time to wait before processing an incomplete buffer
   private currentUserId: string | null = null; // Store the current user ID
+  private navigate: ReturnType<typeof useNavigate> | null = null; // Store navigate function
+  // --- Add state for the user left callback --- 
+  private userLeftCallback: UserLeftCallback | null = null;
 
   constructor() {
     // Use the CORRECT environment variable name
@@ -208,15 +217,13 @@ class AudioService {
     });
 
     this.socket.on('user-left', (userId: string) => {
-      console.log('User left:', userId);
-      // Immediately stop and cleanup their audio
-      this.stopUserAudio(userId);
-      // Clear their speaking state
-      this.speakingStates.delete(userId);
-      const timeout = this.silenceTimeouts.get(userId);
-      if (timeout) {
-        clearTimeout(timeout);
-        this.silenceTimeouts.delete(userId);
+      console.log('[AudioService] User left event received:', userId);
+      this.stopUserAudio(userId); // Clean up audio resources
+      // --- Call the registered callback --- 
+      if (this.userLeftCallback) {
+        this.userLeftCallback(userId);
+      } else {
+        console.warn('[AudioService] userLeftCallback not set.');
       }
     });
 
@@ -255,6 +262,43 @@ class AudioService {
     this.socket.on('user-muted', (data: { userId: string; isMuted: boolean }) => {
       console.log(`User ${data.userId} mute status:`, data.isMuted);
       // You can add callbacks here if you need to update UI based on other users' mute status
+    });
+
+    // --- Listener for Sound Effects from others --- 
+    this.socket.on('sound-effect', (data: { roomId: string, userId: string, soundUrl: string }) => {
+        console.log(`[AudioService] Received sound-effect event: `, data);
+        if (data.roomId === this.currentRoomId && data.userId !== this.currentUserId) {
+            console.log(`[AudioService] Playing sound triggered by ${data.userId}`);
+            this.playSoundLocally(data.soundUrl);
+        } else {
+            console.log(`[AudioService] Ignoring sound effect event (own event or different room).`);
+        }
+    });
+
+    // --- Listeners for Owner Actions --- 
+    this.socket.on('force-mute', () => {
+      console.log('[AudioService] Received force-mute command.');
+      toast.error('The room owner has muted you.');
+      this.setMuted(true);
+    });
+
+    this.socket.on('force-unmute', () => {
+      console.log('[AudioService] Received force-unmute command.');
+      toast.success('The room owner has unmuted you.');
+      this.setMuted(false);
+    });
+
+    this.socket.on('force-remove', (roomIdToRemoveFrom: string) => {
+      console.log(`[AudioService] Received force-remove command for room ${roomIdToRemoveFrom}.`);
+      toast.error('You have been removed from the room by the owner.');
+      if (this.currentRoomId === roomIdToRemoveFrom && this.currentUserId) {
+          this.leaveRoom(this.currentRoomId, this.currentUserId); 
+      }
+      if (this.navigate) {
+          this.navigate('/side-rooms');
+      } else {
+          console.error('[AudioService] Navigate function not set, cannot redirect after removal.');
+      }
     });
   }
 
@@ -706,50 +750,85 @@ class AudioService {
     // Check if we should process
     if (forceProcess || estimatedDurationMs >= this.BUFFER_TARGET_DURATION_MS) {
         // Prevent processing if already playing for this user
-        if (this.audioSources.has(userId)) return;
+        if (this.audioSources.has(userId)) {
+            console.log(`[AudioQueue-${userId}] Already playing, skipping processing cycle.`);
+            return;
+        }
 
         const chunksToProcess = [...queue]; // Copy the chunks
         this.audioQueue.set(userId, []); // Clear the queue immediately
         this.clearQueueProcessingTimeout(userId); // Clear timeout as we are processing
 
-        console.log(`Processing ${chunksToProcess.length} chunks for user ${userId}`);
+        if (chunksToProcess.length === 0) {
+            console.log(`[AudioQueue-${userId}] No chunks to process after clearing queue.`);
+            return; // No data to process
+        }
+
+        console.log(`[AudioQueue-${userId}] Processing ${chunksToProcess.length} chunks.`);
 
         try {
+            // Ensure the correct MIME type is specified for the Blob
             const audioBlob = new Blob(chunksToProcess, { type: 'audio/webm;codecs=opus' });
             const concatenatedBuffer = await audioBlob.arrayBuffer();
 
             if (concatenatedBuffer.byteLength > 0) {
                await this.decodeAndPlayAudio(concatenatedBuffer, userId);
+            } else {
+               console.warn(`[AudioQueue-${userId}] Concatenated buffer is empty.`);
             }
         } catch (error) {
-            console.error(`Error processing audio queue for ${userId}:`, error);
-            // Maybe clear queue for this user if processing fails repeatedly
-            // this.audioQueue.delete(userId);
+            console.error(`[AudioQueue-${userId}] Error processing audio queue:`, error);
         }
     }
   }
 
   // Renamed the original handler to be called by the processing loop
   private async decodeAndPlayAudio(audioData: ArrayBuffer, userId: string) {
-    if (!this.audioContext || !this.gainNode) return;
+    if (!this.audioContext || !this.gainNode) {
+        console.warn(`[AudioPlay-${userId}] Audio context or gain node not ready.`);
+        return;
+    }
+
+    // Explicitly check and resume AudioContext state if needed
+    if (this.audioContext.state === 'suspended') { // Check specifically for suspended state
+        console.warn(`[AudioPlay-${userId}] AudioContext state is ${this.audioContext.state}, attempting resume.`);
+        try {
+            await this.audioContext.resume(); // Attempt resume
+            // Assume resume worked if it didn't throw an error.
+            console.log(`[AudioPlay-${userId}] AudioContext resume attempt finished.`);
+        } catch (resumeError) {
+            console.error(`[AudioPlay-${userId}] Error resuming audio context:`, resumeError);
+            toast.error('Audio playback failed. Please try refreshing.');
+            return; // Stop if context cannot be resumed
+        }
+    } else if (this.audioContext.state === 'closed') {
+        console.error(`[AudioPlay-${userId}] Cannot play audio, context is closed.`);
+        toast.error('Audio system closed unexpectedly. Please refresh.');
+        return; // Cannot proceed if context is closed
+    }
+
+    // Re-check state *after* attempting resume, before proceeding
+    if (this.audioContext.state !== 'running') {
+      console.error(`[AudioPlay-${userId}] AudioContext is not running (${this.audioContext.state}) after resume attempt. Cannot play audio.`);
+      return;
+    }
 
     try {
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-
       // Stop any previously playing audio for this user to prevent overlap
       this.stopUserAudio(userId);
 
-      console.log(`Decoding ${audioData.byteLength} bytes for ${userId}`);
+      console.log(`[AudioPlay-${userId}] Decoding ${audioData.byteLength} bytes.`);
       const audioBuffer = await this.audioContext.decodeAudioData(audioData)
         .catch((err) => {
-             console.error(`decodeAudioData failed for ${userId}:`, err);
-             toast.error(`Error decoding audio from ${userId}.`); // Inform user
-             throw err; // Re-throw to be caught by the outer try-catch if needed
+             console.error(`[AudioPlay-${userId}] decodeAudioData FAILED:`, err);
+             toast.error(`Error decoding audio from user ${userId}.`); // More specific error
+             throw err; // Re-throw to be caught by the outer try-catch
         });
 
-      if (!audioBuffer) return; // Stop if decoding failed
+      if (!audioBuffer) {
+           console.warn(`[AudioPlay-${userId}] Decoding resulted in null buffer.`);
+           return; // Stop if decoding failed or produced no buffer
+      }
 
       const source = this.audioContext.createBufferSource();
       source.buffer = audioBuffer;
@@ -787,17 +866,25 @@ class AudioService {
       // Schedule the playback with minimal latency
       const latency = 0.02; // 20ms latency buffer
       const startTime = this.audioContext.currentTime + latency;
+      console.log(`[AudioPlay-${userId}] Starting playback at ${startTime} (current: ${this.audioContext.currentTime})`);
       source.start(startTime);
       
       this.audioSources.set(userId, source);
 
       source.onended = () => {
-        source.disconnect();
+        console.log(`[AudioPlay-${userId}] Playback ended.`);
+        // Ensure disconnection happens cleanly
+        try {
+           source.disconnect();
+        } catch(disconnectError) {
+           console.warn(`[AudioPlay-${userId}] Minor error during source disconnection:`, disconnectError);
+        }
         this.audioSources.delete(userId);
       };
 
     } catch (error) {
-      console.error('Error handling incoming audio:', error);
+      // Catch errors from decodeAudioData or node connections
+      console.error(`[AudioPlay-${userId}] Error handling incoming audio buffer:`, error);
     }
   }
 
@@ -824,6 +911,104 @@ class AudioService {
           clearTimeout(existingTimeout);
           this.queueProcessingTimeouts.delete(userId);
       }
+  }
+
+  // --- Moved Sound Effect Playback Method UP --- 
+  private async playSoundLocally(soundUrl: string): Promise<void> {
+    if (!this.audioContext || !this.gainNode) {
+        console.warn('[AudioService] Audio context not ready for sound effect.');
+        return;
+    }
+
+    try {
+        // Resume context if suspended
+        if (this.audioContext.state === 'suspended') {
+            await this.audioContext.resume();
+        }
+
+        console.log(`[AudioService] Attempting to play sound locally: ${soundUrl}`);
+        const response = await fetch(soundUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch sound: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+
+        const source = this.audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.gainNode); // Connect to the main gain node
+        source.start(0); // Play immediately
+
+        source.onended = () => {
+            console.log(`[AudioService] Sound effect finished: ${soundUrl}`);
+            source.disconnect();
+        };
+
+    } catch (error) {
+        console.error(`[AudioService] Error playing sound effect ${soundUrl}:`, error);
+        toast.error(`Failed to play sound: ${soundUrl}`);
+    }
+  }
+
+  // --- Public Method for Components --- 
+  public triggerSoundEffect(roomId: string, soundUrl: string): void {
+    if (!this.socket || !roomId || !soundUrl || !this.currentUserId) {
+        console.error('[AudioService] Cannot trigger sound effect - missing socket, roomId, soundUrl, or userId.');
+        return;
+    }
+
+    console.log(`[AudioService] Triggering sound effect: ${soundUrl} in room ${roomId} by user ${this.currentUserId}`);
+    
+    // 1. Play locally immediately for the user who triggered it
+    this.playSoundLocally(soundUrl);
+
+    // 2. Emit event to server for broadcasting to others
+    this.socket.emit('sound-effect', {
+        roomId,
+        userId: this.currentUserId, // Send who triggered it
+        soundUrl
+    });
+}
+
+  // --- Add a way to set the navigate function --- 
+  public setNavigate(navigateFunc: ReturnType<typeof useNavigate>): void {
+    this.navigate = navigateFunc;
+  }
+
+  // --- Public Methods for Owner Actions --- 
+  public sendForceMute(roomId: string, targetUserId: string): void {
+    if (!this.socket) return;
+    console.log(`[AudioService] Owner sending force-mute to ${targetUserId} in room ${roomId}`);
+    this.socket.emit('force-mute', { roomId, targetUserId });
+  }
+
+  public sendForceUnmute(roomId: string, targetUserId: string): void {
+    if (!this.socket) return;
+    console.log(`[AudioService] Owner sending force-unmute to ${targetUserId} in room ${roomId}`);
+    this.socket.emit('force-unmute', { roomId, targetUserId });
+  }
+
+  public sendForceRemove(roomId: string, targetUserId: string): void {
+    if (!this.socket) return;
+    console.log(`[AudioService] Owner sending force-remove to ${targetUserId} in room ${roomId}`);
+    this.socket.emit('force-remove', { roomId, targetUserId });
+  }
+
+  public sendForceBan(roomId: string, targetUserId: string): void {
+    if (!this.socket) return;
+    console.log(`[AudioService] Owner sending force-ban to ${targetUserId} in room ${roomId}`);
+    this.socket.emit('force-ban', { roomId, targetUserId });
+  }
+
+  // --- Method to register the callback --- 
+  public onUserLeft(callback: UserLeftCallback): () => void {
+    console.log('[AudioService] Registering onUserLeft callback.');
+    this.userLeftCallback = callback;
+    // Return a cleanup function to unregister
+    return () => {
+      console.log('[AudioService] Unregistering onUserLeft callback.');
+      this.userLeftCallback = null;
+    };
   }
 }
 

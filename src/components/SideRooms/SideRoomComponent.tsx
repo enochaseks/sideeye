@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../services/firebase';
 import {
@@ -49,9 +49,16 @@ import {
     Mic,
     MicOff,
     VolumeUp,
-    PersonRemove
+    PersonRemove,
+    MusicNote,
+    UploadFile,
+    MoreVert as MoreVertIcon,
+    VolumeOff as VolumeOffIcon,
+    VolumeUp as VolumeUpIcon,
+    PersonRemove as PersonRemoveIcon,
+    Block as BanIcon
 } from '@mui/icons-material';
-import type { SideRoom, RoomMember } from '../../types/index';
+import type { SideRoom, RoomMember, UserProfile } from '../../types/index';
 import RoomForm from './RoomForm';
 import { audioService } from '../../services/audioService';
 import AudioDeviceSelector from '../AudioDeviceSelector';
@@ -76,6 +83,12 @@ const SideRoomComponent: React.FC = () => {
     const { currentUser } = useAuth();
     const navigate = useNavigate();
 
+    // Inject navigate into audioService
+    useEffect(() => {
+        audioService.setNavigate(navigate);
+        // No specific cleanup needed for navigate function itself
+    }, [navigate]);
+
     // --- State ---
     const [room, setRoom] = useState<SideRoom | null>(null);
     const [loading, setLoading] = useState(true);
@@ -93,12 +106,25 @@ const SideRoomComponent: React.FC = () => {
     const [isAudioConnected, setIsAudioConnected] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [speakingUsers, setSpeakingUsers] = useState<Set<string>>(new Set());
+    const [selectedSoundFile, setSelectedSoundFile] = useState<File | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- Memos ---
     const isRoomOwner = useMemo(() => room?.ownerId === currentUser?.uid, [room?.ownerId, currentUser?.uid]);
     const isViewer = useMemo(() => !!room?.viewers?.some((viewer: RoomMember) => viewer.userId === currentUser?.uid), [room?.viewers, currentUser?.uid]);
     const hasRoomAccess = isRoomOwner || isViewer;
-    const onlineParticipants = useMemo(() => presence.filter(p => p.isOnline), [presence]);
+    const onlineParticipants = useMemo(() => {
+        console.log('[onlineParticipants Memo] Raw presence state:', presence);
+        const uniqueParticipants = new Map<string, PresenceData>();
+        presence.forEach(p => {
+            if (p.isOnline && !uniqueParticipants.has(p.userId)) { 
+                uniqueParticipants.set(p.userId, p);
+            }
+        });
+        const finalParticipants = Array.from(uniqueParticipants.values());
+        console.log('[onlineParticipants Memo] Filtered participants:', finalParticipants);
+        return finalParticipants;
+    }, [presence]);
     const ownerData = useMemo(() => room?.viewers?.find((v: RoomMember) => v.role === 'owner'), [room?.viewers]);
 
     // --- Audio Handlers ---
@@ -146,6 +172,22 @@ const SideRoomComponent: React.FC = () => {
         }
     }, [roomId, currentUser?.uid, isMicMuted]);
 
+    // --- New Click Handler ---
+    const handlePlayBeepClick = useCallback(() => {
+        if (!roomId || !currentUser?.uid) return;
+        console.log(`[Room ${roomId}] User ${currentUser.uid} triggering sound effect.`);
+
+        // --- REPLACE WITH YOUR ACTUAL SOUND FILE URL --- 
+        const soundUrl = '/assets/sounds/simple-beep.mp3'; // Example path - host this file!
+
+        // Call the new audioService method
+        audioService.triggerSoundEffect(roomId, soundUrl);
+
+        // Optional: Keep a brief toast notification or remove it
+        // toast('Beep!'); 
+
+    }, [roomId, currentUser?.uid]);
+
     // --- Cleanup on unmount --- Effect to leave the audio room when the component unmounts
     useEffect(() => {
         // Store roomId and userId in constants for use in cleanup
@@ -187,66 +229,102 @@ const SideRoomComponent: React.FC = () => {
 
     // --- Presence Listener ---
     useEffect(() => {
-        if (!roomId || !hasRoomAccess) return;
+        if (!roomId || !hasRoomAccess || !currentUser?.uid) { 
+             setPresence([]);
+             return;
+        }
+
+        console.log(`[Presence Listener] Setting up for room ${roomId}, user ${currentUser.uid}`);
+        const componentUserId = currentUser.uid; // Store current user ID for stability in async ops
 
         const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-        const q = query(presenceRef, where("isOnline", "==", true));
+        const q = query(presenceRef, where("isOnline", "==", true)); 
         
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const presenceData = snapshot.docs.map(doc => ({
+            const onlineUsersData = snapshot.docs.map(doc => ({
                 userId: doc.id,
                 ...doc.data()
             })) as PresenceData[];
-            setPresence(presenceData);
+            setPresence(onlineUsersData);
+        }, (error) => {
+             console.error('[Presence Listener] Snapshot error:', error);
+             toast.error("Error listening to room presence.");
         });
 
-        // Update own presence
-        if (currentUser?.uid) {
-            const myPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-            
-            // First check if document exists
-            getDoc(myPresenceRef).then((docSnapshot) => {
-                if (!docSnapshot.exists()) {
-                    // Create the document if it doesn't exist
-                    setDoc(myPresenceRef, {
-                        userId: currentUser.uid,
-                        username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-                        avatar: currentUser.photoURL || '',
-                        lastSeen: Date.now(),
-                        isOnline: true,
-                        role: isRoomOwner ? 'owner' : 'viewer'
-                    }).catch(console.error);
-                } else {
-                    // Update existing document - Ensure username/avatar are updated too
-                    updateDoc(myPresenceRef, {
-                        lastSeen: Date.now(),
-                        isOnline: true,
-                        role: isRoomOwner ? 'owner' : 'viewer',
-                        username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
-                        avatar: currentUser.photoURL || ''
-                    }).catch(console.error);
-                }
-            }).catch(console.error);
-        }
+        // --- Explicitly fetch latest profile data before writing presence ---
+        const fetchProfileAndWritePresence = async () => {
+            try {
+                const userProfileRef = doc(db, 'users', componentUserId);
+                const userProfileSnap = await getDoc(userProfileRef);
+                
+                let userDisplayName = '';
+                let userProfilePic = '';
+                let userUsername = currentUser.email?.split('@')[0] || `user_${componentUserId.substring(0, 4)}`; // Initial fallback
 
-        return () => {
-            unsubscribe();
-            if (currentUser?.uid) {
-                const myPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-                updateDoc(myPresenceRef, {
-                    isOnline: false,
-                    lastSeen: serverTimestamp()
-                }).catch(console.error);
+                if (userProfileSnap.exists()) {
+                    const profileData = userProfileSnap.data() as UserProfile;
+                    userDisplayName = profileData.name || profileData.username || ''; // Prioritize name, then username from profile
+                    userProfilePic = profileData.profilePic || '';
+                    userUsername = profileData.username || userUsername; // Use profile username if available
+                    console.log(`[Presence Listener Profile Fetch] Fetched profile for ${componentUserId}: Name='${userDisplayName}', Pic='${userProfilePic}', Username='${userUsername}'`);
+                } else {
+                    // Fallback if Firestore profile doesn't exist (shouldn't ideally happen here)
+                    console.warn(`[Presence Listener Profile Fetch] Firestore profile missing for ${componentUserId}. Using fallbacks.`);
+                    userDisplayName = currentUser.displayName || ''; // Fallback to auth display name
+                    userProfilePic = currentUser.profile?.profilePic || ''; // Fallback to potentially loaded pic
+                }
+
+                const myPresenceRef = doc(db, 'sideRooms', roomId, 'presence', componentUserId);
+                const presenceData: PresenceData = { 
+                    userId: componentUserId,
+                    username: userUsername, // Use fetched/fallback username
+                    avatar: userProfilePic, // Use fetched pic
+                    lastSeen: Date.now(), 
+                    isOnline: true,
+                    role: isRoomOwner ? 'owner' : 'viewer', 
+                    displayName: userDisplayName, // Use fetched display name
+                    photoURL: userProfilePic // Keep consistent
+                }; 
+                console.log(`[Presence Listener Debug] Data being written to presence:`, presenceData);
+        
+                await setDoc(myPresenceRef, presenceData, { merge: true });
+                console.log(`[Presence Listener] Presence updated via fetch for ${componentUserId}`);
+
+            } catch (profileError) {
+                 console.error(`[Presence Listener] Error fetching profile or writing presence for ${componentUserId}:`, profileError);
             }
         };
-    }, [roomId, hasRoomAccess, currentUser, isRoomOwner]);
+
+        fetchProfileAndWritePresence(); // Call the async function
+        // -----------------------------------------------------------------
+
+        // Define cleanup function using componentUserId
+        const cleanup = () => {
+            console.log(`[Presence Listener] Cleanup running for user ${componentUserId} in room ${roomId}.`);
+            unsubscribe(); // Stop listening to the query
+            const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', componentUserId);
+            // Set offline using updateDoc
+            updateDoc(userPresenceRef, {
+                isOnline: false,
+                lastSeen: serverTimestamp() // Use server timestamp for offline status
+            }).catch(error => {
+                 if (error.code !== 'not-found') { 
+                     console.error(`[Presence Listener] Error setting user offline for ${componentUserId}:`, error);
+                 }
+            });
+        };
+
+        // Return the cleanup function
+        return cleanup;
+
+    }, [roomId, hasRoomAccess, currentUser?.uid, isRoomOwner, db]); // Depend on currentUser.uid to re-run if user changes
 
     // Add speaking detection effect
     useEffect(() => {
         const handleAudioLevel = (userId: string, isSpeaking: boolean) => {
             setSpeakingUsers(prev => {
                 const newSet = new Set(prev);
-                if (isSpeaking && !isMicMuted) {
+                if (isSpeaking && !audioService.isMicrophoneMuted()) {
                     newSet.add(userId);
                 } else {
                     newSet.delete(userId);
@@ -260,76 +338,204 @@ const SideRoomComponent: React.FC = () => {
         return () => {
             audioService.removeAudioLevelCallback(handleAudioLevel);
         };
-    }, [isMicMuted]);
+    }, []);
+
+    // --- Handler for Remote User Leaving --- 
+    const handleRemoteUserLeft = useCallback((leftUserId: string) => {
+        console.log(`[SideRoomComponent] handleRemoteUserLeft called for: ${leftUserId}`);
+        // Update presence state by removing the user who left
+        setPresence(prevPresence => {
+            const updatedPresence = prevPresence.filter(p => p.userId !== leftUserId);
+            console.log(`[SideRoomComponent] Presence updated after user left. Old count: ${prevPresence.length}, New count: ${updatedPresence.length}`);
+            return updatedPresence;
+        });
+    }, []); // Empty dependency array is fine here
+
+    // --- Effect to Register/Unregister User Left Handler --- 
+    useEffect(() => {
+        console.log('[SideRoomComponent] Registering audioService.onUserLeft handler.');
+        const unsubscribe = audioService.onUserLeft(handleRemoteUserLeft);
+        
+        // Return cleanup function provided by onUserLeft
+        return () => {
+             console.log('[SideRoomComponent] Cleaning up onUserLeft handler registration.');
+             unsubscribe();
+        }
+    }, [handleRemoteUserLeft]); // Depend on the handler function
 
     // --- UI Components ---
-    const ParticipantGridItem: React.FC<{ participant: PresenceData }> = ({ participant }) => (
-        <Grid item xs={6} sm={4} md={3} lg={2}>
-            <Paper 
-                elevation={speakingUsers.has(participant.userId) ? 4 : 1} 
-                sx={{ 
-                    p: 1, 
-                    textAlign: 'center',
-                    position: 'relative',
-                    bgcolor: speakingUsers.has(participant.userId) ? 'primary.light' : 'background.paper',
-                    transition: 'all 0.3s ease-in-out',
-                    border: speakingUsers.has(participant.userId) && !participant.isMuted ? '2px solid' : 'none',
-                    borderColor: 'primary.main'
-                }}
-            >
-                <Box sx={{ position: 'relative' }}>
-                    <Avatar 
-                        src={participant.avatar} 
-                        alt={participant.displayName || participant.username}
-                        sx={{ 
-                            width: 60, 
-                            height: 60, 
-                            margin: 'auto', 
-                            mb: 1,
-                            border: speakingUsers.has(participant.userId) && !participant.isMuted ? '2px solid' : 'none',
-                            borderColor: 'primary.main'
+    const ParticipantGridItem: React.FC<{ participant: PresenceData }> = ({ participant }) => {
+        const isCurrentlySpeaking = speakingUsers.has(participant.userId);
+        const isMuted = participant.isMuted;
+        const isSelf = participant.userId === currentUser?.uid;
+
+        // State for the moderation menu
+        const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+        const open = Boolean(anchorEl);
+
+        const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
+            setAnchorEl(event.currentTarget);
+        };
+        const handleMenuClose = () => {
+            setAnchorEl(null);
+        };
+
+        // --- Handlers passed from parent SideRoomComponent --- 
+        const onMuteToggle = () => {
+            handleForceMuteToggle(participant.userId, !!isMuted); 
+            handleMenuClose();
+        };
+        const onRemoveUser = () => {
+            handleForceRemove(participant.userId, participant.username || participant.displayName);
+            handleMenuClose();
+        };
+        const onBanUser = () => {
+            handleForceBan(participant.userId, participant.username || participant.displayName);
+            handleMenuClose();
+        };
+
+        console.log(`[ParticipantGridItem] Rendering:`, participant);
+
+        return (
+            <Grid item xs={6} sm={4} md={3} lg={2}>
+                <Box sx={{ position: 'relative'}}>
+                    <Link 
+                        to={`/profile/${participant.userId}`} 
+                        style={{ textDecoration: 'none', color: 'inherit' }} 
+                        onClick={(e) => { if (isSelf) e.preventDefault(); }} // Prevent linking to own profile if desired
+                    >
+                        <Paper 
+                            sx={{
+                                p: 1,
+                                pt: isRoomOwner && !isSelf ? 4 : 1,
+                                textAlign: 'center',
+                                position: 'relative',
+                                bgcolor: isCurrentlySpeaking ? 'primary.light' : 'background.paper',
+                                transition: 'all 0.3s ease-in-out',
+                                border: isCurrentlySpeaking && !isMuted ? '2px solid' : 'none',
+                                borderColor: 'primary.main',
+                                '&:hover': {
+                                    boxShadow: 3,
+                                    cursor: isSelf ? 'default' : 'pointer'
+                                }
+                            }}
+                        >
+                            <Box sx={{ position: 'relative' }}>
+                                <Avatar 
+                                    src={participant.avatar} 
+                                    alt={participant.displayName || participant.username}
+                                    sx={{ 
+                                        width: 60, 
+                                        height: 60, 
+                                        margin: 'auto', 
+                                        mb: 1,
+                                        border: isCurrentlySpeaking && !isMuted ? '2px solid' : 'none',
+                                        borderColor: 'primary.main'
+                                    }}
+                                >
+                                    {participant.displayName?.[0] || participant.username?.[0]}
+                                </Avatar>
+                                {isCurrentlySpeaking && !isMuted && (
+                                    <Box
+                                        sx={{
+                                            position: 'absolute',
+                                            bottom: 8,
+                                            right: -4,
+                                            width: 16,
+                                            height: 16,
+                                            borderRadius: '50%',
+                                            bgcolor: 'success.main',
+                                            border: '2px solid',
+                                            borderColor: 'background.paper'
+                                        }}
+                                    />
+                                )}
+                            </Box>
+                            <Typography variant="caption" display="block" noWrap>
+                                {participant.displayName || participant.username}
+                            </Typography>
+                            {isMuted && ( 
+                                <MicOff 
+                                    fontSize="small" 
+                                    color="error"
+                                    sx={{ position: 'absolute', bottom: 4, right: 4 }}
+                                />
+                            )}
+                            {participant.role === 'owner' && (
+                                <Chip 
+                                    label="Host" 
+                                    size="small" 
+                                    color="primary"
+                                    sx={{ position: 'absolute', top: 4, left: 4 }}
+                                />
+                            )}
+                        </Paper>
+                    </Link>
+
+                    {isRoomOwner && !isSelf && (
+                        <Tooltip title="Manage User">
+                            <IconButton
+                                aria-label="manage user"
+                                aria-controls={open ? 'manage-user-menu' : undefined}
+                                aria-haspopup="true"
+                                aria-expanded={open ? 'true' : undefined}
+                                onClick={handleMenuClick}
+                                size="small"
+                                sx={{ 
+                                    position: 'absolute', 
+                                    top: 2, 
+                                    right: 2,
+                                    zIndex: 2,
+                                    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+                                    '&:hover': {
+                                        backgroundColor: 'rgba(255, 255, 255, 0.9)'
+                                    }
+                                }} 
+                            >
+                                <MoreVertIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                    <Menu
+                        id="manage-user-menu"
+                        anchorEl={anchorEl}
+                        open={open}
+                        onClose={handleMenuClose}
+                        MenuListProps={{
+                        'aria-labelledby': 'manage-user-button',
+                        }}
+                        anchorOrigin={{
+                            vertical: 'top',
+                            horizontal: 'right',
+                        }}
+                        transformOrigin={{
+                            vertical: 'top',
+                            horizontal: 'right',
                         }}
                     >
-                        {participant.displayName?.[0] || participant.username?.[0]}
-                    </Avatar>
-                    {speakingUsers.has(participant.userId) && !participant.isMuted && (
-                        <Box
-                            sx={{
-                                position: 'absolute',
-                                bottom: 8,
-                                right: -4,
-                                width: 16,
-                                height: 16,
-                                borderRadius: '50%',
-                                bgcolor: 'success.main',
-                                border: '2px solid',
-                                borderColor: 'background.paper'
-                            }}
-                        />
-                    )}
+                        <MenuItem onClick={onMuteToggle}>
+                            <ListItemIcon>
+                                {isMuted ? <VolumeUpIcon fontSize="small" /> : <VolumeOffIcon fontSize="small" />}
+                            </ListItemIcon>
+                            {isMuted ? 'Unmute User' : 'Mute User'}
+                        </MenuItem>
+                        <MenuItem onClick={onRemoveUser} sx={{ color: 'warning.dark' }}>
+                            <ListItemIcon>
+                                <PersonRemoveIcon fontSize="small" color="warning" />
+                            </ListItemIcon>
+                            Remove User
+                        </MenuItem>
+                        <MenuItem onClick={onBanUser} sx={{ color: 'error.main' }}>
+                            <ListItemIcon>
+                                <BanIcon fontSize="small" color="error" />
+                            </ListItemIcon>
+                            Ban User
+                        </MenuItem>
+                    </Menu>
                 </Box>
-                <Typography variant="caption" display="block">
-                    {participant.displayName || participant.username}
-                </Typography>
-                {/* Only show mute icon if participant is muted AND (it's not the current user OR the current user is connected) */}
-                {participant.isMuted && (participant.userId !== currentUser?.uid || isAudioConnected) && (
-                    <MicOff 
-                        fontSize="small" 
-                        color="error"
-                        sx={{ position: 'absolute', top: 4, right: 4 }}
-                    />
-                )}
-                {participant.role === 'owner' && (
-                    <Chip 
-                        label="Host" 
-                        size="small" 
-                        color="primary"
-                        sx={{ position: 'absolute', top: 4, left: 4 }}
-                    />
-                )}
-            </Paper>
-        </Grid>
-    );
+            </Grid>
+        );
+    };
 
     const renderRoomContent = () => (
         <Box sx={{ flexGrow: 1, p: 2, overflowY: 'auto' }}>
@@ -339,7 +545,7 @@ const SideRoomComponent: React.FC = () => {
             <Grid container spacing={2}>
                 {onlineParticipants.map((participant) => (
                     <ParticipantGridItem 
-                        key={participant.userId} 
+                        key={participant.userId}
                         participant={participant}
                     />
                 ))}
@@ -402,6 +608,31 @@ const SideRoomComponent: React.FC = () => {
         }
     }, [roomId, isRoomOwner, navigate]);
 
+    // 4. Handler for the "Upload Sound" button click
+    const handleUploadSoundClick = () => {
+        // Trigger the hidden file input
+        fileInputRef.current?.click();
+    };
+
+    // 5. Handler for when a file is selected in the input
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            console.log('Selected sound file:', file);
+            setSelectedSoundFile(file);
+            // --- Next Step: Start upload process here ---
+            // e.g., uploadFileToStorage(file);
+            toast(`Selected: ${file.name}. Upload coming soon!`); // Use default toast
+
+            // Reset the input value so the user can select the same file again if needed
+             if (fileInputRef.current) {
+                 fileInputRef.current.value = '';
+             }
+        } else {
+            setSelectedSoundFile(null);
+        }
+    };
+
     // Update the renderRoomHeader function
     const renderRoomHeader = () => (
         <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
@@ -463,7 +694,7 @@ const SideRoomComponent: React.FC = () => {
                 <Typography variant="caption" color="text.secondary">
                     {onlineParticipants.length} Online
                 </Typography>
-                <Box sx={{ display: 'flex', gap: 1 }}>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                     {isAudioConnected ? (
                         <>
                             <Button
@@ -485,6 +716,28 @@ const SideRoomComponent: React.FC = () => {
                             >
                                 Leave Audio
                             </Button>
+                            <Tooltip title="Play Sound Effect (WIP)">
+                                <span>
+                                    <IconButton
+                                        onClick={handlePlayBeepClick}
+                                        disabled={isProcessing}
+                                        size="small"
+                                        color="info"
+                                    >
+                                        <MusicNote />
+                                    </IconButton>
+                                </span>
+                            </Tooltip>
+                            <Tooltip title="Upload Sound (WIP)">
+                                <IconButton
+                                    onClick={handleUploadSoundClick}
+                                    disabled={isProcessing}
+                                    size="small"
+                                    color="secondary"
+                                >
+                                    <UploadFile />
+                                </IconButton>
+                            </Tooltip>
                         </>
                     ) : (
                         <Button
@@ -500,8 +753,68 @@ const SideRoomComponent: React.FC = () => {
                     )}
                 </Box>
             </Box>
+
+            {/* --- Add Hidden File Input somewhere (doesn't matter where visually) --- */}
+            <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="audio/*"
+                style={{ display: 'none' }}
+                id="sound-upload-input"
+            />
         </Box>
     );
+
+    // --- Moderation Handlers (To be defined in SideRoomComponent) --- 
+    const handleForceMuteToggle = useCallback(async (targetUserId: string, currentMuteState: boolean) => {
+        if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid) return;
+        console.log(`Owner toggling mute for ${targetUserId}. Currently muted: ${currentMuteState}`);
+        
+        const newMuteState = !currentMuteState;
+        const targetPresenceRef = doc(db, 'sideRooms', roomId, 'presence', targetUserId);
+        
+        try {
+            // Update Firestore state first for immediate UI feedback
+            await updateDoc(targetPresenceRef, { isMuted: newMuteState });
+            
+            // Send signal via audio service
+            if (newMuteState) {
+                audioService.sendForceMute(roomId, targetUserId);
+            } else {
+                audioService.sendForceUnmute(roomId, targetUserId);
+            }
+            toast.success(`User ${newMuteState ? 'muted' : 'unmuted'}.`);
+        } catch (error) {
+             console.error(`Error toggling mute for ${targetUserId}:`, error);
+             toast.error('Failed to update mute status.');
+        }
+    }, [isRoomOwner, roomId, currentUser?.uid, db]); // Added db dependency
+
+    const handleForceRemove = useCallback((targetUserId: string, targetUsername?: string) => {
+        if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid) return;
+        
+        const name = targetUsername || 'this user';
+        if (window.confirm(`Are you sure you want to remove ${name} from the room?`)) {
+             console.log(`Owner removing user ${targetUserId} from room ${roomId}`);
+             // Send signal via audio service - server will handle removal and notifications
+             audioService.sendForceRemove(roomId, targetUserId);
+             toast.success(`Removing ${name}...`);
+        }
+    }, [isRoomOwner, roomId, currentUser?.uid]);
+
+    // Add Ban Handler
+    const handleForceBan = useCallback((targetUserId: string, targetUsername?: string) => {
+        if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid) return;
+        
+        const name = targetUsername || 'this user';
+        if (window.confirm(`Are you sure you want to BAN ${name} from the room? They will be removed and unable to rejoin.`)) {
+             console.log(`Owner banning user ${targetUserId} from room ${roomId}`);
+             // Send signal via audio service - server will handle DB update and removal
+             audioService.sendForceBan(roomId, targetUserId);
+             toast.success(`Banning ${name}...`);
+        }
+    }, [isRoomOwner, roomId, currentUser?.uid]);
 
     // --- Loading & Error States ---
     if (loading) {

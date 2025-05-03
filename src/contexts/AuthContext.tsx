@@ -71,13 +71,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Auth state changed:', firebaseUser ? 'User logged in' : 'No user');
       if (firebaseUser) {
         try {
-          // Ensure Firebase user data is fresh before fetching Firestore doc
           console.log('Reloading Firebase user data...');
           await firebaseUser.reload();
-          const freshFirebaseUser = auth.currentUser; // Use the reloaded user
+          const freshFirebaseUser = auth.currentUser;
           console.log('Firebase user data reloaded.');
 
-          if (!freshFirebaseUser) { // Check again after reload
+          if (!freshFirebaseUser) {
             console.log('User is null after reload, signing out.');
             setUser(null);
             setLoading(false);
@@ -86,27 +85,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           console.log('Fetching Firestore document for:', freshFirebaseUser.uid);
           const userDoc = await getDoc(doc(db, 'users', freshFirebaseUser.uid));
+          
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
             setUser({
-              ...freshFirebaseUser, // Use freshFirebaseUser
+              ...freshFirebaseUser,
               profile: userData
             });
             console.log('User data loaded successfully:', freshFirebaseUser.uid);
+            setLoading(false);
           } else {
             console.error('User document not found in Firestore:', freshFirebaseUser.uid);
-            setUser(null); // Log out if Firestore profile missing
-            firebaseSignOut(auth); // Explicitly sign out
+            setUser(null);
+            firebaseSignOut(auth);
             console.log('Signed out due to missing Firestore document.');
+            setLoading(false);
           }
         } catch (error) {
           console.error('Error loading user data:', error);
           setUser(null);
+          setLoading(false);
         }
       } else {
         setUser(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => {

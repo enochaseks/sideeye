@@ -551,10 +551,10 @@ const SadeAIPage: React.FC = () => {
 
         {!loading && !activeGame && !breathingState?.active && messages.length <= 1 && (
              <Box sx={{
-                 pt: 1, // Add some padding top
-                 pb: 1.5, // Add some padding bottom
-                 mb: 2, // Keep margin bottom
-                 overflow: 'hidden', // Hide potential vertical overflow from scrollbar area
+                 pt: 1,
+                 pb: 1.5,
+                 mb: 2,
+                 overflow: 'hidden', 
              }}>
                  <Typography variant="caption" sx={{ width: '100%', textAlign: 'center', color: 'text.secondary', mb: 1 }} >Try asking:</Typography>
                  <Box sx={{
