@@ -56,7 +56,9 @@ import {
     VolumeOff as VolumeOffIcon,
     VolumeUp as VolumeUpIcon,
     PersonRemove as PersonRemoveIcon,
-    Block as BanIcon
+    Block as BanIcon,
+    Chat as ChatIcon,
+    Search as SearchIcon
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile } from '../../types/index';
 import RoomForm from './RoomForm';
@@ -64,6 +66,12 @@ import { audioService } from '../../services/audioService';
 import AudioDeviceSelector from '../AudioDeviceSelector';
 import { storage } from '../../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+// Define type for Sade AI messages
+type SadeMessage = { sender: 'user' | 'ai', text: string };
+
+// Handler function type for clearing chat
+type ClearChatHandler = () => void;
 
 interface PresenceData {
     userId: string;
@@ -108,6 +116,13 @@ const SideRoomComponent: React.FC = () => {
     const [speakingUsers, setSpeakingUsers] = useState<Set<string>>(new Set());
     const [selectedSoundFile, setSelectedSoundFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // --- State for Sade AI Chat Integration ---
+    const [showSadeChat, setShowSadeChat] = useState(false);
+    const [sadeMessages, setSadeMessages] = useState<SadeMessage[]>([]);
+    const [sadeInput, setSadeInput] = useState('');
+    const [sadeLoading, setSadeLoading] = useState(false);
+    const sadeMessagesEndRef = useRef<null | HTMLDivElement>(null); // Ref for scrolling
 
     // --- Memos ---
     const isRoomOwner = useMemo(() => room?.ownerId === currentUser?.uid, [room?.ownerId, currentUser?.uid]);
@@ -652,6 +667,23 @@ const SideRoomComponent: React.FC = () => {
                             <ShareIcon />
                         </IconButton>
                     </Tooltip>
+                    <Tooltip title="Chat with Sade AI">
+                        <Avatar 
+                            src="/images/sade-avatar.jpg" 
+                            alt="Sade AI Chat"
+                            onClick={() => setShowSadeChat(true)} 
+                            sx={{ 
+                                width: 32, 
+                                height: 32, 
+                                cursor: 'pointer', 
+                                '&:hover': { 
+                                    opacity: 0.8 
+                                },
+                                border: '1px solid', // Optional: Add a border
+                                borderColor: 'primary.light' // Optional: Border color
+                            }}
+                        />
+                    </Tooltip>
                     {isRoomOwner && (
                         <>
                             <Tooltip title="Room Settings">
@@ -816,6 +848,118 @@ const SideRoomComponent: React.FC = () => {
         }
     }, [isRoomOwner, roomId, currentUser?.uid]);
 
+    // --- Sade AI Chat: Scrolling ---
+    const scrollToSadeBottom = () => {
+        // Add a slight delay to allow the DOM to update before scrolling
+        setTimeout(() => {
+            sadeMessagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+        }, 100);
+    };
+    useEffect(() => {
+        if (showSadeChat) { // Only scroll when chat is open
+            scrollToSadeBottom();
+        }
+    }, [sadeMessages, showSadeChat]); // Depend on showSadeChat as well
+
+    // --- Sade AI Chat: History Persistence ---
+    useEffect(() => {
+        // Load chat history from localStorage on mount
+        const saved = localStorage.getItem('sideroom_sade_chat_history');
+        if (saved) {
+            try {
+                const parsedMessages = JSON.parse(saved);
+                // Basic validation
+                if (Array.isArray(parsedMessages) && parsedMessages.every(m => typeof m === 'object' && m !== null && 'sender' in m && 'text' in m)) {
+                    setSadeMessages(parsedMessages);
+                } else {
+                     console.warn("[SideRoomComponent - SadeAI History] Invalid data found in localStorage.");
+                     localStorage.removeItem('sideroom_sade_chat_history'); // Clear invalid data
+                }
+            } catch (error) {
+                 console.error("[SideRoomComponent - SadeAI History] Error parsing saved history:", error);
+                 localStorage.removeItem('sideroom_sade_chat_history'); // Clear corrupted data
+            }
+        }
+    }, []); // Run only once on mount
+
+    useEffect(() => {
+        // Save chat history to localStorage whenever messages change
+        // Add a check to prevent saving the initial empty array if nothing was loaded
+        if (sadeMessages.length > 0 || localStorage.getItem('sideroom_sade_chat_history')) {
+            localStorage.setItem('sideroom_sade_chat_history', JSON.stringify(sadeMessages));
+        }
+    }, [sadeMessages]);
+
+    // --- Sade AI Chat: sendMessage Function ---
+    const sendSadeMessage = async (messageToSend: string = sadeInput, forceSearch: boolean = false) => {
+        const trimmedMessage = messageToSend.trim();
+        if (!trimmedMessage) return;
+
+        const userMessage: SadeMessage = { sender: 'user' as const, text: trimmedMessage }; // Use trimmed message
+        setSadeMessages(msgs => [...msgs, userMessage]);
+        setSadeInput('');
+        setSadeLoading(true);
+
+        try {
+            console.log("[SideRoomComponent - SadeAI] Sending message to backend.");
+
+            const backendBaseUrl = process.env.REACT_APP_API_URL;
+            if (!backendBaseUrl) {
+                console.error("[SideRoomComponent - SadeAI] ERROR: REACT_APP_API_URL is not defined.");
+                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
+                setSadeLoading(false);
+                return;
+            }
+            const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+            const requestBody = {
+                message: trimmedMessage, // Send trimmed message
+                forceSearch: forceSearch // Include forceSearch flag
+            };
+            console.log("[SideRoomComponent - SadeAI] Sending HTTP request body:", requestBody);
+            const fetchOptions = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+            };
+            const res = await fetch(apiUrl, fetchOptions);
+            if (!res.ok) {
+                let errorMsg = `HTTP error! status: ${res.status}`;
+                try {
+                    const errorData = await res.json();
+                    errorMsg = errorData.error || errorMsg;
+                } catch (e) { /* Ignore */ }
+                throw new Error(errorMsg);
+            }
+            const data = await res.json();
+            console.log("[SideRoomComponent - SadeAI] HTTP Backend response data:", data);
+
+            if (data.response) {
+                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+            } else if (data.error) {
+                 console.error("[SideRoomComponent - SadeAI] Backend returned error:", data.error);
+                 setSadeMessages(msgs => [...msgs, { sender: 'ai', text: `Sorry, there was an error: ${data.error}` }]);
+            } else {
+                console.error("[SideRoomComponent - SadeAI] Received unexpected HTTP response structure:", data);
+                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I got a bit confused there." }]);
+            }
+
+        } catch (err: any) {
+            console.error("[SideRoomComponent - SadeAI] sendMessage Error:", err);
+            setSadeMessages(msgs => [...msgs, { sender: 'ai', text: `Sorry, there was an error: ${err.message || 'Unknown error'}` }]);
+        } finally {
+            setSadeLoading(false);
+            // Ensure scrolling happens after state update and potential re-render
+            scrollToSadeBottom(); 
+        }
+    };
+
+    // --- Sade AI Chat: Clear Chat Handler ---
+    const handleClearSadeChat: ClearChatHandler = () => {
+        setSadeMessages([]); // Clear state
+        localStorage.removeItem('sideroom_sade_chat_history'); // Clear storage
+        toast.success("Sade AI chat cleared"); // Optional feedback
+    };
+
     // --- Loading & Error States ---
     if (loading) {
         return (
@@ -916,6 +1060,96 @@ const SideRoomComponent: React.FC = () => {
                         Copy Link
                     </Button>
                 </DialogActions>
+            </Dialog>
+
+            {/* --- Sade AI Chat Dialog --- */}
+            <Dialog 
+                open={showSadeChat} 
+                onClose={() => setShowSadeChat(false)} 
+                fullWidth 
+                maxWidth="sm" 
+                aria-labelledby="sade-ai-chat-dialog-title"
+            >
+                <DialogTitle id="sade-ai-chat-dialog-title">Chat with Sade AI ✨</DialogTitle>
+                <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', maxHeight: '70vh' }}>
+                    {/* Chat messages will go here */}
+                    <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 1, mb: 1 }}>
+                        {/* Display Sade AI messages */}
+                        {sadeMessages.length === 0 && (
+                            <Typography variant="caption" color="text.secondary" align="center" sx={{ display: 'block', mt: 4 }}>
+                                Start chatting with Sade AI...
+                            </Typography>
+                        )}
+                        {sadeMessages.map((msg, idx) => (
+                            <Box
+                                key={idx}
+                                sx={{
+                                    display: 'flex',
+                                    justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start',
+                                    mb: 1.5,
+                                }}
+                            >
+                                {msg.sender === 'ai' && (
+                                    <Avatar
+                                        src="/images/sade-avatar.jpg" // Ensure this path is correct relative to your public folder
+                                        alt="Sade AI Avatar"
+                                        sx={{ width: 32, height: 32, mr: 1 }}
+                                    />
+                                )}
+                                <Box
+                                    sx={{
+                                        bgcolor: msg.sender === 'user' ? 'primary.light' : '#f0f0f0',
+                                        color: msg.sender === 'user' ? 'primary.contrastText' : 'text.primary',
+                                        borderRadius: msg.sender === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                                        px: 1.5,
+                                        py: 1,
+                                        maxWidth: '80%',
+                                        fontSize: '0.95rem',
+                                        wordBreak: 'break-word',
+                                    }}
+                                >
+                                    {msg.text}
+                                </Box>
+                            </Box>
+                        ))}
+                         {sadeLoading && <CircularProgress size={20} sx={{ display: 'block', mx: 'auto', my: 1 }} />}
+                         <div ref={sadeMessagesEndRef} /> {/* Target for scrolling */}
+                    </Box>
+                    {/* Input area */}
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 'auto' }}>
+                        <TextField 
+                            fullWidth 
+                            placeholder="Type message..." 
+                            size="small" 
+                            value={sadeInput} 
+                            onChange={e => setSadeInput(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && sadeInput.trim()) sendSadeMessage(); }}
+                            disabled={sadeLoading}
+                        />
+                        <Button 
+                            variant="contained" 
+                            onClick={() => sendSadeMessage()} 
+                            disabled={sadeLoading || !sadeInput.trim()}
+                        >
+                            Send
+                        </Button>
+                        {/* Add Search Button */}
+                        <IconButton
+                            color="primary"
+                            onClick={() => sendSadeMessage(sadeInput, true)} // Call with forceSearch=true
+                            disabled={sadeLoading || !sadeInput.trim()}
+                            size="small"
+                            sx={{ border: '1px solid', borderColor: 'primary.light', ml: 0.5 }}
+                            title="Search the web for this query"
+                        >
+                            <SearchIcon fontSize="small"/>
+                        </IconButton>
+                    </Box>
+                </DialogContent>
+                <DialogActions>
+                     <Button onClick={handleClearSadeChat} disabled={sadeMessages.length === 0}>Clear Chat</Button>
+                     <Button onClick={() => setShowSadeChat(false)}>Close</Button>
+                 </DialogActions>
             </Dialog>
         </Box>
     );
