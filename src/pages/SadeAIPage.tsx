@@ -3,6 +3,8 @@ import { Box, Typography, Paper, TextField, Button, CircularProgress, Divider, C
 import SearchIcon from '@mui/icons-material/Search';
 import { io, Socket } from "socket.io-client";
 import { useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import TypingIndicator from '../components/TypingIndicator';
 
 // Define step type
 type BreathingStep = { text: string, duration: number };
@@ -29,6 +31,7 @@ type GameState = {
 type Message = { sender: 'user' | 'ai', text: string };
 
 const SadeAIPage: React.FC = () => {
+  const { currentUser } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -265,6 +268,14 @@ const SadeAIPage: React.FC = () => {
   const sendMessage = async (messageToSend: string = input, forceSearch: boolean = false) => {
     if (!messageToSend.trim()) return;
 
+    // --- Add check for currentUser --- 
+    if (!currentUser) {
+        console.error("[SadeAIPage] Error: No user logged in. Cannot send message.");
+        setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I can't send messages if you're not logged in." }]);
+        return; // Prevent sending if no user
+    }
+    // --- End check ---
+
     const userMessage: Message = { sender: 'user' as const, text: messageToSend };
     setMessages(msgs => [...msgs, userMessage]);
     setInput('');
@@ -322,11 +333,20 @@ const SadeAIPage: React.FC = () => {
           return; // Exit on config error
       }
       const apiUrl = `${backendBaseUrl}/api/sade-ai`;
+
+      // --- MODIFICATION HERE ---
+      // Get the last 10 messages from the state
+      const recentHistory = messages.slice(-10); 
+      
       const requestBody = {
-          message: messageToSend,
-          forceSearch: forceSearch
+          message: messageToSend,   // The new message from the user
+          history: recentHistory,   // The last 10 messages (user and AI)
+          forceSearch: forceSearch, // The flag for web search
+          userId: currentUser.uid   // Add the user ID
       };
-      console.log("[Frontend] Sending HTTP request body:", requestBody);
+      // --- END MODIFICATION ---
+
+      console.log("[Frontend] Sending HTTP request body:", requestBody); 
       const fetchOptions = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -545,7 +565,34 @@ const SadeAIPage: React.FC = () => {
               </Box>
             </Box>
           ))}
-          {loading && !activeGame && <CircularProgress size={24} sx={{ display: 'block', mx: 'auto', mt: 2 }} />}
+          {/* Show Typing Indicator when loading and not in a game/exercise */}
+          {loading && !activeGame && !breathingState?.active && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'flex-start', // Align avatar top
+                justifyContent: 'flex-start',
+                mb: 1.5, // Match message bottom margin
+              }}
+            >
+              <Avatar
+                src="/images/sade-avatar.jpg"
+                alt="Sade AI Avatar"
+                sx={{ width: 36, height: 36, mr: 1.5 }} // Match message avatar style
+              />
+              <Box
+                sx={{
+                  bgcolor: '#f3f6fb', // Match AI message bubble background
+                  borderRadius: '18px 18px 18px 4px', // Match AI message bubble radius
+                  px: 1, // Adjust padding for indicator
+                  py: 0.5, // Adjust padding for indicator
+                  display: 'inline-block', // Ensure background fits content
+                }}
+              >
+                <TypingIndicator />
+              </Box>
+            </Box>
+          )}
           <div ref={messagesEndRef} />
         </Box>
 
