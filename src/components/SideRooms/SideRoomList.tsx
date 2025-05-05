@@ -71,13 +71,12 @@ interface SideRoomData {
 
 const GENRES = [
   'All',
-  'Gaming',
+  'ASMR',
+  'Just Chatting',
   'Music',
-  'Art',
-  'Technology',
-  'Sports',
-  'Education',
-  'Entertainment',
+  'Gossip',
+  'Podcasts',
+  'Shows',
   'Social',
   'Other'
 ];
@@ -111,7 +110,11 @@ const SideRoomList: React.FC = () => {
     try {
       setLoading(true);
       const sideRoomsRef = collection(db, 'sideRooms');
-      const q = query(sideRoomsRef, orderBy('createdAt', 'desc'));
+      const q = query(
+        sideRoomsRef,
+        where("deleted", "!=", true),
+        orderBy('createdAt', 'desc')
+      );
       
       const unsubscribe = onSnapshot(q, 
         (snapshot) => {
@@ -135,9 +138,7 @@ const SideRoomList: React.FC = () => {
             } as SideRoomData;
           });
           
-          // Filter public rooms on the client side
-          const publicRooms = roomsData.filter(room => !room.isPrivate);
-          setRooms(publicRooms);
+          setRooms(roomsData);
           setLoading(false);
           setError(null);
         },
@@ -230,7 +231,7 @@ const SideRoomList: React.FC = () => {
             username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
             avatar: currentUser.photoURL || '',
             role: 'viewer',
-            joinedAt: serverTimestamp()
+            joinedAt: Timestamp.now()
           };
           transaction.update(roomRef, {
             viewers: arrayUnion(newViewer),
@@ -274,7 +275,7 @@ const SideRoomList: React.FC = () => {
             username: currentUser.displayName || currentUser.email?.split('@')[0] || '',
             avatar: currentUser.photoURL || '',
             role: 'viewer',
-            joinedAt: serverTimestamp()
+            joinedAt: Timestamp.now()
           };
           transaction.update(roomRef, {
             viewers: arrayUnion(newViewer),

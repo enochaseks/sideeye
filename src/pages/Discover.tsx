@@ -34,11 +34,7 @@ import {
   Search as SearchIcon,
   PersonAdd as PersonAddIcon,
   Message as MessageIcon,
-  People as PeopleIcon,
-  Favorite as FavoriteIcon,
-  Comment as CommentIcon,
-  Store as StoreIcon,
-  Share as ShareIcon
+  People as PeopleIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -56,13 +52,9 @@ import {
   serverTimestamp,
   addDoc,
   updateDoc,
-  arrayRemove,
-  arrayUnion,
   getDoc,
   DocumentSnapshot,
   onSnapshot,
-  runTransaction,
-  increment,
   startAt,
   endAt
 } from 'firebase/firestore';
@@ -116,17 +108,6 @@ interface FirestoreUser extends DocumentData {
   createdAt: Timestamp;
 }
 
-interface FirestoreVideo extends DocumentData {
-  id: string;
-  title: string;
-  description?: string;
-  username: string;
-  userId: string;
-  url: string;
-  thumbnailUrl?: string;
-  timestamp: Timestamp;
-}
-
 interface FirestoreRoom extends DocumentData {
   id: string;
   name: string;
@@ -141,30 +122,11 @@ interface FirestoreRoom extends DocumentData {
   thumbnailUrl?: string; // Add thumbnailUrl
 }
 
-interface Video {
-  id: string;
-  url: string;
-  userId: string;
-  username: string;
-  likes: number;
-  comments: number;
-  timestamp: any;
-  thumbnailUrl?: string;
-}
-
-interface PresenceData {
-  id: string;
-  role?: 'owner' | 'viewer';
-  isMuted?: boolean;
-  isOnline: boolean;
-}
-
 const Discover: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [rooms, setRooms] = useState<Room[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
-  const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [following, setFollowing] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
@@ -178,6 +140,18 @@ const Discover: React.FC = () => {
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = React.useRef<HTMLDivElement>(null);
   const [roomListeners, setRoomListeners] = useState<(() => void)[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+
+  const categories = [
+    'ASMR',
+    'Just Chatting',
+    'Music',
+    'Gossip',
+    'Podcasts',
+    'Shows',
+    'Social',
+    'Other'
+  ];
 
   const fetchDefaultUsers = async () => {
     try {
@@ -222,6 +196,7 @@ const Discover: React.FC = () => {
       const roomsRef = collection(db, 'sideRooms');
       const q = firestoreQuery(
         roomsRef,
+        where("deleted", "!=", true),
         orderBy('lastActive', 'desc'),
         limit(20)
       );
@@ -267,8 +242,8 @@ const Discover: React.FC = () => {
         setupRoomListener(room.id);
       });
 
-      // Set up a listener for new rooms
-      const roomsListener = onSnapshot(q, (snapshot) => {
+      // Set up a listener for new rooms (also filter deleted)
+      const roomsListener = onSnapshot(firestoreQuery(roomsRef, where("deleted", "!=", true), orderBy('lastActive', 'desc'), limit(20)), (snapshot) => {
         snapshot.docChanges().forEach(async (change) => {
           if (change.type === 'added') {
             const data = change.doc.data();
@@ -329,32 +304,10 @@ const Discover: React.FC = () => {
   useEffect(() => {
     fetchDefaultUsers();
     fetchRooms();
-    fetchVideos();
     if (currentUser) {
       fetchFollowing();
     }
   }, [currentUser]);
-
-  const fetchVideos = async () => {
-    try {
-      const videosRef = collection(db, 'videos');
-      const q = firestoreQuery(
-        videosRef,
-        orderBy('timestamp', 'desc'),
-        limit(20)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const videosData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Video[];
-      
-      setVideos(videosData);
-    } catch (error) {
-      console.error('Error fetching videos:', error);
-    }
-  };
 
   const fetchFollowing = async () => {
     if (!currentUser) return;
@@ -418,163 +371,6 @@ const Discover: React.FC = () => {
     }
   };
 
-  const handleVibitLike = async (videoId: string, authorIdFromProp: string) => {
-    if (!currentUser || !db) return;
-    console.log(`Discover: handleVibitLike triggered for videoId: ${videoId}`);
-    const videoRef = doc(db, 'videos', videoId);
-    const userId = currentUser.uid;
-    const notificationCollectionRef = collection(db, 'notifications');
-
-    try {
-      let videoAuthorId: string | null = null;
-      await runTransaction(db, async (transaction) => {
-        const videoDoc = await transaction.get(videoRef);
-        if (!videoDoc.exists()) {
-          throw new Error("Video not found");
-        }
-        const videoData = videoDoc.data();
-        videoAuthorId = videoData.userId;
-        let likedBy = videoData.likedBy || [];
-
-        if (likedBy.includes(userId)) {
-          console.log('[Transaction] Discover: Unliking vibit...');
-          likedBy = likedBy.filter((uid: string) => uid !== userId);
-          transaction.update(videoRef, { likedBy: likedBy, likes: likedBy.length });
-        } else {
-          console.log('[Transaction] Discover: Liking vibit...');
-          likedBy = [...likedBy, userId];
-          transaction.update(videoRef, { likedBy: likedBy, likes: likedBy.length });
-        }
-      });
-      console.log('Discover: Vibit like transaction successful.');
-
-      // Create notification only if the user just liked it AND it's not their own video
-      const videoDocAfter = await getDoc(videoRef);
-      if (videoDocAfter.exists()) {
-        const videoData = videoDocAfter.data();
-        const likedBy = videoData.likedBy || [];
-        if (likedBy.includes(userId) && videoAuthorId && videoAuthorId !== userId) { 
-          console.log('Discover: Creating vibit like notification...');
-          const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
-          const notificationPayload = {
-            type: 'vibit_like',
-            senderId: userId,
-            senderName: senderName,
-            senderAvatar: currentUser.photoURL || '',
-            recipientId: videoAuthorId,
-            postId: videoId,
-            content: `${senderName} liked your vibit`,
-            createdAt: serverTimestamp(),
-            isRead: false
-          };
-          await addDoc(notificationCollectionRef, notificationPayload);
-          console.log('Discover: Vibit like notification created.');
-        }
-      }
-
-    } catch (error) {
-      console.error('Discover: Error toggling vibit like:', error);
-      toast.error('Failed to update like status');
-    }
-  };
-
-  const handleVibitComment = async (videoId: string, content: string) => {
-    if (!currentUser || !db || !content.trim()) return;
-    console.log(`Discover: handleVibitComment triggered for videoId: ${videoId}`);
-    
-    const videoRef = doc(db, 'videos', videoId);
-    const commentsCollectionRef = collection(db, `videos/${videoId}/comments`);
-    const userId = currentUser.uid;
-    const notificationCollectionRef = collection(db, 'notifications');
-    let newCommentRefId: string | null = null;
-    let videoAuthorId: string | null = null;
-
-    try {
-       // Update comment count in a transaction
-      await runTransaction(db, async (transaction) => {
-        const videoDoc = await transaction.get(videoRef);
-        if (!videoDoc.exists()) {
-          throw new Error("Video not found");
-        }
-        console.log('[Transaction] Discover: Incrementing vibit comment count...');
-        videoAuthorId = videoDoc.data().userId;
-        const currentComments = videoDoc.data().comments || 0; 
-        transaction.update(videoRef, { comments: increment(currentComments + 1) });
-      });
-
-      // Add the comment document outside the transaction
-      console.log('Discover: Adding vibit comment document...');
-      const commentData = {
-        content: content.trim(),
-        authorId: userId,
-        authorName: currentUser.displayName || 'Anonymous',
-        authorAvatar: currentUser.photoURL || '',
-        timestamp: serverTimestamp() as Timestamp,
-        likes: 0
-      };
-      const newCommentRef = await addDoc(commentsCollectionRef, commentData);
-      newCommentRefId = newCommentRef.id;
-      console.log('Discover: Vibit comment document added.');
-
-      // Create notification for video owner (if not self)
-      if (videoAuthorId && videoAuthorId !== userId) { 
-        console.log('Discover: Creating vibit comment notification...');
-        const senderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
-        const notificationPayload = {
-          type: 'vibit_comment',
-          senderId: userId,
-          senderName: senderName,
-          senderAvatar: currentUser.photoURL || '',
-          recipientId: videoAuthorId,
-          postId: videoId,
-          commentId: newCommentRefId,
-          content: `${senderName} commented on your vibit: "${content.trim()}"`,
-          createdAt: serverTimestamp(),
-          isRead: false
-        };
-        await addDoc(notificationCollectionRef, notificationPayload);
-        console.log('Discover: Vibit comment notification created.');
-
-        // --- Mention Notification Logic --- 
-        console.log('Discover: Checking for mentions in vibit comment...');
-        const mentionRegex = /@(\w+)/g;
-        const mentions = content.match(mentionRegex);
-        if (mentions) {
-          for (const mention of mentions) {
-            const username = mention.substring(1);
-            const userQuery = firestoreQuery(collection(db, 'users'), where('username', '==', username), limit(1));
-            const userSnapshot = await getDocs(userQuery);
-            if (!userSnapshot.empty) {
-              const mentionedUser = userSnapshot.docs[0];
-              if (mentionedUser.id !== userId && mentionedUser.id !== videoAuthorId) { 
-                console.log(`Discover: Creating vibit mention notification for ${username}...`);
-                const mentionSenderName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone';
-                const mentionNotificationPayload = {
-                  type: 'vibit_mention',
-                  senderId: userId,
-                  senderName: mentionSenderName,
-                  senderAvatar: currentUser.photoURL || '',
-                  recipientId: mentionedUser.id,
-                  postId: videoId,
-                  commentId: newCommentRefId,
-                  content: `${mentionSenderName} mentioned you in a vibit comment: "${content.trim()}"`,
-                  createdAt: serverTimestamp(),
-                  isRead: false
-                };
-                await addDoc(notificationCollectionRef, mentionNotificationPayload);
-                console.log(`Discover: Vibit mention notification created for ${username}.`);
-              }
-            }
-          }
-        } // --- End Mention Logic ---
-      }
-
-    } catch (error) {
-      console.error('Discover: Error adding vibit comment:', error);
-      toast.error('Failed to add comment');
-    }
-  };
-
   const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
   };
@@ -612,10 +408,11 @@ const Discover: React.FC = () => {
           limit(20)
         );
 
-        // Search for rooms
+        // Search for rooms (also filter deleted)
         const roomsRef = collection(db, 'sideRooms');
         const roomsQuery = firestoreQuery(
           roomsRef,
+          where("deleted", "!=", true),
           where('name_lower', '>=', searchTerm),
           where('name_lower', '<=', searchTerm + '\uf8ff'),
           limit(20)
@@ -810,12 +607,18 @@ const Discover: React.FC = () => {
       const activeUsers = presenceSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      })) as PresenceData[];
+      }));
       
       // Find the room owner in the active users
-      const roomOwner = activeUsers.find(user => user.role === 'owner');
+      // We assume 'user' objects coming from Firestore presence have a 'role' property.
+      // Using 'as any' here suppresses the TypeScript error temporarily.
+      // Ideally, the 'activeUsers' array should be strongly typed where it's created.
+      const roomOwner = activeUsers.find(user => (user as any).role === 'owner');
+      
       // Ensure isLive is always a boolean
-      const isLive = Boolean(roomOwner && !roomOwner.isMuted);
+      // We assume the 'roomOwner', if found, has an 'isMuted' property.
+      // Using 'as any' again. The Boolean() conversion handles cases where roomOwner is null/undefined.
+      const isLive = Boolean(roomOwner && !(roomOwner as any).isMuted);
       
       // Update room's active users count and live status in Firestore
       updateDoc(roomRef, {
@@ -850,7 +653,17 @@ const Discover: React.FC = () => {
     });
 
     // Store both unsubscribe functions
-    setRoomListeners(prevListeners => [...prevListeners, presenceUnsubscribe, roomUnsubscribe]);
+    setRoomListeners(prevListeners => [...prevListeners, roomUnsubscribe]);
+  };
+
+  const handleCategoryChange = (event: React.SyntheticEvent, newValue: string) => {
+    setSelectedCategory(newValue);
+    // When changing category, ensure we are not in search view
+    if (isSearchView) {
+        setIsSearchView(false);
+        // Optionally refetch default rooms or rely on existing data
+        // fetchRooms(); // Uncomment if you want to refetch when category changes from search view
+    }
   };
 
   if (loading && !isSearchView) {
@@ -1023,6 +836,29 @@ const Discover: React.FC = () => {
               </Box>
             </ClickAwayListener>
           </Box>
+
+          {/* Category Tabs - Add this section */}
+          {!isSearchView && (
+             <Tabs
+               value={selectedCategory}
+               onChange={handleCategoryChange}
+               variant="scrollable"
+               scrollButtons="auto"
+               aria-label="room categories"
+               sx={{
+                 mb: 3, // Margin below tabs
+                 borderBottom: 1,
+                 borderColor: 'divider'
+               }}
+             >
+               <Tab label="All" value="All" />
+               {categories.map((category) => (
+                 <Tab key={category} label={category} value={category} />
+               ))}
+             </Tabs>
+          )}
+          {/* End of Category Tabs section */}
+
         </Container>
       </Box>
 
@@ -1279,7 +1115,13 @@ const Discover: React.FC = () => {
           </Box>
         ) : (
           <Grid container spacing={3}>
-            {rooms.map((room) => (
+            {rooms
+              .filter(room => {
+                const shouldInclude = selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory));
+                console.log(`Filtering Room: '${room.name}', Tags: ${JSON.stringify(room.tags)}, Selected: '${selectedCategory}', Included: ${shouldInclude}`);
+                return shouldInclude;
+              })
+              .map((room) => (
               <Grid item xs={12} sm={6} md={4} key={room.id}>
                 <Card 
                   sx={{ 

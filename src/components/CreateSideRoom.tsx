@@ -97,19 +97,13 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
         name: formData.name,
         description: formData.description,
         ownerId: currentUser.uid,
-        viewers: [{
-          userId: currentUser.uid,
-          username: currentUser.displayName || 'Anonymous',
-          avatar: currentUser.photoURL || '',
-          role: 'owner',
-          joinedAt: serverTimestamp()
-        }],
-        viewerCount: 1,
+        viewers: [],
+        viewerCount: 0,
         createdAt: serverTimestamp(),
         isPrivate: formData.isPrivate,
         password: formData.isPrivate ? formData.password : '',
         category: formData.category,
-        tags: formData.tags,
+        tags: Array.from(new Set([...formData.tags, formData.category])),
         lastActive: serverTimestamp(),
         isLive: false,
         liveParticipants: [],
@@ -118,23 +112,33 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
 
       const roomRef = await addDoc(collection(db, 'sideRooms'), roomData);
 
-      // Add room to user's rooms collection
+      const ownerViewerObject = {
+        userId: currentUser.uid,
+        username: currentUser.displayName || 'Anonymous',
+        avatar: currentUser.photoURL || '',
+        role: 'owner',
+        joinedAt: serverTimestamp()
+      };
+
+      await updateDoc(roomRef, {
+        viewers: arrayUnion(ownerViewerObject),
+        viewerCount: 1
+      });
+
       await setDoc(doc(db, 'users', currentUser.uid, 'sideRooms', roomRef.id), {
         name: formData.name,
         description: formData.description,
         role: 'owner',
-        joinedAt: serverTimestamp(),
+        joinedAt: Timestamp.now(),
         lastActive: serverTimestamp()
       });
 
-      // --- Thumbnail Upload Logic ---
       if (thumbnailFile) {
         toast.loading('Uploading thumbnail...', { id: 'thumbnail-upload' });
         try {
           const storageRef = ref(storage, `sideRoomThumbnails/${roomRef.id}/${thumbnailFile.name}`);
           const snapshot = await uploadBytes(storageRef, thumbnailFile);
           const thumbnailUrl = await getDownloadURL(snapshot.ref);
-          // Update the Firestore document with the URL
           await updateDoc(roomRef, { thumbnailUrl: thumbnailUrl });
           toast.dismiss('thumbnail-upload');
           toast.success('Thumbnail uploaded!');
@@ -142,10 +146,8 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
           console.error("Error uploading thumbnail:", uploadError);
           toast.dismiss('thumbnail-upload');
           toast.error("Failed to upload thumbnail, but room created.");
-          // Continue without thumbnail
         }
       }
-      // --- End Thumbnail Upload Logic ---
 
       toast.success('Room created successfully!');
       onClose();
@@ -228,15 +230,14 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
             onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
             label="Category"
           >
-            <MenuItem value="general">General</MenuItem>
-            <MenuItem value="gaming">Gaming</MenuItem>
-            <MenuItem value="music">Music</MenuItem>
-            <MenuItem value="movies">Movies & TV</MenuItem>
-            <MenuItem value="sports">Sports</MenuItem>
-            <MenuItem value="tech">Technology</MenuItem>
-            <MenuItem value="art">Art & Design</MenuItem>
-            <MenuItem value="education">Education</MenuItem>
-            <MenuItem value="other">Other</MenuItem>
+            <MenuItem value="Just Chatting">Just Chatting</MenuItem>
+            <MenuItem value="Music">Music</MenuItem>
+            <MenuItem value="Gossip">Gossip</MenuItem>
+            <MenuItem value="Podcasts">Podcasts</MenuItem>
+            <MenuItem value="Shows">Shows</MenuItem>
+            <MenuItem value="Social">Social</MenuItem>
+            <MenuItem value="ASMR">ASMR</MenuItem>
+            <MenuItem value="Other">Other</MenuItem>
           </Select>
           {!formData.category && <FormHelperText>Category is required</FormHelperText>}
         </FormControl>
@@ -315,7 +316,6 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
           />
         )}
 
-        {/* File Input for Thumbnail */}
         <Box sx={{ mt: 2, mb: 1 }}>
           <Button
             variant="outlined"
@@ -326,7 +326,7 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
             <input
               type="file"
               hidden
-              accept="image/*" // Accept only images
+              accept="image/*"
               onChange={handleFileChange}
             />
           </Button>

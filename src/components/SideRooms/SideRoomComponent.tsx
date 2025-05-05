@@ -126,7 +126,18 @@ const SideRoomComponent: React.FC = () => {
     const sadeMessagesEndRef = useRef<null | HTMLDivElement>(null); // Ref for scrolling
 
     // --- Memos ---
-    const isRoomOwner = useMemo(() => room?.ownerId === currentUser?.uid, [room?.ownerId, currentUser?.uid]);
+    // Add console logs to debug isRoomOwner
+    console.log('[SideRoomComponent Debug] Checking owner:');
+    console.log('  Current User UID:', currentUser?.uid);
+    console.log('  Room Owner ID:', room?.ownerId);
+    console.log('  Room Data:', room);
+
+    // Refined check: Ensure both IDs are valid strings before comparing
+    const isRoomOwner = useMemo(() => {
+        const currentUserId = currentUser?.uid;
+        const ownerUserId = room?.ownerId;
+        return !!currentUserId && !!ownerUserId && currentUserId === ownerUserId;
+    }, [room?.ownerId, currentUser?.uid]);
     const isViewer = useMemo(() => !!room?.viewers?.some((viewer: RoomMember) => viewer.userId === currentUser?.uid), [room?.viewers, currentUser?.uid]);
     const hasRoomAccess = isRoomOwner || isViewer;
     const onlineParticipants = useMemo(() => {

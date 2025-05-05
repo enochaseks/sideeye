@@ -12,7 +12,6 @@ import {
   IconButton,
   CircularProgress,
 } from '@mui/material';
-import { Favorite, Comment, Share } from '@mui/icons-material';
 import { db } from '../firebase';
 import { collection, query, orderBy, limit, getDocs, doc, getDoc, DocumentData } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
