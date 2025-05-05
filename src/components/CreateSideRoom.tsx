@@ -107,7 +107,8 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
         lastActive: serverTimestamp(),
         isLive: false,
         liveParticipants: [],
-        activeUsers: 0
+        activeUsers: 0,
+        deleted: false
       };
 
       const roomRef = await addDoc(collection(db, 'sideRooms'), roomData);
@@ -117,7 +118,7 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
         username: currentUser.displayName || 'Anonymous',
         avatar: currentUser.photoURL || '',
         role: 'owner',
-        joinedAt: serverTimestamp()
+        joinedAt: Timestamp.now()
       };
 
       await updateDoc(roomRef, {

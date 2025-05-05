@@ -196,7 +196,7 @@ const Discover: React.FC = () => {
       const roomsRef = collection(db, 'sideRooms');
       const q = firestoreQuery(
         roomsRef,
-        where("deleted", "!=", true),
+        where("deleted", "==", false),
         orderBy('lastActive', 'desc'),
         limit(20)
       );
@@ -243,7 +243,7 @@ const Discover: React.FC = () => {
       });
 
       // Set up a listener for new rooms (also filter deleted)
-      const roomsListener = onSnapshot(firestoreQuery(roomsRef, where("deleted", "!=", true), orderBy('lastActive', 'desc'), limit(20)), (snapshot) => {
+      const roomsListener = onSnapshot(firestoreQuery(roomsRef, where("deleted", "==", false), orderBy('lastActive', 'desc'), limit(20)), (snapshot) => {
         snapshot.docChanges().forEach(async (change) => {
           if (change.type === 'added') {
             const data = change.doc.data();
@@ -412,7 +412,7 @@ const Discover: React.FC = () => {
         const roomsRef = collection(db, 'sideRooms');
         const roomsQuery = firestoreQuery(
           roomsRef,
-          where("deleted", "!=", true),
+          where("deleted", "==", false),
           where('name_lower', '>=', searchTerm),
           where('name_lower', '<=', searchTerm + '\uf8ff'),
           limit(20)
@@ -967,7 +967,13 @@ const Discover: React.FC = () => {
               <Box>
                 <Typography variant="h6" sx={{ mb: 2 }}>Rooms</Typography>
                 <Grid container spacing={3}>
-                  {rooms.map((room) => (
+                  {rooms
+                    .filter(room => {
+                      const shouldInclude = selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory));
+                      console.log(`Filtering Room: '${room.name}', Tags: ${JSON.stringify(room.tags)}, Selected: '${selectedCategory}', Included: ${shouldInclude}`);
+                      return shouldInclude;
+                    })
+                    .map((room) => (
                     <Grid item xs={12} sm={6} md={4} key={room.id}>
                       <Card 
                         sx={{ 

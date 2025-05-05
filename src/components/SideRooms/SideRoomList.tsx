@@ -112,7 +112,7 @@ const SideRoomList: React.FC = () => {
       const sideRoomsRef = collection(db, 'sideRooms');
       const q = query(
         sideRoomsRef,
-        where("deleted", "!=", true),
+        where("deleted", "==", false),
         orderBy('createdAt', 'desc')
       );
       
