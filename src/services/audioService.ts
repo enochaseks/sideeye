@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import { toast } from 'react-hot-toast';
 import { audioDeviceManager } from './audioDeviceManager';
 import { useNavigate } from 'react-router-dom';
+import type { UserProfile } from '../types'; // Import UserProfile
 
 interface AudioLevelCallback {
   (userId: string, isSpeaking: boolean): void;
@@ -32,7 +33,7 @@ class AudioService {
   private currentRoomId: string = '';
   private audioElement: HTMLAudioElement | null = null;
   private deviceChangeCallbacks: Set<DeviceChangeCallback> = new Set();
-  private isMuted: boolean = false;
+  private isMuted: boolean = true;
   private microphoneNode: MediaStreamAudioSourceNode | null = null;
   private audioWorklet: AudioWorkletNode | null = null;
   private audioChunks: Uint8Array[] = [];
@@ -47,6 +48,12 @@ class AudioService {
   private navigate: ReturnType<typeof useNavigate> | null = null; // Store navigate function
   // --- Add state for the user left callback --- 
   private userLeftCallback: UserLeftCallback | null = null;
+  private videoSharedCallback: ((url: string) => void) | null = null;
+  private videoShareFailedCallback: ((reason: string) => void) | null = null;
+  private inviteSuccessCallback: ((data: { username: string; message: string }) => void) | null = null;
+  private inviteFailedCallback: ((data: { username?: string; reason: string }) => void) | null = null;
+  private guestJoinedCallback: ((data: { roomId: string; guest: any }) => void) | null = null; // Consider defining a Guest type
+  private userSearchResultsCallback: ((data: { users: UserProfile[], error?: string }) => void) | null = null;
 
   constructor() {
     // Use the CORRECT environment variable name
@@ -107,7 +114,8 @@ class AudioService {
       this.analyser.smoothingTimeConstant = 0.2;
       this.analyser.minDecibels = -65;
       this.analyser.maxDecibels = -10;
-      this.analyser.connect(this.gainNode);
+      // Do NOT connect the local speaking detection analyser to the main output gainNode
+      // this.analyser.connect(this.gainNode); 
 
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
@@ -207,7 +215,7 @@ class AudioService {
     });
 
     this.socket.on('disconnect', () => {
-      console.log('Disconnected from audio server');
+      // console.log('Disconnected from audio server'); 
       this.stopAllAudioProcessing();
       toast.error('Disconnected from audio server');
     });
@@ -300,6 +308,38 @@ class AudioService {
           console.error('[AudioService] Navigate function not set, cannot redirect after removal.');
       }
     });
+
+    this.socket.on('video-shared', (data: { videoUrl: string; roomId: string }) => {
+      if (data.roomId === this.currentRoomId && this.videoSharedCallback) {
+        console.log(`[AudioService] Received video-shared event for room ${this.currentRoomId}: ${data.videoUrl}`);
+        this.videoSharedCallback(data.videoUrl);
+      }
+    });
+
+    this.socket.on('share-video-failed', (data: { reason: string }) => {
+      if (this.videoShareFailedCallback) {
+        console.warn(`[AudioService] Received share-video-failed event: ${data.reason}`);
+        this.videoShareFailedCallback(data.reason);
+      }
+    });
+
+    this.socket.on('invite-success', (data) => {
+      if (this.inviteSuccessCallback) this.inviteSuccessCallback(data);
+    });
+
+    this.socket.on('invite-failed', (data) => {
+      if (this.inviteFailedCallback) this.inviteFailedCallback(data);
+    });
+
+    this.socket.on('guest-joined', (data) => {
+      if (this.guestJoinedCallback && data.roomId === this.currentRoomId) {
+        this.guestJoinedCallback(data);
+      }
+    });
+
+    this.socket.on('user-search-results-for-invite', (data: { users: UserProfile[], error?: string }) => {
+      if (this.userSearchResultsCallback) this.userSearchResultsCallback(data);
+    });
   }
 
   private async handleIncomingAudio(audioData: ArrayBuffer, userId: string) {
@@ -318,9 +358,9 @@ class AudioService {
 
       // Create a more sophisticated audio processing chain
       const compressor = this.audioContext.createDynamicsCompressor();
-      compressor.threshold.value = -50;
+      compressor.threshold.value = -55;
       compressor.knee.value = 40;
-      compressor.ratio.value = 12;
+      compressor.ratio.value = 6.1;
       compressor.attack.value = 0.003;
       compressor.release.value = 0.25;
 
@@ -330,14 +370,14 @@ class AudioService {
       // Create a bandpass filter to focus on voice frequencies
       const bandpass = this.audioContext.createBiquadFilter();
       bandpass.type = 'bandpass';
-      bandpass.frequency.value = 1000; // Center frequency for voice
-      bandpass.Q.value = 0.5; // Wider Q for natural sound
+      bandpass.frequency.value = 1200; // Center frequency for voice
+      bandpass.Q.value = 1.0; // Wider Q for natural sound
 
       // Create a high-shelf filter to enhance clarity
       const highShelf = this.audioContext.createBiquadFilter();
       highShelf.type = 'highshelf';
-      highShelf.frequency.value = 4000;
-      highShelf.gain.value = 3.0;
+      highShelf.frequency.value = 5000;
+      highShelf.gain.value = 1.5;
 
       // Connect the enhanced audio chain
       source
@@ -356,6 +396,7 @@ class AudioService {
       source.onended = () => {
         source.disconnect();
         this.audioSources.delete(userId);
+        this.videoSharedCallback = null;
       };
 
     } catch (error) {
@@ -470,7 +511,7 @@ class AudioService {
 
       // Start recording with smaller chunks for lower latency
       this.isRecording = true;
-      this.mediaRecorder.start(10); // Reduced chunk size for lower latency
+      this.mediaRecorder.start(50); // Increased chunk size from 10ms to 50ms for potentially more stable streaming
 
       // Apply initial mute state
       if (this.isMuted) {
@@ -627,16 +668,24 @@ class AudioService {
       });
     }
 
-    // 2. Disconnect/reconnect the microphone node
+    // 2. Disconnect/reconnect the microphone node - REMOVED to simplify and prevent glitches.
+    // The MediaRecorder and track.enabled state should handle audio transmission muting.
+    // The speakingDetectionInterval itself checks for this.isMuted.
+    /*
     if (this.microphoneNode && this.analyser && this.gainNode) {
       if (muted) {
         this.microphoneNode.disconnect();
       } else {
-        this.microphoneNode
-          .connect(this.analyser)
-          .connect(this.gainNode);
+        // Reconnect to the original path: mic -> compressor -> analyser
+        // Assuming 'compressor' is accessible or this logic is within setupAudioRecording scope
+        // For simplicity here, this complex reconnection is removed.
+        // The original connection in setupAudioRecording was:
+        // this.microphoneNode.connect(compressor).connect(this.analyser as AnalyserNode);
+        // A direct connection like this.microphoneNode.connect(this.analyser) would bypass the compressor.
+        // And connecting to this.gainNode here would be a feedback loop.
       }
     }
+    */
 
     // 3. Stop/start the media recorder
     if (this.mediaRecorder && this.isRecording) {
@@ -1008,6 +1057,202 @@ class AudioService {
     return () => {
       console.log('[AudioService] Unregistering onUserLeft callback.');
       this.userLeftCallback = null;
+    };
+  }
+
+  public async connectToReceiveAudio(roomId: string, userId: string): Promise<boolean> {
+    if (!this.socket) {
+      console.error('Socket not initialized');
+      return false;
+    }
+    this.currentRoomId = roomId;
+    this.currentUserId = userId;
+
+    // Ensure AudioContext is ready for playback
+    if (this.audioContext?.state === 'suspended') {
+        await this.audioContext.resume();
+    }
+    if (!this.audioContext || !this.gainNode) {
+        console.error("Audio context not ready for playback");
+        await this.setupAudioContext(); // Attempt to set it up again if needed
+        if (!this.audioContext || !this.gainNode) return false;
+    }
+    
+    this.socket.emit('join-room-listener', roomId, userId); // Or a modified 'join-room'
+    console.log('Connected to receive audio for room:', roomId);
+    // The existing socket listeners for 'audio-stream' will handle incoming audio.
+    // The audio processing loop should already be running.
+    return true;
+  }
+
+  public async activateMicrophone(roomId: string, userId: string): Promise<boolean> {
+    if (!this.socket || this.currentRoomId !== roomId || this.currentUserId !== userId) {
+      console.error('Not connected to receive audio for this room or user mismatch.');
+      // Optionally, call connectToReceiveAudio first if not already connected.
+      return false;
+    }
+
+    if (this.stream && this.isRecording) {
+        console.log("Microphone already active.");
+        return true; // Already active
+    }
+
+    try {
+        // Explicitly request permission first (already in audioDeviceManager)
+        this.stream = await audioDeviceManager.getAudioStream();
+        if (!this.stream) {
+            throw new Error('Failed to get audio stream');
+        }
+        toast.success('Microphone access granted');
+
+        this.stream.getAudioTracks().forEach(track => {
+            track.enabled = !this.isMuted; // Apply current mute state
+        });
+
+        if (this.audioContext && this.analyser) {
+            const micSource = this.audioContext.createMediaStreamSource(this.stream);
+            micSource.connect(this.analyser);
+        }
+        
+        // Emit a specific event if needed, or rely on audio-stream events
+        // this.socket.emit('user-activated-mic', roomId, userId); 
+        
+        this.setupAudioRecording(roomId, userId); // This starts MediaRecorder and speaking detection
+        this.startSpeakingDetection();
+        // Update local state in component to reflect mic is active
+        return true;
+    } catch (error) {
+        console.error('Error activating microphone:', error);
+        if (error instanceof Error) {
+            toast.error('Failed to activate microphone: ' + error.message);
+        }
+        return false;
+    }
+  }
+
+  public deactivateMicrophone(roomId: string, userId: string) {
+    if (this.currentRoomId !== roomId || this.currentUserId !== userId) return;
+
+    console.log('Deactivating microphone for room:', roomId);
+    if (this.speakingDetectionInterval) {
+      window.clearInterval(this.speakingDetectionInterval);
+      this.speakingDetectionInterval = null;
+    }
+    if (this.mediaRecorder && this.isRecording) {
+      this.mediaRecorder.stop();
+      this.isRecording = false;
+    }
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
+    }
+    if (this.microphoneNode) {
+      this.microphoneNode.disconnect();
+      this.microphoneNode = null;
+    }
+    // Update local state in component to reflect mic is inactive
+    // Optionally emit an event: this.socket.emit('user-deactivated-mic', roomId, userId);
+  }
+
+  // leaveRoom would now be more about fully disconnecting audio send/receive
+  public disconnectFromRoom(roomId: string, userId: string) {
+    console.log('Disconnecting from room audio:', roomId);
+    this.deactivateMicrophone(roomId, userId); // Ensure mic is off
+    // Stop all playback for this user from this room
+    this.audioSources.forEach((source, sourceUserId) => {
+        // Assuming you might want to clear all audio if leaving the room entirely
+        this.stopUserAudio(sourceUserId); 
+    });
+    this.audioQueue.clear(); // Clear queues
+
+    if (this.socket && this.currentRoomId === roomId) {
+      this.socket.emit('leave-room', roomId, userId);
+      this.currentRoomId = '';
+      this.currentUserId = null;
+    }
+  }
+
+  // --- Methods for Video Sharing ---
+  public shareVideo(roomId: string, videoUrl: string): void {
+    if (!this.socket || !this.currentUserId) {
+      console.error('[AudioService] Cannot share video - socket not available or user not identified.');
+      return;
+    }
+    console.log(`[AudioService] User ${this.currentUserId} sharing video in room ${roomId}: ${videoUrl}`);
+    this.socket.emit('share-video', { roomId, videoUrl, userId: this.currentUserId });
+  }
+
+  public onVideoShared(callback: (url: string) => void): () => void {
+    console.log('[AudioService] Registering onVideoShared callback.');
+    this.videoSharedCallback = callback;
+    return () => {
+      console.log('[AudioService] Unregistering onVideoShared callback.');
+      this.videoSharedCallback = null;
+    };
+  }
+
+  public onVideoShareFailed(callback: (reason: string) => void): () => void {
+    console.log('[AudioService] Registering onVideoShareFailed callback.');
+    this.videoShareFailedCallback = callback;
+    return () => {
+      console.log('[AudioService] Unregistering onVideoShareFailed callback.');
+      this.videoShareFailedCallback = null;
+    };
+  }
+
+  // --- Methods for Inviting Users ---
+  public inviteUserToRoom(roomId: string, inviterId: string, inviteeUsername: string): void {
+    if (!this.socket) {
+      console.error('[AudioService] Cannot invite user - socket not available.');
+      // Optionally, notify UI directly if socket is missing
+      if(this.inviteFailedCallback) this.inviteFailedCallback({ reason: 'Connection error, cannot send invite.'});
+      return;
+    }
+    console.log(`[AudioService] Inviting user "${inviteeUsername}" to room ${roomId} by ${inviterId}`);
+    this.socket.emit('invite-user-to-room', { roomId, inviterId, inviteeUsername });
+  }
+
+  public onInviteSuccess(callback: (data: { username: string; message: string }) => void): () => void {
+    this.inviteSuccessCallback = callback;
+    return () => { this.inviteSuccessCallback = null; };
+  }
+
+  public onInviteFailed(callback: (data: { username?: string; reason: string }) => void): () => void {
+    this.inviteFailedCallback = callback;
+    return () => { this.inviteFailedCallback = null; };
+  }
+
+  public onGuestJoined(callback: (data: { roomId: string; guest: any }) => void): () => void {
+    this.guestJoinedCallback = callback;
+    return () => { this.guestJoinedCallback = null; };
+  }
+
+  // --- Methods for User Search for Invites ---
+  public searchUsersForInvite(searchTerm: string): void {
+    if (!this.socket) {
+      console.error('[AudioService] Cannot search users - socket not available.');
+      if (this.userSearchResultsCallback) this.userSearchResultsCallback({ users: [], error: 'Connection error.'});
+      return;
+    }
+    console.log(`[AudioService] Emitting search-users-for-invite with searchTerm: "${searchTerm}"`); // Log emit
+    this.socket.emit('search-users-for-invite', { searchTerm });
+  }
+
+  public onUserSearchResultsForInvite(callback: (data: { users: UserProfile[], error?: string }) => void): () => void {
+    console.log("[AudioService] Registering onUserSearchResultsForInvite callback."); // Log registration
+    // Add listener inside the registration function to ensure it's active
+    const listener = (data: { users: UserProfile[], error?: string }) => {
+      console.log("[AudioService] Received user-search-results-for-invite:", data); // Log received data
+      callback(data);
+    };
+    this.socket?.on('user-search-results-for-invite', listener);
+    
+    this.userSearchResultsCallback = callback; // Keep this if used elsewhere, but the direct listener is safer
+
+    return () => {
+        console.log("[AudioService] Unregistering onUserSearchResultsForInvite callback."); // Log unregistration
+        this.socket?.off('user-search-results-for-invite', listener);
+        this.userSearchResultsCallback = null; 
     };
   }
 }

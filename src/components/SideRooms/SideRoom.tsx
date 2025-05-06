@@ -94,13 +94,35 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
     try {
       const roomRef = doc(db, 'sideRooms', room.id);
 
-      // Add user as a viewer
+      // 1. Fetch the UserProfile for the currentUser
+      const userProfileRef = doc(db, 'users', currentUser.uid);
+      const userProfileSnap = await getDoc(userProfileRef);
+
+      let userDisplayName = 'Anonymous';
+      let actualUsername = 'anonymous_user';
+      let userAvatar = '';
+
+      if (userProfileSnap.exists()) {
+        const userProfileData = userProfileSnap.data(); // Consider casting to UserProfile type
+        userDisplayName = userProfileData.name || userProfileData.username || currentUser.displayName || 'Anonymous';
+        actualUsername = userProfileData.username || 'anonymous_user';
+        userAvatar = userProfileData.profilePic || currentUser.photoURL || '';
+      } else {
+        // Fallback if Firestore profile is missing
+        userDisplayName = currentUser.displayName || 'Anonymous';
+        actualUsername = currentUser.displayName?.split(' ')[0].toLowerCase() || 'anonymous_user';
+        userAvatar = currentUser.photoURL || '';
+        console.warn(`UserProfile not found for UID: ${currentUser.uid}. Using Auth display name.`);
+      }
+
+      // 2. Now create the RoomMember object with all required fields
       const viewerData: RoomMember = {
         userId: currentUser.uid,
-        username: currentUser.displayName || 'Anonymous',
-        avatar: currentUser.photoURL || '',
+        displayName: userDisplayName, // Use fetched display name
+        username: actualUsername,     // Use fetched username
+        avatar: userAvatar,           // Use fetched avatar
         role: 'viewer',
-        joinedAt: new Date()
+        joinedAt: new Date() // Or Timestamp.now() or serverTimestamp() as appropriate
       };
 
       await updateDoc(roomRef, {
@@ -121,12 +143,42 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
 
     try {
       const roomRef = doc(db, 'sideRooms', room.id);
+
+      // Fetch the current user's profile to construct viewerToRemove accurately
+      const userProfileRef = doc(db, 'users', currentUser.uid);
+      const userProfileSnap = await getDoc(userProfileRef);
+
+      let userDisplayName = 'Anonymous';
+      let actualUsername = 'anonymous_user';
+      let userAvatar = '';
+      // We need joinedAt from the existing room.viewers array for an exact match if possible
+      // However, arrayRemove might still work if other fields match well enough.
+      // For simplicity here, we'll reconstruct with current time, but ideally, you'd fetch the exact viewer object.
+
+      if (userProfileSnap.exists()) {
+        const userProfileData = userProfileSnap.data();
+        userDisplayName = userProfileData.name || userProfileData.username || currentUser.displayName || 'Anonymous';
+        actualUsername = userProfileData.username || 'anonymous_user';
+        userAvatar = userProfileData.profilePic || currentUser.photoURL || '';
+      } else {
+        userDisplayName = currentUser.displayName || 'Anonymous';
+        actualUsername = currentUser.displayName?.split(' ')[0].toLowerCase() || 'anonymous_user';
+        userAvatar = currentUser.photoURL || '';
+        console.warn(`UserProfile not found for UID: ${currentUser.uid} during leave. Using Auth display name.`);
+      }
+      
+      // Find the specific viewer object in the room's viewers array to get the correct joinedAt
+      const currentViewerInRoom = room.viewers.find(v => v.userId === currentUser.uid);
+
       const viewerToRemove: RoomMember = {
         userId: currentUser.uid,
-        username: currentUser.displayName || 'Anonymous',
-        avatar: currentUser.photoURL || '',
+        displayName: userDisplayName,
+        username: actualUsername,
+        avatar: userAvatar,
         role: 'viewer',
-        joinedAt: new Date()
+        // Use the joinedAt from the existing viewer object if found, otherwise use a recent timestamp.
+        // For arrayRemove to work reliably with objects, all fields should match.
+        joinedAt: currentViewerInRoom ? currentViewerInRoom.joinedAt : new Date()
       };
 
       await updateDoc(roomRef, {

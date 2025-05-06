@@ -25,7 +25,7 @@ import { toast } from 'react-hot-toast';
 interface RoomMemberManagementProps {
   members: RoomMember[];
   room: SideRoom;
-  currentUserRole?: 'owner' | 'viewer';
+  currentUserRole?: 'owner' | 'viewer' | 'guest';
   onUpdate: (updatedMembers: RoomMember[]) => void;
 }
 
@@ -95,9 +95,14 @@ const RoomMemberManagement: React.FC<RoomMemberManagementProps> = ({
     }
   };
 
-  const canManageMember = (targetRole: 'owner' | 'viewer'): boolean => {
+  const canManageMember = (targetRole: 'owner' | 'viewer' | 'guest'): boolean => {
     if (!currentUserRole) return false;
-    if (currentUserRole === 'owner') return true;
+    // Owners can manage viewers and guests.
+    // Owners cannot manage themselves or other potential owners via this UI (usually only one owner).
+    if (currentUserRole === 'owner') {
+      return targetRole === 'viewer' || targetRole === 'guest';
+    }
+    // Viewers and Guests cannot manage anyone.
     return false;
   };
 

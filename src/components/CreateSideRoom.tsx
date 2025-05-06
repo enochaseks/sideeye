@@ -21,7 +21,7 @@ import {
   FormHelperText,
 } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import { collection, addDoc, serverTimestamp, Firestore, Timestamp, getDoc, doc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, Firestore, Timestamp, getDoc, doc, updateDoc, arrayUnion, setDoc, deleteDoc } from 'firebase/firestore';
 import { storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db } from '../services/firebase';
@@ -93,42 +93,66 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
 
     try {
       setIsSubmitting(true);
+
+      // Fetch the creator's UserProfile from Firestore
+      const userProfileRef = doc(db, 'users', currentUser.uid);
+      const userProfileSnap = await getDoc(userProfileRef);
+
+      let creatorDisplayName = 'Anonymous';
+      let creatorUsername = 'anonymous_user';
+      let creatorAvatar = '';
+
+      if (userProfileSnap.exists()) {
+        const userProfileData = userProfileSnap.data();
+        // Assuming UserProfile has 'name' for displayName, 'username', and 'profilePic'
+        creatorDisplayName = userProfileData.name || userProfileData.username || currentUser.displayName || 'Anonymous';
+        creatorUsername = userProfileData.username || currentUser.displayName?.split(' ')[0].toLowerCase() || 'anonymous_user';
+        creatorAvatar = userProfileData.profilePic || currentUser.photoURL || '';
+      } else {
+        // Fallback to Auth info if Firestore profile doesn't exist for some reason
+        creatorDisplayName = currentUser.displayName || 'Anonymous';
+        creatorUsername = currentUser.displayName?.split(' ')[0].toLowerCase() || 'anonymous_user';
+        creatorAvatar = currentUser.photoURL || '';
+        console.warn(`UserProfile not found for UID: ${currentUser.uid}. Using Auth display name.`);
+      }
+
       const roomData = {
         name: formData.name,
         description: formData.description,
         ownerId: currentUser.uid,
         viewers: [],
-        viewerCount: 0,
+        memberCount: 0,
         createdAt: serverTimestamp(),
         isPrivate: formData.isPrivate,
         password: formData.isPrivate ? formData.password : '',
         category: formData.category,
-        tags: Array.from(new Set([...formData.tags, formData.category])),
+        tags: Array.from(new Set([...tags, formData.category])),
         lastActive: serverTimestamp(),
         isLive: false,
-        liveParticipants: [],
         activeUsers: 0,
-        deleted: false
+        deleted: false,
+        heartCount: 0
       };
 
       const roomRef = await addDoc(collection(db, 'sideRooms'), roomData);
 
       const ownerViewerObject = {
         userId: currentUser.uid,
-        username: currentUser.displayName || 'Anonymous',
-        avatar: currentUser.photoURL || '',
+        displayName: creatorDisplayName,
+        username: creatorUsername,
+        avatar: creatorAvatar,
         role: 'owner',
         joinedAt: Timestamp.now()
-      };
+      } as RoomMember;
 
       await updateDoc(roomRef, {
         viewers: arrayUnion(ownerViewerObject),
-        viewerCount: 1
+        memberCount: 1
       });
 
       await setDoc(doc(db, 'users', currentUser.uid, 'sideRooms', roomRef.id), {
+        roomId: roomRef.id,
         name: formData.name,
-        description: formData.description,
         role: 'owner',
         joinedAt: Timestamp.now(),
         lastActive: serverTimestamp()

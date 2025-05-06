@@ -12,7 +12,11 @@ import {
     where,
     serverTimestamp,
     increment,
-    setDoc
+    setDoc,
+    deleteDoc,
+    runTransaction,
+    orderBy,
+    limit
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -34,8 +38,22 @@ import {
     Grid,
     Menu,
     MenuItem,
-    ListItemIcon
+    ListItemIcon,
+    List,
+    ListItem,
+    ListItemAvatar,
+    ListItemText,
+    Popper,
+    ClickAwayListener,
+    Badge,
+    FormControl,
+    InputLabel,
+    Select,
+    Switch,
+    FormControlLabel,
+    SelectChangeEvent
 } from '@mui/material';
+import { useTheme, alpha } from '@mui/material/styles';
 import {
     ExitToApp,
     Lock,
@@ -58,15 +76,26 @@ import {
     PersonRemove as PersonRemoveIcon,
     Block as BanIcon,
     Chat as ChatIcon,
-    Search as SearchIcon
+    Search as SearchIcon,
+    ContentCopy as ContentCopyIcon,
+    Instagram as InstagramIcon,
+    Facebook as FacebookIcon,
+    Twitter as TwitterIcon,
+    WhatsApp as WhatsAppIcon,
+    Link as LinkIcon,
+    Clear as ClearIcon,
+    Favorite as FavoriteIcon,
+    FavoriteBorder as FavoriteBorderIcon
 } from '@mui/icons-material';
-import type { SideRoom, RoomMember, UserProfile } from '../../types/index';
+import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
 import { audioService } from '../../services/audioService';
 import AudioDeviceSelector from '../AudioDeviceSelector';
 import { storage } from '../../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import TypingIndicator from '../TypingIndicator';
+import { Helmet } from 'react-helmet-async';
+import { debounce } from 'lodash';
 
 // Define type for Sade AI messages
 type SadeMessage = { sender: 'user' | 'ai', text: string };
@@ -84,18 +113,81 @@ interface PresenceData {
     isSpeaking?: boolean;
     displayName?: string;
     photoURL?: string;
-    role?: 'owner' | 'viewer';
+    role?: 'owner' | 'viewer' | 'guest';
 }
+
+// --- Room Theme Definitions & Constants ---
+interface RoomTheme {
+  name: string;
+  headerColor: string;
+  backgroundColor: string;
+  textColor: string;
+  accentColor: string;
+  headerGradient?: boolean; 
+  backgroundGradient?: boolean;
+}
+
+const PREDEFINED_THEMES: RoomTheme[] = [
+  {
+    name: "Classic Light",
+    headerColor: '#F5F5F5', // Light Grey
+    backgroundColor: '#FFFFFF', // White
+    textColor: '#212121', // Almost Black
+    accentColor: '#1976D2', // MUI Blue
+    headerGradient: false,
+    backgroundGradient: false,
+  },
+  {
+    name: "Classic Dark",
+    headerColor: '#303030', // Dark Grey
+    backgroundColor: '#212121', // Very Dark Grey
+    textColor: '#E0E0E0', // Light Grey
+    accentColor: '#90CAF9', // Light Blue
+    headerGradient: false,
+    backgroundGradient: false,
+  },
+  {
+    name: "Midnight Bloom",
+    headerColor: '#4A00E0', // Deep Indigo/Purple
+    backgroundColor: '#1E1E2F', // Very Dark Blue/Almost Black
+    textColor: '#EAEAEA', // Light Grey/Off-white
+    accentColor: '#8E2DE2', // Lighter Purple/Magenta
+    headerGradient: true,
+    backgroundGradient: true,
+  },
+  {
+    name: "Sunset Vibes",
+    headerColor: '#FF8C00', // DarkOrange
+    backgroundColor: '#FFF3E0', // Very Light Orange/Cream
+    textColor: '#4E342E', // Dark Brown
+    accentColor: '#FF5722', // DeepOrange
+    headerGradient: true,
+    backgroundGradient: false,
+  },
+  {
+    name: "Oceanic Calm",
+    headerColor: '#0077B6', // Cerulean Blue
+    backgroundColor: '#E0F7FA', // Very Light Cyan
+    textColor: '#01579B', // Darker Blue
+    accentColor: '#00B4D8', // Bright Cyan
+    headerGradient: false,
+    backgroundGradient: false,
+  }
+];
+
+const AVAILABLE_FONTS = ['Arial', 'Verdana', 'Georgia', 'Times New Roman', 'Courier New', 'Roboto', 'Open Sans', 'Lato', 'Montserrat'];
+const AVAILABLE_TEXT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32]; // in pixels
+// --- End Room Theme Definitions & Constants ---
 
 const SideRoomComponent: React.FC = () => {
     const { roomId } = useParams<{ roomId: string }>();
     const { currentUser } = useAuth();
     const navigate = useNavigate();
+    const theme = useTheme(); // <<<< ENSURE theme IS DEFINED HERE
 
-    // Inject navigate into audioService
+    // Inject navigate into audioService (this useEffect is fine)
     useEffect(() => {
         audioService.setNavigate(navigate);
-        // No specific cleanup needed for navigate function itself
     }, [navigate]);
 
     // --- State ---
@@ -118,12 +210,74 @@ const SideRoomComponent: React.FC = () => {
     const [selectedSoundFile, setSelectedSoundFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // --- State for Heart Feature ---
+    const [roomHeartCount, setRoomHeartCount] = useState<number>(0);
+    const [currentUserHearted, setCurrentUserHearted] = useState<boolean>(false);
+    const [latestHeartNotification, setLatestHeartNotification] = useState<string | null>(null);
+    const notificationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // --- State for Video Sharing ---
+    const [showShareVideoDialog, setShowShareVideoDialog] = useState(false);
+    const [videoInputUrl, setVideoInputUrl] = useState('');
+    const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
+
+    // --- State for Inviting Users ---
+    const [inviteSearchQuery, setInviteSearchQuery] = useState('');
+    const [inviteSearchResults, setInviteSearchResults] = useState<UserProfile[]>([]);
+    const [showInviteDropdown, setShowInviteDropdown] = useState(false);
+    const [selectedInviteeForInvite, setSelectedInviteeForInvite] = useState<UserProfile | null>(null);
+    const [isInvitingUser, setIsInvitingUser] = useState(false);
+    const inviteSearchRef = useRef<HTMLDivElement>(null); // Ref for Popper anchor
+
     // --- State for Sade AI Chat Integration ---
     const [showSadeChat, setShowSadeChat] = useState(false);
     const [sadeMessages, setSadeMessages] = useState<SadeMessage[]>([]);
     const [sadeInput, setSadeInput] = useState('');
     const [sadeLoading, setSadeLoading] = useState(false);
     const sadeMessagesEndRef = useRef<null | HTMLDivElement>(null); // Ref for scrolling
+
+    // --- State for Preventing Double-Click Issues (Heart Feature) ---
+    const [isHearting, setIsHearting] = useState(false);
+
+    // --- State for Style Dialog ---
+    const [selectedThemeName, setSelectedThemeName] = useState<string>(PREDEFINED_THEMES[0].name);
+    const [useHeaderGradient, setUseHeaderGradient] = useState<boolean>(false);
+    const [useBackgroundGradient, setUseBackgroundGradient] = useState<boolean>(false);
+    const [selectedFont, setSelectedFont] = useState<string>(AVAILABLE_FONTS[0]);
+    const [selectedTextSize, setSelectedTextSize] = useState<number>(AVAILABLE_TEXT_SIZES[2]);
+
+    // --- Effect for Style Dialog Initialization ---
+    useEffect(() => {
+        if (!showStyleDialog) {
+            return; // Do nothing if the dialog is not open
+        }
+
+        if (room?.style) {
+            const currentStyle = room.style as any; // Use 'as any' for now if themeName is not yet strongly typed on room.style
+            
+            // Set theme
+            const themeExists = PREDEFINED_THEMES.find(t => t.name === currentStyle.themeName);
+            setSelectedThemeName(themeExists ? currentStyle.themeName : PREDEFINED_THEMES[0].name);
+
+            // Set gradients - check if the theme itself defines these, otherwise use stored value or default
+            const activeTheme = themeExists || PREDEFINED_THEMES[0];
+            setUseHeaderGradient(currentStyle.headerGradient !== undefined ? currentStyle.headerGradient : activeTheme.headerGradient || false);
+            setUseBackgroundGradient(currentStyle.backgroundGradient !== undefined ? currentStyle.backgroundGradient : activeTheme.backgroundGradient || false);
+
+            // Set font
+            setSelectedFont(AVAILABLE_FONTS.includes(currentStyle.font) ? currentStyle.font : AVAILABLE_FONTS[0]);
+            
+            // Set text size (assuming it was stored as headerFontSize)
+            setSelectedTextSize(AVAILABLE_TEXT_SIZES.includes(currentStyle.headerFontSize) ? currentStyle.headerFontSize : AVAILABLE_TEXT_SIZES[2]);
+        } else {
+            // No current style, initialize with defaults from the first predefined theme
+            setSelectedThemeName(PREDEFINED_THEMES[0].name);
+            setUseHeaderGradient(PREDEFINED_THEMES[0].headerGradient || false);
+            setUseBackgroundGradient(PREDEFINED_THEMES[0].backgroundGradient || false);
+            setSelectedFont(AVAILABLE_FONTS[0]);
+            setSelectedTextSize(AVAILABLE_TEXT_SIZES[2]);
+        }
+    }, [showStyleDialog, room]); // Dependencies: dialog visibility and the room object itself
 
     // --- Memos ---
     // Add console logs to debug isRoomOwner
@@ -138,6 +292,12 @@ const SideRoomComponent: React.FC = () => {
         const ownerUserId = room?.ownerId;
         return !!currentUserId && !!ownerUserId && currentUserId === ownerUserId;
     }, [room?.ownerId, currentUser?.uid]);
+
+    const isGuest = useMemo(() => {
+        if (!room || !currentUser?.uid) return false;
+        return room.viewers?.some(member => member.userId === currentUser.uid && member.role === 'guest') || false;
+    }, [room, currentUser?.uid]);
+
     const isViewer = useMemo(() => !!room?.viewers?.some((viewer: RoomMember) => viewer.userId === currentUser?.uid), [room?.viewers, currentUser?.uid]);
     const hasRoomAccess = isRoomOwner || isViewer;
     const onlineParticipants = useMemo(() => {
@@ -152,7 +312,44 @@ const SideRoomComponent: React.FC = () => {
         console.log('[onlineParticipants Memo] Filtered participants:', finalParticipants);
         return finalParticipants;
     }, [presence]);
-    const ownerData = useMemo(() => room?.viewers?.find((v: RoomMember) => v.role === 'owner'), [room?.viewers]);
+    const ownerData = useMemo(() => {
+        // Defensive checks
+        if (!room || !room.viewers || !Array.isArray(room.viewers)) {
+            console.log('[SideRoomComponent Debug] ownerData: room or room.viewers not available or not an array.');
+            return undefined;
+        }
+    
+        // Log the entire viewers array to see its structure and content
+        console.log('[SideRoomComponent Debug] Inspecting room.viewers:', JSON.stringify(room.viewers, null, 2));
+    
+        const foundOwner = room.viewers.find((viewer: RoomMember) => {
+            // Log each viewer being checked, including the properties we care about
+            console.log(`[SideRoomComponent Debug] Checking viewer: userId=${viewer.userId}, role=${viewer.role}, displayName="${(viewer as any).displayName}", username="${viewer.username}"`);
+            return viewer.role === 'owner';
+        });
+    
+        if (foundOwner) {
+            // Log the specific owner object that was found
+            console.log('[SideRoomComponent Debug] Owner found in room.viewers:', JSON.stringify(foundOwner, null, 2));
+            
+            // Specifically check the values of displayName and username for the found owner
+            const ownerDisplayName = (foundOwner as any).displayName;
+            if (typeof ownerDisplayName === 'string' && ownerDisplayName.trim() !== '') {
+                console.log(`[SideRoomComponent Debug] Owner displayName is valid: "${ownerDisplayName}"`);
+            } else {
+                console.warn(`[SideRoomComponent Debug] Owner found, but displayName is missing, empty, or not a string. DisplayName value:`, ownerDisplayName);
+            }
+            
+            if (typeof foundOwner.username === 'string' && foundOwner.username.trim() !== '') {
+                console.log(`[SideRoomComponent Debug] Owner username is valid: "${foundOwner.username}"`);
+            } else {
+                console.warn(`[SideRoomComponent Debug] Owner found, but username is missing, empty, or not a string. Username value:`, foundOwner.username);
+            }
+        } else {
+            console.log('[SideRoomComponent Debug] No member with role "owner" found in room.viewers.');
+        }
+        return foundOwner;
+    }, [room]); // Dependency on `room` is correct as `room.viewers` is part of it
 
     // --- Audio Handlers ---
     const handleJoinAudio = useCallback(async () => {
@@ -160,29 +357,38 @@ const SideRoomComponent: React.FC = () => {
         setIsProcessing(true);
 
         try {
-            const success = await audioService.joinRoom(roomId, currentUser.uid);
-            if (success) {
-                setIsAudioConnected(true);
-                setIsMicMuted(false);
-                toast.success('Connected to audio');
+            // const success = await audioService.joinRoom(roomId, currentUser.uid);
+            // Updated for passive listening:
+            const connectedToReceive = await audioService.connectToReceiveAudio(roomId, currentUser.uid);
+            if (connectedToReceive) {
+                // Now try to activate microphone
+                const micActivated = await audioService.activateMicrophone(roomId, currentUser.uid);
+                if (micActivated) {
+                    setIsAudioConnected(true); // Indicates mic is active
+                    setIsMicMuted(audioService.isMicrophoneMuted()); // Reflect actual mute state
+                    toast.success('Microphone activated!');
+                } else {
+                    toast.error('Could not activate microphone, but you can still listen.');
+                    setIsAudioConnected(false); // Mic not active
+                }
             } else {
-                throw new Error('Failed to join audio');
+                 throw new Error('Failed to connect to room audio for listening.');
             }
         } catch (error) {
-            console.error('Error joining audio:', error);
-            toast.error('Failed to connect to audio');
+            console.error('Error joining audio/activating mic:', error);
+            toast.error('Failed to connect audio.');
+            setIsAudioConnected(false);
         } finally {
             setIsProcessing(false);
         }
     }, [roomId, currentUser?.uid, isProcessing]);
 
-    const handleLeaveAudio = useCallback(() => {
+    const handleLeaveAudio = useCallback(() => { // This now means deactivate microphone
         if (!roomId || !currentUser?.uid) return;
-        audioService.leaveRoom(roomId, currentUser.uid);
-        setIsAudioConnected(false);
-        setIsMicMuted(true);
-        setIsSpeaking(false);
-        toast.success('Disconnected from audio');
+        audioService.deactivateMicrophone(roomId, currentUser.uid);
+        setIsAudioConnected(false); // Mic is no longer active for sending
+        setIsMicMuted(true); // Assume muted when mic is off for UI
+        toast.success('Microphone deactivated.');
     }, [roomId, currentUser?.uid]);
 
     const handleToggleMute = useCallback(() => {
@@ -215,35 +421,84 @@ const SideRoomComponent: React.FC = () => {
 
     }, [roomId, currentUser?.uid]);
 
+    // --- Video Sharing Handlers ---
+    const handleOpenShareVideoDialog = () => {
+        setShowShareVideoDialog(true);
+    };
+
+    const handleCloseShareVideoDialog = () => {
+        setShowShareVideoDialog(false);
+        setVideoInputUrl(''); // Clear input on close
+    };
+
+    const handleShareVideoUrl = () => {
+        if (!roomId) {
+            toast.error("Cannot share video: Room ID is missing.");
+            return;
+        }
+        if (!videoInputUrl.trim()) {
+            toast.error("Please enter a video URL.");
+            return;
+        }
+        // Basic URL validation (can be improved)
+        if (!videoInputUrl.startsWith('http://') && !videoInputUrl.startsWith('https://')) {
+            toast.error("Invalid URL format.");
+            return;
+        }
+
+        audioService.shareVideo(roomId, videoInputUrl);
+        setCurrentVideoUrl(videoInputUrl); // Optimistically update UI
+        toast.success("Video shared!");
+        handleCloseShareVideoDialog();
+    };
+
+    const handleClearSharedVideo = () => {
+        if (!roomId) {
+            toast.error("Cannot clear video: Room ID is missing.");
+            return;
+        }
+        if (!isRoomOwner) {
+            toast.error("Only the room owner can clear the video.");
+            return;
+        }
+        audioService.shareVideo(roomId, ''); // Send empty string to clear
+        setCurrentVideoUrl(null); // Optimistically update UI
+        toast.success("Shared video cleared.");
+    };
+
     // --- Cleanup on unmount --- Effect to leave the audio room when the component unmounts
     useEffect(() => {
         // Store roomId and userId in constants for use in cleanup
         const componentRoomId = roomId;
         const componentUserId = currentUser?.uid;
 
+        // Connect for listening when component mounts and we have roomId & user
+        if (componentRoomId && componentUserId) {
+            audioService.connectToReceiveAudio(componentRoomId, componentUserId)
+                .then(success => {
+                    if (success) console.log(`[SideRoomComponent] Successfully connected to receive audio for room ${componentRoomId}`);
+                    else console.error(`[SideRoomComponent] Failed to connect to receive audio for room ${componentRoomId}`);
+                });
+        }
+
         return () => {
-            // This function runs when the component unmounts (e.g., user navigates away)
             console.log(`[SideRoomComponent] Unmounting room ${componentRoomId} for user ${componentUserId}. Attempting audio cleanup.`);
-            // Always attempt to leave the room audio on unmount
             if (componentRoomId && componentUserId) {
-                // Call the leaveRoom function from the audio service
-                // This should handle stopping mic tracks, closing connections, etc.
-                audioService.leaveRoom(componentRoomId, componentUserId);
-                // It's generally better to let the audioService manage internal state like isAudioConnected
-                // rather than relying on component state during unmount.
+                 audioService.disconnectFromRoom(componentRoomId, componentUserId);
             }
         };
-    // Effect dependencies: only run setup/cleanup when roomId or user changes
-    }, [roomId, currentUser?.uid]);
+    }, [roomId, currentUser?.uid]); // Re-run if roomId or user changes
 
     // --- Room Listener ---
     useEffect(() => {
         if (!roomId || !currentUser) return;
 
         const roomRef = doc(db, 'sideRooms', roomId);
-        const unsubscribe = onSnapshot(roomRef, (docSnapshot) => {
+        const unsubscribeRoom = onSnapshot(roomRef, (docSnapshot) => {
             if (docSnapshot.exists()) {
-                setRoom({ id: docSnapshot.id, ...docSnapshot.data() } as SideRoom);
+                const roomData = { id: docSnapshot.id, ...docSnapshot.data() } as SideRoom;
+                setRoom(roomData);
+                setRoomHeartCount(roomData.heartCount || 0); // Set heart count
                 setLoading(false);
             } else {
                 setError('Room not found');
@@ -251,12 +506,52 @@ const SideRoomComponent: React.FC = () => {
             }
         });
 
-        return () => unsubscribe();
+        // Listener for current user's heart status
+        let unsubscribeHeartStatus: (() => void) | undefined;
+        if (currentUser?.uid) {
+            const heartRef = doc(db, 'sideRooms', roomId, 'heartedBy', currentUser.uid);
+            unsubscribeHeartStatus = onSnapshot(heartRef, (heartDoc) => {
+                setCurrentUserHearted(heartDoc.exists());
+            });
+        }
+
+        // Listener for new hearts (for pop-up)
+        const heartsQuery = query(
+            collection(db, 'sideRooms', roomId, 'heartedBy'),
+            orderBy('timestamp', 'desc'),
+            limit(1)
+        );
+        const unsubscribeNewHearts = onSnapshot(heartsQuery, (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added') {
+                    const heartData = change.doc.data();
+                    // Don't show notification for own heart
+                    if (heartData.userId !== currentUser?.uid && heartData.username) {
+                        setLatestHeartNotification(`${heartData.username} hearted the room!`);
+                        if (notificationTimeoutRef.current) {
+                            clearTimeout(notificationTimeoutRef.current);
+                        }
+                        notificationTimeoutRef.current = setTimeout(() => {
+                            setLatestHeartNotification(null);
+                        }, 3000); // Show for 3 seconds
+                    }
+                }
+            });
+        });
+
+        return () => {
+            unsubscribeRoom();
+            if (unsubscribeHeartStatus) unsubscribeHeartStatus();
+            unsubscribeNewHearts();
+            if (notificationTimeoutRef.current) {
+                clearTimeout(notificationTimeoutRef.current);
+            }
+        };
     }, [roomId, currentUser]);
 
     // --- Presence Listener ---
     useEffect(() => {
-        if (!roomId || !hasRoomAccess || !currentUser?.uid) { 
+        if (!roomId || !hasRoomAccess || !currentUser?.uid || !room) {
              setPresence([]);
              return;
         }
@@ -298,8 +593,17 @@ const SideRoomComponent: React.FC = () => {
                     // Fallback if Firestore profile doesn't exist (shouldn't ideally happen here)
                     console.warn(`[Presence Listener Profile Fetch] Firestore profile missing for ${componentUserId}. Using fallbacks.`);
                     userDisplayName = currentUser.displayName || ''; // Fallback to auth display name
-                    userProfilePic = currentUser.profile?.profilePic || ''; // Fallback to potentially loaded pic
+                    userProfilePic = currentUser.photoURL || ''; // Fallback to potentially loaded pic
                 }
+
+                // Determine the user's role in this room
+                let userRole: 'owner' | 'viewer' | 'guest' = 'viewer'; // Default to viewer
+                if (isRoomOwner) { // isRoomOwner is already memoized
+                    userRole = 'owner';
+                } else if (room && room.viewers?.some(member => member.userId === componentUserId && member.role === 'guest')) { // Added explicit room check here
+                    userRole = 'guest';
+                }
+                // If neither owner nor guest found in viewers, they remain a 'viewer'
 
                 const myPresenceRef = doc(db, 'sideRooms', roomId, 'presence', componentUserId);
                 const presenceData: PresenceData = { 
@@ -308,7 +612,7 @@ const SideRoomComponent: React.FC = () => {
                     avatar: userProfilePic, // Use fetched pic
                     lastSeen: Date.now(), 
                     isOnline: true,
-                    role: isRoomOwner ? 'owner' : 'viewer', 
+                    role: userRole, // Use the determined role
                     displayName: userDisplayName, // Use fetched display name
                     photoURL: userProfilePic // Keep consistent
                 }; 
@@ -344,7 +648,7 @@ const SideRoomComponent: React.FC = () => {
         // Return the cleanup function
         return cleanup;
 
-    }, [roomId, hasRoomAccess, currentUser?.uid, isRoomOwner, db]); // Depend on currentUser.uid to re-run if user changes
+    }, [roomId, hasRoomAccess, currentUser?.uid, isRoomOwner, room]); // Depend on currentUser.uid to re-run if user changes
 
     // Add speaking detection effect
     useEffect(() => {
@@ -389,6 +693,113 @@ const SideRoomComponent: React.FC = () => {
              unsubscribe();
         }
     }, [handleRemoteUserLeft]); // Depend on the handler function
+
+    // --- Effect for Video Sharing Listener ---
+    useEffect(() => {
+        if (!roomId) return;
+
+        const unsubscribeVideoShared = audioService.onVideoShared((url: string) => {
+            console.log(`[SideRoomComponent] Received shared video URL: ${url}`);
+            setCurrentVideoUrl(url);
+        });
+
+        // Listen for video share failures
+        const unsubscribeVideoShareFailed = audioService.onVideoShareFailed((reason: string) => {
+            toast.error(`Video share failed: ${reason}`);
+        });
+
+        return () => {
+            unsubscribeVideoShared();
+            unsubscribeVideoShareFailed();
+        };
+    }, [roomId]);
+
+    // --- Effect to set initial video URL from room data ---
+    useEffect(() => {
+        if (room && room.currentSharedVideoUrl) {
+            setCurrentVideoUrl(room.currentSharedVideoUrl);
+        } else if (room && !room.currentSharedVideoUrl) {
+            // If the room object exists but has no video URL, ensure local state is also null
+            setCurrentVideoUrl(null);
+        }
+    }, [room]);
+
+    // --- Effect for Invite Listeners ---
+    useEffect(() => {
+        const unsubInviteSuccess = audioService.onInviteSuccess((data) => {
+            toast.success(data.message);
+            setIsInvitingUser(false);
+            setInviteSearchQuery('');
+            setShowInviteDialog(false); // Close dialog on success
+        });
+        const unsubInviteFailed = audioService.onInviteFailed((data) => {
+            toast.error(data.reason);
+            setIsInvitingUser(false);
+        });
+        const unsubGuestJoined = audioService.onGuestJoined((data) => {
+            // Assuming room listener will update the room state with new guest in viewers array
+            // If not, you might need to manually update room state here
+            console.log('Guest joined event received in component:', data);
+            toast.success(`${data.guest.displayName || data.guest.username} joined as a guest!`);
+            // Potentially refresh room data or optimistically add to UI if presence isn't fast enough
+        });
+
+        return () => {
+            unsubInviteSuccess();
+            unsubInviteFailed();
+            unsubGuestJoined();
+        };
+    }, []); // Empty dependency array, listeners set up once
+
+    // --- Effect for User Search Results for Invite ---
+    useEffect(() => {
+        const unsubscribe = audioService.onUserSearchResultsForInvite((data) => {
+            console.log('[SideRoomComponent] Received search results in component:', data); // Log results arrival
+            if (data.error) {
+                toast.error(data.error);
+                setInviteSearchResults([]);
+            } else {
+                setInviteSearchResults(data.users);
+            }
+        });
+        return () => unsubscribe();
+    }, []);
+
+    // --- Debounced search function for inviting users ---
+    const debouncedSearchForInvite = useCallback(
+        debounce((query: string) => {
+            if (query.trim().length >= 2) {
+                console.log(`[SideRoomComponent] Debounced search executing for: "${query.trim()}"`);
+                audioService.searchUsersForInvite(query.trim());
+            }
+        }, 300), // 300ms debounce
+        [] // audioService should be stable, not needed in deps
+    );
+
+    const handleInviteSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const newQuery = event.target.value;
+        console.log(`[SideRoomComponent] handleInviteSearchChange: "${newQuery}"`); // Log input change
+        setInviteSearchQuery(newQuery);
+        setSelectedInviteeForInvite(null); // Clear selected user if query changes
+        if (newQuery.trim().length >= 2) {
+            setShowInviteDropdown(true);
+            debouncedSearchForInvite(newQuery);
+        } else {
+            setShowInviteDropdown(false);
+            setInviteSearchResults([]);
+        }
+    };
+
+    const handleSelectInvitee = (user: UserProfile) => {
+        setSelectedInviteeForInvite(user);
+        setInviteSearchQuery(user.username); // Update TextField to show selected username
+        setShowInviteDropdown(false);
+        setInviteSearchResults([]); // Clear results after selection
+    };
+
+    const handleClickAwayInviteDropdown = () => {
+        setShowInviteDropdown(false);
+    };
 
     // --- UI Components ---
     const ParticipantGridItem: React.FC<{ participant: PresenceData }> = ({ participant }) => {
@@ -496,6 +907,14 @@ const SideRoomComponent: React.FC = () => {
                                     sx={{ position: 'absolute', top: 4, left: 4 }}
                                 />
                             )}
+                            {participant.role === 'guest' && (
+                                 <Chip 
+                                    label="Guest" 
+                                    size="small" 
+                                    color="secondary" // Or another distinct color
+                                    sx={{ position: 'absolute', top: 4, left: 4 }}
+                                />
+                            )}
                         </Paper>
                     </Link>
 
@@ -582,6 +1001,42 @@ const SideRoomComponent: React.FC = () => {
                     Join the audio to start talking or listening.
                 </Alert>
             )}
+
+            {/* Video Player Section */}
+            {currentVideoUrl && (
+                <Box sx={{ mt: 3, mb: 2, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1, backgroundColor: 'action.hover' }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                        <Typography variant="subtitle1" sx={{ textAlign: 'center', flexGrow: 1 }}>Shared Video</Typography>
+                        {isRoomOwner && (
+                            <Tooltip title="Clear Shared Video">
+                                <IconButton onClick={handleClearSharedVideo} size="small">
+                                    <ClearIcon />
+                                </IconButton>
+                            </Tooltip>
+                        )}
+                    </Box>
+                    <Box
+                        sx={{
+                            position: 'relative',
+                            paddingBottom: '56.25%', // 16:9 aspect ratio
+                            height: 0,
+                            overflow: 'hidden',
+                            maxWidth: '100%',
+                            background: '#000',
+                            '& iframe': {
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                height: '100%',
+                                border: 0,
+                            },
+                        }}
+                    >
+                        {renderVideoPlayer(currentVideoUrl)}
+                    </Box>
+                </Box>
+            )}
         </Box>
     );
 
@@ -608,10 +1063,26 @@ const SideRoomComponent: React.FC = () => {
         handleMenuClose();
     }, [handleMenuClose]);
 
-    const handleInviteMembers = useCallback(() => {
+    const handleOpenInviteDialog = useCallback(() => {
         setShowInviteDialog(true);
+        setInviteSearchQuery('');
+        setSelectedInviteeForInvite(null);
+        setInviteSearchResults([]);
+        setShowInviteDropdown(false);
         handleMenuClose();
     }, [handleMenuClose]);
+
+    const handleSendInvite = useCallback(async () => {
+        if (!currentUser?.uid || !roomId) return;
+
+        if (!selectedInviteeForInvite || !selectedInviteeForInvite.username) {
+            toast.error("Please search and select a user to invite.");
+            return;
+        }
+
+        setIsInvitingUser(true);
+        audioService.inviteUserToRoom(roomId!, currentUser.uid, selectedInviteeForInvite.username);
+    }, [currentUser?.uid, roomId, selectedInviteeForInvite, setIsInvitingUser]);
 
     const handleDeleteRoom = useCallback(async () => {
         if (!roomId || !isRoomOwner) return;
@@ -662,20 +1133,68 @@ const SideRoomComponent: React.FC = () => {
 
     // Update the renderRoomHeader function
     const renderRoomHeader = () => (
-        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+        <Box sx={{ 
+            p: 2, 
+            borderBottom: 1, 
+            borderColor: 'divider',
+            // Corrected logic for headerGradient
+            backgroundColor: room?.style?.headerGradient 
+                ? `linear-gradient(to right, ${room?.style?.headerColor || theme.palette.primary.main}, ${room?.style?.accentColor || theme.palette.secondary.light})` // Gradient when true (Switch ON)
+                : room?.style?.headerColor || theme.palette.background.paper, // Solid color when false (Switch OFF)
+            color: room?.style?.textColor || 'inherit',
+        }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                 <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                    <Typography variant="h6">{room?.name}</Typography>
+                    <Typography
+                        variant="h6"
+                        sx={{
+                            fontFamily: room?.style?.font || AVAILABLE_FONTS[0],
+                            fontSize: room?.style?.headerFontSize ? `${room.style.headerFontSize}px` : '1.25rem',
+                            fontWeight: 600,
+                            // color is inherited from parent Box
+                        }}
+                    >
+                        {room?.name}
+                    </Typography>
                     {ownerData && (
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography
+                            variant="caption"
+                            sx={{ 
+                                opacity: room?.style?.textColor ? 0.85 : 1, // Slightly less opacity if custom text color
+                                fontFamily: room?.style?.font || AVAILABLE_FONTS[0],
+                                // color is inherited
+                            }}
+                        >
                             Host: {ownerData.username}
                         </Typography>
                     )}
                 </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     {isAudioConnected && <AudioDeviceSelector />}
+                    <Tooltip title={currentUserHearted ? "Unheart Room" : "Heart Room"}>
+                        <IconButton 
+                            onClick={handleHeartRoom} 
+                            color={currentUserHearted ? "error" : "inherit"} 
+                            sx={{ color: currentUserHearted ? theme.palette.error.main : room?.style?.accentColor || 'inherit' }}
+                            disabled={isHearting}
+                        >
+                            {currentUserHearted ? <FavoriteIcon /> : <FavoriteBorderIcon />}
+                        </IconButton>
+                    </Tooltip>
+                    <Badge 
+                        badgeContent={roomHeartCount > 0 ? roomHeartCount : "0"} 
+                        sx={{ 
+                            mr: 1,
+                            '& .MuiBadge-badge': {
+                                backgroundColor: room?.style?.accentColor || theme.palette.primary.main,
+                                color: room?.style?.textColor && room?.style?.accentColor ? theme.palette.getContrastText(room.style.accentColor) : theme.palette.primary.contrastText 
+                            }
+                        }} 
+                    >
+                    </Badge>
                     <Tooltip title="Share">
-                        <IconButton onClick={handleShareRoom}>
+                        <IconButton onClick={handleShareRoom} sx={{ color: room?.style?.accentColor || 'inherit' }}>
                             <ShareIcon />
                         </IconButton>
                     </Tooltip>
@@ -685,21 +1204,15 @@ const SideRoomComponent: React.FC = () => {
                             alt="Sade AI Chat"
                             onClick={() => setShowSadeChat(true)} 
                             sx={{ 
-                                width: 32, 
-                                height: 32, 
-                                cursor: 'pointer', 
-                                '&:hover': { 
-                                    opacity: 0.8 
-                                },
-                                border: '1px solid', // Optional: Add a border
-                                borderColor: 'primary.light' // Optional: Border color
+                                width: 32, height: 32, cursor: 'pointer', '&:hover': { opacity: 0.8 },
+                                border: `1px solid ${room?.style?.accentColor || theme.palette.primary.light}`
                             }}
                         />
                     </Tooltip>
                     {isRoomOwner && (
                         <>
                             <Tooltip title="Room Settings">
-                                <IconButton onClick={handleMenuClick}>
+                                <IconButton onClick={handleMenuClick} sx={{ color: room?.style?.accentColor || 'inherit' }}>
                                     <MoreVert />
                                 </IconButton>
                             </Tooltip>
@@ -716,7 +1229,8 @@ const SideRoomComponent: React.FC = () => {
                                     <ListItemIcon><Palette fontSize="small" /></ListItemIcon>
                                     Customize
                                 </MenuItem>
-                                <MenuItem onClick={handleInviteMembers}>
+                                {/* Restore Invite option within owner menu */}
+                                <MenuItem onClick={handleOpenInviteDialog}>
                                     <ListItemIcon><PersonAdd fontSize="small" /></ListItemIcon>
                                     Invite
                                 </MenuItem>
@@ -728,14 +1242,17 @@ const SideRoomComponent: React.FC = () => {
                         </>
                     )}
                     <Tooltip title="Leave Room">
-                        <IconButton onClick={() => navigate('/side-rooms')} disabled={isProcessing}>
+                        <IconButton onClick={() => navigate('/side-rooms')} disabled={isProcessing} sx={{ color: room?.style?.accentColor || 'inherit' }}>
                             <ExitToApp />
                         </IconButton>
                     </Tooltip>
                 </Box>
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="caption" color="text.secondary">
+                <Typography 
+                    variant="caption" 
+                    sx={{ fontFamily: room?.style?.font || AVAILABLE_FONTS[0] }}
+                >
                     {onlineParticipants.length} Online
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
@@ -748,6 +1265,8 @@ const SideRoomComponent: React.FC = () => {
                                 onClick={handleToggleMute}
                                 startIcon={isMicMuted ? <MicOff /> : <Mic />}
                                 disabled={isProcessing}
+                                sx={{ backgroundColor: !isMicMuted && room?.style?.accentColor ? room.style.accentColor : undefined, fontFamily: room?.style?.font || AVAILABLE_FONTS[0], 
+                                      color: !isMicMuted && room?.style?.accentColor ? theme.palette.getContrastText(room.style.accentColor) : undefined }}
                             >
                                 {isMicMuted ? 'Unmute' : 'Mute'}
                             </Button>
@@ -757,31 +1276,20 @@ const SideRoomComponent: React.FC = () => {
                                 color="error"
                                 onClick={handleLeaveAudio}
                                 disabled={isProcessing}
+                                sx={{ fontFamily: room?.style?.font || AVAILABLE_FONTS[0] }}
                             >
                                 Leave Audio
                             </Button>
-                            <Tooltip title="Play Sound Effect (WIP)">
-                                <span>
-                                    <IconButton
-                                        onClick={handlePlayBeepClick}
-                                        disabled={isProcessing}
-                                        size="small"
-                                        color="info"
-                                    >
-                                        <MusicNote />
-                                    </IconButton>
-                                </span>
-                            </Tooltip>
-                            <Tooltip title="Upload Sound (WIP)">
-                                <IconButton
-                                    onClick={handleUploadSoundClick}
-                                    disabled={isProcessing}
+                            <Tooltip title="Share Video Link">
+                        <IconButton 
+                                    onClick={handleOpenShareVideoDialog}
+                                    disabled={isProcessing || (!isRoomOwner && !isGuest)} // Allow owner or guest
                                     size="small"
                                     color="secondary"
                                 >
-                                    <UploadFile />
-                                </IconButton>
-                            </Tooltip>
+                                    <LinkIcon />
+                        </IconButton>
+                    </Tooltip>
                         </>
                     ) : (
                         <Button
@@ -791,22 +1299,14 @@ const SideRoomComponent: React.FC = () => {
                             onClick={handleJoinAudio}
                             startIcon={<VolumeUp />}
                             disabled={!hasRoomAccess || isProcessing}
+                            sx={{ backgroundColor: room?.style?.accentColor, fontFamily: room?.style?.font || AVAILABLE_FONTS[0],
+                                  color: room?.style?.accentColor ? theme.palette.getContrastText(room.style.accentColor) : undefined }}
                         >
                             Join Audio
                         </Button>
                     )}
                 </Box>
             </Box>
-
-            {/* --- Add Hidden File Input somewhere (doesn't matter where visually) --- */}
-            <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="audio/*"
-                style={{ display: 'none' }}
-                id="sound-upload-input"
-            />
         </Box>
     );
 
@@ -983,224 +1483,742 @@ const SideRoomComponent: React.FC = () => {
         toast.success("Sade AI chat cleared"); // Optional feedback
     };
 
+    // Helper function to get embed URL
+    const getVideoEmbedUrl = (url: string): string | null => {
+        url = url.trim();
+        let videoId: string | null = null;
+
+        // YouTube
+        if (url.includes('youtube.com/watch?v=')) {
+            videoId = new URL(url).searchParams.get('v');
+        } else if (url.includes('youtu.be/')) {
+            videoId = url.substring(url.lastIndexOf('/') + 1).split('?')[0];
+        }
+        if (videoId) return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+
+        // TikTok (basic placeholder - requires oEmbed or more complex handling)
+        // For now, just returning a message, actual embedding is more complex
+        if (url.includes('tiktok.com/')) {
+            // Simple iframe approach if available, otherwise might need oEmbed
+            // Example: return `https://www.tiktok.com/embed/v2/${videoId}`; (this is hypothetical)
+            // toast.info("TikTok embedding is more complex and not fully supported yet in this example.");
+            return null; // Or a placeholder iframe if a generic embed exists
+        }
+
+        // Instagram Reels (similar to TikTok, requires oEmbed)
+        if (url.includes('instagram.com/reel/')) {
+            // toast.info("Instagram Reels embedding is more complex and not fully supported yet in this example.");
+            return null;
+        }
+        
+        // If no specific platform matched, but it's a direct video file (less common for sharing)
+        if (url.match(/\.(mp4|webm|ogg)$/i)) {
+          return url; // Can be used in a <video> tag directly
+        }
+
+        toast.error("Unsupported video URL or format. Try a YouTube link.");
+        return null;
+    };
+
+    const renderVideoPlayer = (videoUrl: string) => {
+        const embedUrl = getVideoEmbedUrl(videoUrl);
+
+        if (!embedUrl) {
+            if (videoUrl.match(/\.(mp4|webm|ogg)$/i)) {
+                 return (
+                    <video
+                        src={videoUrl}
+                        controls
+                        autoPlay
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                        onError={() => toast.error("Failed to load video.")}
+                    />
+                );
+            }
+            return <Typography sx={{p:2, textAlign: 'center'}}>Unsupported video link or error loading video.</Typography>;
+        }
+
+        if (embedUrl.startsWith('https://www.youtube.com/embed/')) {
+            return (
+                <iframe
+                    src={embedUrl}
+                    title="Shared Video"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                />
+            );
+        }
+        // Add more conditions here for TikTok, Reels if direct iframe embed URLs are found
+        // For now, this will fall through to the unsupported message if getVideoEmbedUrl returns null
+        // or a non-YouTube URL that isn't a direct video file.
+        return <Typography sx={{p:2, textAlign: 'center'}}>Video format not directly embeddable. Try a YouTube link.</Typography>;
+    };
+
+    // --- Heart Feature Handler ---
+    const handleHeartRoom = async () => {
+        if (!currentUser || !currentUser.uid || !roomId || !room) return;
+
+        const heartRef = doc(db, 'sideRooms', roomId, 'heartedBy', currentUser.uid);
+        const roomRef = doc(db, 'sideRooms', roomId);
+
+        try {
+            await runTransaction(db, async (transaction) => {
+                const heartDoc = await transaction.get(heartRef);
+                const roomDoc = await transaction.get(roomRef);
+
+                if (!roomDoc.exists()) {
+                    throw "Room does not exist!";
+                }
+
+                // const currentHeartCount = roomDoc.data().heartCount || 0; // Not needed for optimistic updates with listeners
+                const userProfile = await getDoc(doc(db, 'users', currentUser.uid));
+                const username = userProfile.exists() ? userProfile.data()?.username || currentUser.displayName : 'Someone';
+
+                if (heartDoc.exists()) {
+                    // Unheart the room
+                    transaction.delete(heartRef);
+                    transaction.update(roomRef, { heartCount: increment(-1) });
+                } else {
+                    // Heart the room
+                    transaction.set(heartRef, {
+                        userId: currentUser.uid,
+                        username: username,
+                        timestamp: serverTimestamp()
+                    });
+                    transaction.update(roomRef, { heartCount: increment(1) });
+                }
+            });
+        } catch (error) {
+            console.error("Error hearting room:", error);
+            toast.error("Failed to update heart status.");
+        }
+    };
+
+    // --- Construct Meta Tag Values ---
+    const pageTitle = room ? `${room.name} - SideEye` : (loading ? 'Loading Room...' : 'Room Not Found - SideEye');
+    const pageDescription = room ? (room.description || 'Join the conversation on SideEye.') : 'Join the conversation on SideEye.';
+    // Ensure you have a real default image URL
+    const defaultImageUrl = `${window.location.origin}/default-app-logo.png`; // Replace with your actual default image path
+    const imageUrl = room?.thumbnailUrl || defaultImageUrl;
+    const pageUrl = `${window.location.origin}/side-room/${roomId || ''}`;
+
     // --- Loading & Error States ---
-    if (loading) {
+    if (loading && !room) { // Adjusted loading condition to show loading until room data is available for Helmet
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-                <CircularProgress />
-            </Box>
+            <>
+                <Helmet>
+                    <title>Loading Room... - SideEye</title>
+                </Helmet>
+                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+                    <CircularProgress />
+                </Box>
+            </>
         );
     }
 
-    if (error) {
+    if (error && !room) { // Show error if room couldn't be loaded
         return (
-            <Box sx={{ p: 3 }}>
-                <Alert severity="error">{error}</Alert>
-                <Button onClick={() => navigate('/side-rooms')} sx={{ mt: 1 }}>
-                    Back to Rooms
-                </Button>
-            </Box>
+             <>
+                <Helmet>
+                    <title>Error Loading Room - SideEye</title>
+                </Helmet>
+                <Box sx={{ p: 3, textAlign: 'center' }}>
+                    <Alert severity="error">{error}</Alert>
+                    <Button onClick={() => navigate('/discover')} sx={{ mt: 2 }}> {/* Changed to /discover */}
+                        Back to Discover
+                    </Button>
+                </Box>
+            </>
         );
     }
+    
+    // --- Style Save Handler (ensure this is correctly defined as per last step) ---
+    const handleSaveStyle = async () => {
+        if (!roomId || !room) {
+            toast.error("Cannot save style: Room data is missing.");
+            return;
+        }
+        if (!currentUser) {
+            toast.error("You must be logged in to change the style.");
+            return;
+        }
+        if (!isRoomOwner) {
+            toast.error("Only the room owner can change the style.");
+            return;
+        }
+
+        const selectedTheme = PREDEFINED_THEMES.find(t => t.name === selectedThemeName);
+        if (!selectedTheme) {
+            toast.error("Invalid theme selected. Defaulting to first theme.");
+            const defaultTheme = PREDEFINED_THEMES[0];
+            const newStyleFromDefault: RoomStyle = {
+                themeName: defaultTheme.name,
+                headerColor: defaultTheme.headerColor,
+                backgroundColor: defaultTheme.backgroundColor,
+                textColor: defaultTheme.textColor,
+                accentColor: defaultTheme.accentColor,
+                font: selectedFont, 
+                headerFontSize: selectedTextSize, 
+                headerGradient: useHeaderGradient,
+                backgroundGradient: useBackgroundGradient,
+                customCss: room.style?.customCss || '',
+                bannerUrl: room.style?.bannerUrl || '',
+                stickers: room.style?.stickers || [],
+                glitterEffect: room.style?.glitterEffect || false, 
+                thumbnailUrl: room.style?.thumbnailUrl || room.thumbnailUrl || '' 
+            };
+             try {
+                const roomRef = doc(db, 'sideRooms', roomId);
+                await updateDoc(roomRef, { 
+                    style: newStyleFromDefault,
+                    lastActive: serverTimestamp()
+                });
+                toast.success('Room style updated (defaulted theme)!');
+                setShowStyleDialog(false);
+            } catch (error) {
+                console.error('Error updating room style with default theme:', error);
+                toast.error('Failed to update room style.');
+            } finally {
+                setIsProcessing(false);
+            }
+            return; 
+        }
+
+        const newStyle: RoomStyle = {
+            themeName: selectedTheme.name,
+            headerColor: selectedTheme.headerColor,
+            backgroundColor: selectedTheme.backgroundColor,
+            textColor: selectedTheme.textColor,
+            accentColor: selectedTheme.accentColor,
+            font: selectedFont,
+            headerFontSize: selectedTextSize,
+            headerGradient: useHeaderGradient,
+            backgroundGradient: useBackgroundGradient,
+            customCss: room.style?.customCss || '',
+            bannerUrl: room.style?.bannerUrl || '',
+            stickers: room.style?.stickers || [],
+            glitterEffect: room.style?.glitterEffect || false, 
+            thumbnailUrl: room.style?.thumbnailUrl || room.thumbnailUrl || '' 
+        };
+
+        setIsProcessing(true);
+        try {
+            const roomRef = doc(db, 'sideRooms', roomId);
+            await updateDoc(roomRef, { 
+                style: newStyle,
+                lastActive: serverTimestamp()
+            });
+            toast.success('Room style updated successfully!');
+            setShowStyleDialog(false);
+        } catch (error) {
+            console.error('Error updating room style:', error);
+            toast.error('Failed to update room style.');
+        } finally {
+            setIsProcessing(false);
+        }
+    };
 
     // --- Main Return ---
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-            {renderRoomHeader()}
-            {renderRoomContent()}
+        <>
+            <Helmet>
+                <title>{pageTitle}</title>
+                <meta name="description" content={pageDescription} />
+                {/* Open Graph / Facebook */}
+                <meta property="og:type" content="website" />
+                <meta property="og:url" content={pageUrl} />
+                <meta property="og:title" content={pageTitle} />
+                <meta property="og:description" content={pageDescription} />
+                <meta property="og:image" content={imageUrl} />
+                <meta property="og:image:width" content="1200" />
+                <meta property="og:image:height" content="630" />
+                {/* Twitter */}
+                <meta name="twitter:card" content="summary_large_image" />
+                <meta name="twitter:url" content={pageUrl} />
+                <meta name="twitter:title" content={pageTitle} />
+                <meta name="twitter:description" content={pageDescription} />
+                <meta name="twitter:image" content={imageUrl} />
+            </Helmet>
 
-            {/* Dialogs */}
-            {showEditDialog && room && (
-                <RoomForm
-                    open={showEditDialog}
-                    onClose={() => setShowEditDialog(false)}
-                    onSubmit={async (data, thumbnailFile) => {
-                        setIsProcessing(true);
-                        try {
-                            if (!roomId) throw new Error("Room ID is missing");
-                            const roomRef = doc(db, 'sideRooms', roomId!);
-                            let thumbnailUrl = data.thumbnailUrl;
+            <Box sx={{ 
+                display: 'flex',
+                flexDirection: 'column',
+                height: '100vh',
+                fontFamily: room?.style?.font || AVAILABLE_FONTS[0],
+                // Corrected logic for backgroundGradient
+                backgroundColor: room?.style?.backgroundGradient
+                    ? `linear-gradient(to bottom right, ${room?.style?.backgroundColor || theme.palette.background.default}, ${room?.style?.accentColor || theme.palette.secondary.main})` // Gradient when true (Switch ON)
+                    : room?.style?.backgroundColor || theme.palette.background.default, // Solid color when false (Switch OFF)
+                color: room?.style?.textColor || theme.palette.text.primary,
+            }}>
+                {/* Conditional rendering of header and content */}
+                {room && renderRoomHeader()} 
+                {room && renderRoomContent()}
+                
+                {/* Dialogs */}
+                {showEditDialog && room && (
+                    <RoomForm
+                        open={showEditDialog}
+                        onClose={() => setShowEditDialog(false)}
+                        onSubmit={async (data, thumbnailFile) => {
+                            setIsProcessing(true);
+                            try {
+                                if (!roomId) throw new Error("Room ID is missing");
+                                const roomRef = doc(db, 'sideRooms', roomId!);
+                                let thumbnailUrl = data.thumbnailUrl;
 
-                            if (thumbnailFile) {
-                                toast.loading('Uploading thumbnail...', { id: 'thumbnail-edit-upload' });
-                                try {
-                                    const storageRef = ref(storage, `sideRoomThumbnails/${roomId}/${thumbnailFile.name}`);
-                                    const snapshot = await uploadBytes(storageRef, thumbnailFile);
-                                    thumbnailUrl = await getDownloadURL(snapshot.ref);
-                                    toast.dismiss('thumbnail-edit-upload');
-                                    toast.success('Thumbnail updated!');
-                                } catch (uploadError) {
-                                    console.error("Error uploading thumbnail during edit:", uploadError);
-                                    toast.dismiss('thumbnail-edit-upload');
-                                    toast.error("Failed to upload new thumbnail.");
-                                    thumbnailUrl = room?.thumbnailUrl;
+                                if (thumbnailFile) {
+                                    toast.loading('Uploading thumbnail...', { id: 'thumbnail-edit-upload' });
+                                    try {
+                                        const storageRef = ref(storage, `sideRoomThumbnails/${roomId}/${thumbnailFile.name}`);
+                                        const snapshot = await uploadBytes(storageRef, thumbnailFile);
+                                        thumbnailUrl = await getDownloadURL(snapshot.ref);
+                                        toast.dismiss('thumbnail-edit-upload');
+                                        toast.success('Thumbnail updated!');
+                                    } catch (uploadError) {
+                                        console.error("Error uploading thumbnail during edit:", uploadError);
+                                        toast.dismiss('thumbnail-edit-upload');
+                                        toast.error("Failed to upload new thumbnail.");
+                                        // Keep existing thumbnail if new upload fails
+                                        thumbnailUrl = room?.thumbnailUrl; 
+                                    }
                                 }
+
+                                const updateData: Partial<SideRoom> = { ...data };
+                                
+                                // Only update thumbnailUrl if it's a new string value
+                                // This prevents accidentally setting it to undefined if thumbnailFile was null
+                                // and data.thumbnailUrl was also initially undefined.
+                                if (typeof thumbnailUrl === 'string' && thumbnailUrl) {
+                                    updateData.thumbnailUrl = thumbnailUrl;
+                                } else if (thumbnailUrl === null && data.thumbnailUrl === undefined && room?.thumbnailUrl) {
+                                    // This case handles if the user *cleared* an existing thumbnail (not implemented in form, but defensive)
+                                    // or if thumbnailFile was null and initialData didn't have one.
+                                    // For now, if new thumbnail is null, we keep the old one or let it be.
+                                    // If you add a "remove thumbnail" feature, this logic would need adjustment.
+                                }
+
+                                await updateDoc(roomRef, updateData);
+                                toast.success('Room updated successfully');
+                                setShowEditDialog(false);
+                            } catch (error) {
+                                console.error('Error updating room:', error);
+                                toast.error('Failed to update room');
+                            } finally {
+                                setIsProcessing(false);
                             }
-
-                            const updateData: Partial<SideRoom> = { ...data };
-
-                            if (typeof thumbnailUrl === 'string' && thumbnailUrl) {
-                                updateData.thumbnailUrl = thumbnailUrl;
-                            }
-
-                            await updateDoc(roomRef, updateData);
-                            toast.success('Room updated successfully');
-                            setShowEditDialog(false);
-                        } catch (error) {
-                            console.error('Error updating room:', error);
-                            toast.error('Failed to update room');
-                        }
-                    }}
-                    initialData={room}
-                    title="Edit Room"
-                    submitButtonText="Save Changes"
-                />
-            )}
-
-            {/* Share Dialog */}
-            <Dialog open={showShareDialog} onClose={() => setShowShareDialog(false)}>
-                <DialogTitle>Share Room</DialogTitle>
-                <DialogContent>
-                    <TextField
-                        fullWidth
-                        value={`${window.location.origin}/side-room/${roomId}`}
-                        InputProps={{
-                            readOnly: true,
                         }}
-                        sx={{ mt: 1 }}
+                        initialData={room}
+                        title="Edit Room"
+                        submitButtonText="Save Changes"
                     />
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setShowShareDialog(false)}>Close</Button>
-                    <Button
-                        variant="contained"
-                        onClick={() => {
-                            navigator.clipboard.writeText(`${window.location.origin}/side-room/${roomId}`);
-                            toast.success('Room link copied to clipboard');
-                            setShowShareDialog(false);
-                        }}
-                    >
-                        Copy Link
-                    </Button>
-                </DialogActions>
-            </Dialog>
+                )}
 
-            {/* --- Sade AI Chat Dialog --- */}
-            <Dialog 
-                open={showSadeChat} 
-                onClose={() => setShowSadeChat(false)} 
-                fullWidth 
-                maxWidth="sm" 
-                aria-labelledby="sade-ai-chat-dialog-title"
-            >
-                <DialogTitle id="sade-ai-chat-dialog-title">Chat with Sade AI ✨</DialogTitle>
-                <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', maxHeight: '70vh' }}>
-                    {/* Chat messages will go here */}
-                    <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 1, mb: 1 }}>
-                        {/* Display Sade AI messages */}
-                        {sadeMessages.length === 0 && (
-                            <Typography variant="caption" color="text.secondary" align="center" sx={{ display: 'block', mt: 4 }}>
-                                Start chatting with Sade AI...
-                            </Typography>
-                        )}
-                        {sadeMessages.map((msg, idx) => (
-                            <Box
-                                key={idx}
-                                sx={{
-                                    display: 'flex',
-                                    justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start',
-                                    mb: 1.5,
-                                }}
-                            >
-                                {msg.sender === 'ai' && (
-                                    <Avatar
-                                        src="/images/sade-avatar.jpg" // Ensure this path is correct relative to your public folder
-                                        alt="Sade AI Avatar"
-                                        sx={{ width: 32, height: 32, mr: 1 }}
-                                    />
-                                )}
+                {/* Share Video Dialog */}
+                <Dialog open={showShareVideoDialog} onClose={handleCloseShareVideoDialog} maxWidth="sm" fullWidth>
+                    <DialogTitle>Share a Video</DialogTitle>
+                    <DialogContent>
+                        <TextField
+                            autoFocus
+                            margin="dense"
+                            id="video-url-input"
+                            label="Video URL (YouTube, TikTok, Reels)"
+                            type="url"
+                            fullWidth
+                            variant="standard"
+                            value={videoInputUrl}
+                            onChange={(e) => setVideoInputUrl(e.target.value)}
+                            placeholder="e.g., https://www.youtube.com/watch?v=..."
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    handleShareVideoUrl();
+                                }
+                            }}
+                        />
+                        <Typography variant="caption" color="textSecondary" sx={{mt:1, display: 'block'}}>
+                            Currently, YouTube links are best supported for direct embedding.
+                        </Typography>
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={handleCloseShareVideoDialog}>Cancel</Button>
+                        <Button onClick={handleShareVideoUrl} variant="contained">Share Video</Button>
+                    </DialogActions>
+                </Dialog>
+
+                {/* Share Dialog */}
+                <Dialog open={showShareDialog} onClose={() => setShowShareDialog(false)} maxWidth="xs" fullWidth>
+                    <DialogTitle sx={{ textAlign: 'center' }}>Share Room</DialogTitle>
+                    <DialogContent>
+                        <TextField
+                            fullWidth
+                            value={`${window.location.origin}/side-room/${roomId}`}
+                            InputProps={{
+                                readOnly: true,
+                                endAdornment: (
+                                    <IconButton
+                                        onClick={() => {
+                                            const roomLink = `${window.location.origin}/side-room/${roomId}`;
+                                            navigator.clipboard.writeText(roomLink);
+                                            toast.success('Room link copied to clipboard!');
+                                        }}
+                                        edge="end"
+                                    >
+                                        <ContentCopyIcon />
+                                    </IconButton>
+                                )
+                            }}
+                            sx={{ mt: 1 }}
+                            label="Room Link"
+                            variant="filled"
+                        />
+                    </DialogContent>
+                    <DialogActions sx={{ p: 2, justifyContent: 'center' }}>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center' }}>
+                            {[
+                                { name: 'Instagram', Icon: InstagramIcon, scheme: 'instagram://', inAppLinkInstructions: "Open Instagram and add it to your Story using the 'Link' sticker, or paste it in a DM." },
+                                { name: 'Snapchat', Icon: ChatIcon, scheme: 'snapchat://', inAppLinkInstructions: "Open Snapchat and paste it in a Snap or Chat." }, // Using ChatIcon as placeholder
+                                { name: 'TikTok', Icon: MusicNote, scheme: null, inAppLinkInstructions: "Open TikTok and paste the link in your video description or a comment." }, // Using MusicNote as placeholder, no reliable scheme
+                                { name: 'X (Twitter)', Icon: TwitterIcon, webUrl: (link: string, text: string) => `https://twitter.com/intent/tweet?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}` },
+                                { name: 'Facebook', Icon: FacebookIcon, webUrl: (link: string) => `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link)}` },
+                                { name: 'WhatsApp', Icon: WhatsAppIcon, webUrl: (link: string, text: string) => `https://wa.me/?text=${encodeURIComponent(text + ' ' + link)}` },
+                            ].map((platform) => (
+                                <Tooltip title={`Share to ${platform.name}`} key={platform.name}>
+                                    <IconButton
+                                        onClick={async () => {
+                                            const roomLink = `${window.location.origin}/side-room/${roomId}`;
+                                            const shareTitle = room?.name || 'Check out this Side Room!';
+                                            const shareText = `Join the conversation in "${shareTitle}"`; // Link will be added by navigator.share or webUrl
+
+                                            if (navigator.share) {
+                                                try {
+                                                    await navigator.share({
+                                                        title: shareTitle,
+                                                        text: `${shareText}: ${roomLink}`, // Include link in text for navigator.share
+                                                        url: roomLink,
+                                                    });
+                                                    toast.success(`Shared to ${platform.name} via system dialog!`);
+                                                    setShowShareDialog(false);
+                                                    return;
+                                                } catch (error) {
+                                                    console.warn(`Web Share API failed for ${platform.name}:`, error);
+                                                    // Fall through to platform-specific logic if Web Share fails or is cancelled
+                                                }
+                                            }
+
+                                            // Platform-specific fallback
+                                            if (platform.webUrl) {
+                                                window.open(platform.webUrl(roomLink, `${shareText}: ${roomLink}`), '_blank');
+                                                setShowShareDialog(false);
+                                            } else {
+                                                // For apps like Instagram, Snapchat, TikTok (clipboard + scheme/instructions)
+                                                navigator.clipboard.writeText(roomLink)
+                                                    .then(() => {
+                                                        toast.success(`Link copied! ${platform.inAppLinkInstructions}`, { duration: 7000 });
+                                                        if (platform.scheme) {
+                                                            window.open(platform.scheme, '_blank');
+                                                        }
+                                                    })
+                                                    .catch(err => {
+                                                        console.error(`Failed to copy link for ${platform.name}: `, err);
+                                                        toast.error('Failed to copy link.');
+                                                    });
+                                                setShowShareDialog(false);
+                                            }
+                                        }}
+                                        size="large"
+                                        sx={{ '&:hover': { transform: 'scale(1.1)' } }}
+                                    >
+                                        <platform.Icon fontSize="large" />
+                                    </IconButton>
+                                </Tooltip>
+                            ))}
+                        </Box>
+                    </DialogActions>
+                     <DialogActions sx={{ justifyContent: 'center', pb: 2}}>
+                        <Button onClick={() => setShowShareDialog(false)} >Close</Button>
+                    </DialogActions>
+                </Dialog>
+
+                {/* --- Sade AI Chat Dialog --- */}
+                <Dialog 
+                    open={showSadeChat} 
+                    onClose={() => setShowSadeChat(false)} 
+                    fullWidth 
+                    maxWidth="sm" 
+                    aria-labelledby="sade-ai-chat-dialog-title"
+                >
+                    <DialogTitle id="sade-ai-chat-dialog-title">Chat with Sade AI ✨</DialogTitle>
+                    <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', maxHeight: '70vh' }}>
+                        {/* Chat messages will go here */}
+                        <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 1, mb: 1 }}>
+                            {/* Display Sade AI messages */}
+                            {sadeMessages.length === 0 && (
+                                <Typography variant="caption" color="text.secondary" align="center" sx={{ display: 'block', mt: 4 }}>
+                                    Start chatting with Sade AI...
+                                </Typography>
+                            )}
+                            {sadeMessages.map((msg, idx) => (
                                 <Box
-                                    sx={{
-                                        bgcolor: msg.sender === 'user' ? 'primary.light' : '#f0f0f0',
-                                        color: msg.sender === 'user' ? 'primary.contrastText' : 'text.primary',
-                                        borderRadius: msg.sender === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                                        px: 1.5,
-                                        py: 1,
-                                        maxWidth: '80%',
-                                        fontSize: '0.95rem',
-                                        wordBreak: 'break-word',
+                                    key={idx}
+                        sx={{ 
+                                        display: 'flex',
+                                        justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start',
+                                        mb: 1.5,
                                     }}
                                 >
-                                    {msg.text}
+                                    {msg.sender === 'ai' && (
+                                        <Avatar
+                                            src="/images/sade-avatar.jpg" // Ensure this path is correct relative to your public folder
+                                            alt="Sade AI Avatar"
+                                            sx={{ width: 32, height: 32, mr: 1 }}
+                                        />
+                                    )}
+                                    <Box
+                                        sx={{
+                                            bgcolor: msg.sender === 'user' ? 'primary.light' : '#f0f0f0',
+                                            color: msg.sender === 'user' ? 'primary.contrastText' : 'text.primary',
+                                            borderRadius: msg.sender === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                                            px: 1.5,
+                                            py: 1,
+                                            maxWidth: '80%',
+                                            fontSize: '0.95rem',
+                                            wordBreak: 'break-word',
+                                        }}
+                                    >
+                                        {msg.text}
+                                    </Box>
                                 </Box>
-                            </Box>
-                        ))}
-                         {sadeLoading && (
-                            <Box
-                              sx={{
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                justifyContent: 'flex-start',
-                                mb: 1.5,
-                              }}
+                            ))}
+                             {sadeLoading && (
+                                <Box
+                                  sx={{
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                    justifyContent: 'flex-start',
+                                    mb: 1.5,
+                                  }}
+                                >
+                                  <Avatar
+                                    src="/images/sade-avatar.jpg"
+                                    alt="Sade AI Avatar"
+                                    sx={{ width: 32, height: 32, mr: 1 }} // Match style
+                                  />
+                                  <Box
+                                    sx={{
+                                      bgcolor: '#f0f0f0', // Match AI bubble style
+                                      borderRadius: '16px 16px 16px 4px',
+                                      px: 1,
+                                      py: 0.5,
+                                      display: 'inline-block',
+                                    }}
+                                  >
+                                    <TypingIndicator />
+                                  </Box>
+                                </Box>
+                             )}
+                             <div ref={sadeMessagesEndRef} /> {/* Target for scrolling */}
+                        </Box>
+                        {/* Input area */}
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 'auto' }}>
+                            <TextField 
+                                fullWidth 
+                                placeholder="Type message..." 
+                                size="small" 
+                                value={sadeInput} 
+                                onChange={e => setSadeInput(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter' && sadeInput.trim()) sendSadeMessage(); }}
+                                disabled={sadeLoading}
+                            />
+                            <Button 
+                                variant="contained" 
+                                onClick={() => sendSadeMessage()} 
+                                disabled={sadeLoading || !sadeInput.trim()}
                             >
-                              <Avatar
-                                src="/images/sade-avatar.jpg"
-                                alt="Sade AI Avatar"
-                                sx={{ width: 32, height: 32, mr: 1 }} // Match style
-                              />
-                              <Box
-                                sx={{
-                                  bgcolor: '#f0f0f0', // Match AI bubble style
-                                  borderRadius: '16px 16px 16px 4px',
-                                  px: 1,
-                                  py: 0.5,
-                                  display: 'inline-block',
+                                Send
+                            </Button>
+                            {/* Add Search Button */}
+                            <IconButton
+                                color="primary"
+                                onClick={() => sendSadeMessage(sadeInput, true)} // Call with forceSearch=true
+                                disabled={sadeLoading || !sadeInput.trim()}
+                                size="small"
+                                sx={{ border: '1px solid', borderColor: 'primary.light', ml: 0.5 }}
+                                title="Search the web for this query"
+                            >
+                                <SearchIcon fontSize="small"/>
+                            </IconButton>
+                        </Box>
+                    </DialogContent>
+                    <DialogActions>
+                         <Button onClick={handleClearSadeChat} disabled={sadeMessages.length === 0}>Clear Chat</Button>
+                         <Button onClick={() => setShowSadeChat(false)}>Close</Button>
+                     </DialogActions>
+                </Dialog>
+
+                {/* Invite User Dialog */}
+                <Dialog open={showInviteDialog} onClose={() => setShowInviteDialog(false)} maxWidth="xs" fullWidth>
+                    <DialogTitle>Invite User to Room</DialogTitle>
+                    <ClickAwayListener onClickAway={handleClickAwayInviteDropdown}> 
+                        <DialogContent>
+                            <TextField
+                                autoFocus
+                                margin="dense"
+                                id="invitee-username-input"
+                                label="Search Username to Invite"
+                                type="text"
+                                fullWidth
+                                variant="standard"
+                                value={inviteSearchQuery}
+                                onChange={handleInviteSearchChange}
+                                disabled={isInvitingUser}
+                                inputRef={inviteSearchRef} // Attach ref here
+                                autoComplete="off"
+                                onKeyDown={(e) => {
+                                    // Basic Enter key handling - now uses selectedInviteeForInvite
+                                    if (e.key === 'Enter' && selectedInviteeForInvite && !isInvitingUser) {
+                                        handleSendInvite();
+                                    }
                                 }}
-                              >
-                                <TypingIndicator />
-                              </Box>
-                            </Box>
-                         )}
-                         <div ref={sadeMessagesEndRef} /> {/* Target for scrolling */}
-                    </Box>
-                    {/* Input area */}
-                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 'auto' }}>
-                        <TextField 
-                            fullWidth 
-                            placeholder="Type message..." 
-                            size="small" 
-                            value={sadeInput} 
-                            onChange={e => setSadeInput(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter' && sadeInput.trim()) sendSadeMessage(); }}
-                            disabled={sadeLoading}
-                        />
+                            />
+                            <Popper
+                                open={showInviteDropdown && inviteSearchResults.length > 0}
+                                anchorEl={inviteSearchRef.current}
+                                placement="bottom-start"
+                                style={{ width: inviteSearchRef.current?.offsetWidth, zIndex: 1301 }} // Ensure zIndex is above dialog
+                            >
+                                <Paper elevation={3} sx={{ mt: 0.5, maxHeight: 200, overflowY: 'auto' }}>
+                                    <List dense>
+                                        {inviteSearchResults.map((user) => (
+                                            <ListItem
+                                                key={user.id}
+                                                button
+                                                onClick={() => handleSelectInvitee(user)}
+                                            >
+                                                <ListItemAvatar>
+                                                    <Avatar src={user.profilePic || undefined} sx={{ width: 32, height: 32 }} />
+                                                </ListItemAvatar>
+                                                <ListItemText primary={user.name} secondary={`@${user.username}`} />
+                                            </ListItem>
+                                        ))}
+                                    </List>
+                                </Paper>
+                            </Popper>
+                        </DialogContent>
+                    </ClickAwayListener>
+                    <DialogActions>
+                        <Button onClick={() => {
+                            setShowInviteDialog(false);
+                            setInviteSearchQuery(''); // Use the new state setter
+                            setSelectedInviteeForInvite(null);
+                            setInviteSearchResults([]);
+                            setShowInviteDropdown(false);
+                        }} disabled={isInvitingUser}>Cancel</Button>
                         <Button 
+                            onClick={handleSendInvite} 
                             variant="contained" 
-                            onClick={() => sendSadeMessage()} 
-                            disabled={sadeLoading || !sadeInput.trim()}
+                            disabled={isInvitingUser || !selectedInviteeForInvite} // Disable if no user selected
                         >
-                            Send
+                            {isInvitingUser ? 'Sending Invite...' : 'Send Invite'}
                         </Button>
-                        {/* Add Search Button */}
-                        <IconButton
-                            color="primary"
-                            onClick={() => sendSadeMessage(sadeInput, true)} // Call with forceSearch=true
-                            disabled={sadeLoading || !sadeInput.trim()}
-                            size="small"
-                            sx={{ border: '1px solid', borderColor: 'primary.light', ml: 0.5 }}
-                            title="Search the web for this query"
-                        >
-                            <SearchIcon fontSize="small"/>
-                        </IconButton>
-                    </Box>
-                </DialogContent>
-                <DialogActions>
-                     <Button onClick={handleClearSadeChat} disabled={sadeMessages.length === 0}>Clear Chat</Button>
-                     <Button onClick={() => setShowSadeChat(false)}>Close</Button>
-                 </DialogActions>
-            </Dialog>
-        </Box>
+                    </DialogActions>
+                </Dialog>
+
+                {/* Style Dialog */}
+                <Dialog open={showStyleDialog} onClose={() => setShowStyleDialog(false)} maxWidth="xs" fullWidth>
+                    <DialogTitle>Customize Room Style</DialogTitle>
+                    <DialogContent>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+                            <FormControl fullWidth margin="dense">
+                                <InputLabel id="theme-select-label">Theme</InputLabel>
+                                <Select
+                                    labelId="theme-select-label"
+                                    value={selectedThemeName}
+                                    label="Theme"
+                                    onChange={(e: SelectChangeEvent<string>) => setSelectedThemeName(e.target.value)}
+                                >
+                                    {PREDEFINED_THEMES.map((theme) => (
+                                        <MenuItem key={theme.name} value={theme.name}>
+                                            {theme.name}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+
+                            <FormControlLabel
+                                control={<Switch checked={useHeaderGradient} onChange={(e) => setUseHeaderGradient(e.target.checked)} />}
+                                label="Use Header Gradient"
+                            />
+                            <FormControlLabel
+                                control={<Switch checked={useBackgroundGradient} onChange={(e) => setUseBackgroundGradient(e.target.checked)} />}
+                                label="Use Background Gradient"
+                            />
+
+                            <FormControl fullWidth margin="dense">
+                                <InputLabel id="font-select-label">Font</InputLabel>
+                                <Select
+                                    labelId="font-select-label"
+                                    value={selectedFont}
+                                    label="Font"
+                                    onChange={(e: SelectChangeEvent<string>) => setSelectedFont(e.target.value)}
+                                >
+                                    {AVAILABLE_FONTS.map((font) => (
+                                        <MenuItem key={font} value={font}>
+                                            {font}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+
+                            <FormControl fullWidth margin="dense">
+                                <InputLabel id="textsize-select-label">Text Size (Header/General)</InputLabel>
+                                <Select
+                                    labelId="textsize-select-label"
+                                    value={selectedTextSize.toString()} // Select value must be string
+                                    label="Text Size (Header/General)"
+                                    onChange={(e: SelectChangeEvent<string>) => setSelectedTextSize(Number(e.target.value))}
+                                >
+                                    {AVAILABLE_TEXT_SIZES.map((size) => (
+                                        <MenuItem key={size} value={size.toString()}>
+                                            {size}px
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+
+                        </Box>
+                    </DialogContent>
+                    <DialogActions sx={{ p: 3 }}> {/* <<< FOCUS HERE TO CLEAN UP */}
+                        <Button onClick={() => setShowStyleDialog(false)}>Cancel</Button>
+                        <Button onClick={handleSaveStyle} variant="contained" disabled={isProcessing}>
+                            {isProcessing ? 'Saving...' : 'Save Style'}
+                        </Button>
+                        {/* ENSURE NO OTHER BUTTONS/LOGIC FROM SHARE DIALOG ARE HERE */}
+                    </DialogActions>
+                </Dialog>
+            </Box>
+            {/* Heart Notification Pop-up */}
+            {latestHeartNotification && (
+                <Paper 
+                    elevation={4} 
+                    sx={{
+                        position: 'fixed',
+                        bottom: 20,
+                        left: 20,
+                        p: 1.5,
+                        backgroundColor: room?.style?.accentColor || theme.palette.success.light,
+                        color: room?.style?.accentColor ? theme.palette.getContrastText(room.style.accentColor) : theme.palette.success.contrastText,
+                        borderRadius: '8px',
+                        zIndex: 1500, 
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1
+                    }}
+                >
+                    <FavoriteIcon fontSize="small" />
+                    <Typography variant="body2" sx={{ fontFamily: room?.style?.font || AVAILABLE_FONTS[0] }}>{latestHeartNotification}</Typography>
+                </Paper>
+            )}
+        </>
     );
 };
 

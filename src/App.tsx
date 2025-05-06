@@ -53,6 +53,7 @@ import BottomNav from './components/BottomNav';
 import './App.css';
 import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
 import ReportPage from './pages/ReportPage';
+import { HelmetProvider } from 'react-helmet-async';
 
 
 const BottomNavWrapper: React.FC = () => {
@@ -181,24 +182,26 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ErrorBoundary>
-      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <CustomThemeProvider>
-          <ThemeContextProvider>
-            <CssBaseline />
-            <LocalizationProvider dateAdapter={AdapterDateFns}>
-              <AuthProvider>
-                <FirestoreProvider>
-                  <NotificationProvider>
-                    <RateLimiter>
-                      <AppContent />
-                    </RateLimiter>
-                  </NotificationProvider>
-                </FirestoreProvider>
-              </AuthProvider>
-            </LocalizationProvider>
-          </ThemeContextProvider>
-        </CustomThemeProvider>
-      </Router>
+      <HelmetProvider>
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <CustomThemeProvider>
+            <ThemeContextProvider>
+              <CssBaseline />
+              <LocalizationProvider dateAdapter={AdapterDateFns}>
+                <AuthProvider>
+                  <FirestoreProvider>
+                    <NotificationProvider>
+                      <RateLimiter>
+                        <AppContent />
+                      </RateLimiter>
+                    </NotificationProvider>
+                  </FirestoreProvider>
+                </AuthProvider>
+              </LocalizationProvider>
+            </ThemeContextProvider>
+          </CustomThemeProvider>
+        </Router>
+      </HelmetProvider>
     </ErrorBoundary>
   );
 };

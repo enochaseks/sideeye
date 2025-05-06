@@ -90,7 +90,7 @@ const Profile: React.FC = () => {
   const [editedBio, setEditedBio] = useState('');
   const [editedUsername, setEditedUsername] = useState('');
   const [joinedRooms, setJoinedRooms] = useState<UserSideRoom[]>([]);
-  const [createdRooms, setCreatedRooms] = useState<UserSideRoom[]>([]);
+  const [createdRooms, setCreatedRooms] = useState<SideRoom[]>([]);
   const [isDeactivated, setIsDeactivated] = useState(false);
   const navigate = useNavigate();
 
@@ -178,7 +178,8 @@ const Profile: React.FC = () => {
         )),
         getDocs(query(
           collection(db, 'sideRooms'),
-          where('ownerId', '==', targetUserId)
+          where('ownerId', '==', targetUserId),
+          where("deleted", "==", false)
         ))
       ]);
 
@@ -190,7 +191,7 @@ const Profile: React.FC = () => {
       setCreatedRooms(createdRoomsSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      } as UserSideRoom)));
+      } as SideRoom)));
 
     } catch (error) {
       console.error('Error in fetchUserData:', error);

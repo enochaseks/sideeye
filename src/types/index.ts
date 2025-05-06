@@ -41,6 +41,7 @@ export interface RoomStyle {
   glitterEffect: boolean;
   headerFontSize: number;
   stickers: string[];
+  themeName?: string;
 }
 
 export interface RecordedStream {
@@ -53,10 +54,11 @@ export interface RecordedStream {
 }
 
 export interface RoomMember {
+  displayName: string;
   userId: string;
   username: string;
   avatar: string;
-  role: 'owner' | 'viewer';
+  role: 'owner' | 'viewer' | 'guest';
   joinedAt: Date | Timestamp;
   isMuted?: boolean;
   isSpeaking?: boolean;
@@ -81,6 +83,10 @@ export interface SideRoom {
   style?: RoomStyle;
   thumbnailUrl?: string;
   category?: string;
+  deleted?: boolean;
+  deletedAt?: Timestamp;
+  currentSharedVideoUrl?: string;
+  heartCount?: number;
 }
 
 export interface SideReveal {
@@ -212,6 +218,7 @@ export interface UserProfile {
   id: string;
   name: string;
   username: string;
+  username_lower?: string;
   email: string;
   profilePic: string;
   bio: string;
