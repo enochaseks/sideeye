@@ -285,7 +285,7 @@ const SideRoomComponent: React.FC = () => {
     // --- Socket.IO Connection useEffect --- (NEW)
     useEffect(() => {
         // Determine backend URL 
-        const backendUrl = process.env.REACT_APP_API_URL || window.location.origin;
+        const backendUrl = 'https://sideeye-backend-production.up.railway.app'; // MODIFIED: Hardcoded backend URL
         console.log(`[SideRoomComponent] Connecting Socket.IO to: ${backendUrl}`);
 
         // Establish connection
@@ -519,11 +519,11 @@ const SideRoomComponent: React.FC = () => {
                 // -------------
                 
                 // --- Use Absolute URL from Environment Variable ---
-                const backendUrl = process.env.REACT_APP_API_URL;
-                if (!backendUrl) {
-                  console.error('REACT_APP_API_URL is not defined in the environment!');
-                  throw new Error('API URL configuration is missing.');
-                }
+                const backendUrl = 'https://sideeye-backend-production.up.railway.app'; // MODIFIED: Hardcoded backend URL
+                // if (!backendUrl) { // REMOVED: No longer needed as URL is hardcoded
+                //   console.error('REACT_APP_API_URL is not defined in the environment!');
+                //   throw new Error('API URL configuration is missing.');
+                // }
                 const apiUrl = `${backendUrl}/api/stream-token`;
                 console.log(`[Stream] Fetching token from: ${apiUrl}`); // Log the full URL
                 
