@@ -8,7 +8,6 @@ import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 import bcrypt from 'bcryptjs';
 import { checkAndResetRestrictions } from '../services/contentModeration';
-import { audioService } from '../services/audioService';
 
 export interface User extends FirebaseUser {
   profile?: UserProfile;
@@ -395,9 +394,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Starting logout process...');
       
       // Disconnect audio before signing out
-      console.log('Disconnecting audio service...');
-      audioService.disconnect(); 
-      console.log('Audio service disconnected.');
+      // console.log('Disconnecting audio service...');
+      // audioService.disconnect();
+      // console.log('Audio service disconnected.');
 
       await firebaseSignOut(auth);
       console.log('Firebase sign out successful.');

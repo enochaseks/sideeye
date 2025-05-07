@@ -21,7 +21,7 @@ import {
   VolumeUp as VolumeUpIcon,
   Settings as SettingsIcon
 } from '@mui/icons-material';
-import { audioService } from '../services/audioService';
+// import { audioService } from '../services/audioService'; // Ensure this is commented out
 import { audioDeviceManager } from '../services/audioDeviceManager';
 import type { AudioDevice } from '../services/audioDeviceManager';
 
@@ -59,7 +59,7 @@ const AudioDeviceSelector: React.FC = () => {
     setLoading('input');
     setError(null);
     try {
-      const success = await audioService.setAudioInput(deviceId);
+      const success = await audioDeviceManager.setInputDevice(deviceId);
       if (success) {
         setSelectedInput(deviceId);
       } else {
@@ -79,7 +79,7 @@ const AudioDeviceSelector: React.FC = () => {
     setLoading('output');
     setError(null);
     try {
-      const success = await audioService.setAudioOutput(deviceId);
+      const success = await audioDeviceManager.setOutputDevice(deviceId);
       if (success) {
         setSelectedOutput(deviceId);
       } else {
