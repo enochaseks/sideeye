@@ -517,7 +517,17 @@ const SideRoomComponent: React.FC = () => {
                 console.log("[Stream] Data being sent - Display Name:", currentUser.displayName);
                 console.log("[Stream] Data being sent - Photo URL:", currentUser.photoURL);
                 // -------------
-                const response = await fetch('/api/stream-token', {
+                
+                // --- Use Absolute URL from Environment Variable ---
+                const backendUrl = process.env.REACT_APP_API_URL;
+                if (!backendUrl) {
+                  console.error('REACT_APP_API_URL is not defined in the environment!');
+                  throw new Error('API URL configuration is missing.');
+                }
+                const apiUrl = `${backendUrl}/api/stream-token`;
+                console.log(`[Stream] Fetching token from: ${apiUrl}`); // Log the full URL
+                
+                const response = await fetch(apiUrl, { // Use the absolute apiUrl
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
