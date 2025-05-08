@@ -507,7 +507,13 @@ const SideRoomComponent: React.FC = () => {
 
     // --- Stream API Token Fetch & Client Initialization ---
     useEffect(() => {
-        if (!currentUser?.uid || streamToken) return; // Don't fetch if no user or token already fetched
+        // MODIFIED: Add guard for room, and add room to dependency array
+        if (!currentUser?.uid || streamToken || !room) {
+            if (!room) {
+                console.warn("[Stream Token Fetch] Waiting for room data before fetching token...");
+            }
+            return; 
+        }
 
         const fetchStreamToken = async () => {
             try {
@@ -554,10 +560,16 @@ const SideRoomComponent: React.FC = () => {
             }
         };
         fetchStreamToken();
-    }, [currentUser, streamToken]);
+    }, [currentUser, streamToken, room]); // MODIFIED: Add room to dependency array
 
     useEffect(() => {
-        if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider) return;
+        // MODIFIED: Add guard for room, and add room to dependency array
+        if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider || !room) {
+            if (!room) {
+                console.warn("[Stream Client Init] Waiting for room data before initializing client...");
+            }
+            return;
+        }
 
         console.log("[Stream] Initializing StreamVideoClient with token.");
         // Ensure we use the most reliable source for displayName and photoURL from AuthContext
@@ -593,11 +605,15 @@ const SideRoomComponent: React.FC = () => {
                 setStreamClientForProvider(null); // Clear the client
             }
         }
-    }, [streamToken, currentUser, streamClientForProvider]);
+    }, [streamToken, currentUser, streamClientForProvider, room]); // MODIFIED: Add room to dependency array
 
     // --- Effect to Join/Create Stream Call ---
     useEffect(() => {
-        if (!attemptToJoinCall || !streamClientForProvider || !roomId || !currentUser?.uid) {
+        // MODIFIED: Add guard for room to ensure it's loaded
+        if (!attemptToJoinCall || !streamClientForProvider || !roomId || !currentUser?.uid || !room) {
+            if (!room) {
+                console.warn("[Stream Call Join] Waiting for room data before attempting to join call...");
+            }
             if (attemptToJoinCall) { 
                 setAttemptToJoinCall(false);
             }
@@ -634,7 +650,7 @@ const SideRoomComponent: React.FC = () => {
             setAttemptToJoinCall(false); 
         };
 
-    }, [attemptToJoinCall, streamClientForProvider, roomId, currentUser?.uid, activeStreamCallInstance]);
+    }, [attemptToJoinCall, streamClientForProvider, roomId, currentUser?.uid, activeStreamCallInstance, room]); // MODIFIED: Add room to dependency array
 
 
     // --- Effect to Leave Stream Call on Unmount or Room Change ---
