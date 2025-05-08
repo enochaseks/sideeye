@@ -535,6 +535,7 @@ const SideRoomComponent: React.FC = () => {
                          userName: currentUser.displayName || currentUser.email, // Keep this
                          userImage: currentUser.photoURL || undefined // Add userImage
                         }),
+                    credentials: 'include' // ADDED: Explicitly include credentials
                 });
                 if (!response.ok) {
                     const errorData = await response.json();
