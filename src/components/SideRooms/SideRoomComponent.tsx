@@ -595,7 +595,14 @@ const SideRoomComponent: React.FC = () => {
     }, [currentUser, roomId, hasRoomAccess, streamToken]); // Added roomId, hasRoomAccess
 
     useEffect(() => {
-        if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider) return;
+        // Log the API Key value (REMOVE THIS LOG IN PRODUCTION LATER)
+        console.log(`[Stream Client Init Check] REACT_APP_STREAM_API_KEY value: ${process.env.REACT_APP_STREAM_API_KEY}`);
+        
+        if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider) {
+             // Add log to show why it might be skipping
+             console.log(`[Stream Client Init Effect] Skipping client initialization. Conditions: streamToken=${!!streamToken}, currentUser=${!!currentUser?.uid}, apiKey=${!!process.env.REACT_APP_STREAM_API_KEY}, clientExists=${!!streamClientForProvider}`);
+             return;
+        }
 
         console.log("[Stream] Initializing StreamVideoClient with token.");
         // Ensure we use the most reliable source for displayName and photoURL from AuthContext
@@ -619,8 +626,9 @@ const SideRoomComponent: React.FC = () => {
             setStreamClientForProvider(client);
             console.log("[Stream] StreamVideoClient initialized for Provider.");
         } catch (error) {
-            console.error("[Stream] Error initializing StreamVideoClient:", error);
-            toast.error("Failed to initialize Stream video client.");
+            console.error("[Stream] Error initializing StreamVideoClient:", error); // Log the full error
+            // Ensure toast shows the specific error
+            toast.error(`Failed to initialize Stream video client: ${error instanceof Error ? error.message : String(error)}`); 
         }
         // No direct cleanup for client here, StreamVideo provider handles it.
         // To force disconnect on user change/logout:
