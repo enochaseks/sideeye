@@ -227,6 +227,7 @@ const SideRoomComponent: React.FC = () => {
     const [activeStreamCallInstance, setActiveStreamCallInstance] = useState<Call | null>(null);
     const [isStreamJoiningCall, setIsStreamJoiningCall] = useState<boolean>(false);
     const [attemptToJoinCall, setAttemptToJoinCall] = useState<boolean>(false); 
+    const [isFetchingToken, setIsFetchingToken] = useState<boolean>(false); // ADDED: State to prevent token fetch spam
 
     // --- State for Heart Feature ---
     const [roomHeartCount, setRoomHeartCount] = useState<number>(0);
@@ -508,14 +509,20 @@ const SideRoomComponent: React.FC = () => {
     // --- Stream API Token Fetch & Client Initialization ---
     useEffect(() => {
         // MODIFIED: Add guard for room, and add room to dependency array
-        if (!currentUser?.uid || streamToken || !room) {
-            if (!room) {
+        // MODIFIED: Add guard for isFetchingToken
+        if (!currentUser?.uid || streamToken || !room || isFetchingToken) { 
+            if (!room && !isFetchingToken) { // Only log waiting if not already fetching
                 console.warn("[Stream Token Fetch] Waiting for room data before fetching token...");
+            }
+            if (isFetchingToken) {
+                console.log("[Stream Token Fetch] Already fetching token, skipping run.");
             }
             return; 
         }
 
         const fetchStreamToken = async () => {
+            setIsFetchingToken(true); // Set flag BEFORE starting async
+            console.log("[Stream Token Fetch] Attempting to fetch token..."); 
             try {
                 // --- DETAILED LOGGING BEFORE FETCH --- 
                 console.log("[Stream Token Fetch - PRE-FETCH CHECK]");
@@ -577,10 +584,16 @@ const SideRoomComponent: React.FC = () => {
                 console.error('[Stream] Error fetching token:', error);
                 toast.error(`Stream Token Error: ${error.message}`);
                 setStreamToken(null); // Ensure it's null on error
+            } finally {
+                setIsFetchingToken(false); // Reset flag AFTER attempt completes (success or fail)
+                console.log("[Stream Token Fetch] Fetch attempt finished.");
             }
         };
+
+        // Trigger the fetch
         fetchStreamToken();
-    }, [currentUser, streamToken, room]); // MODIFIED: Add room to dependency array
+
+    }, [currentUser, streamToken, room, isFetchingToken]); // MODIFIED: Add room and isFetchingToken to dependency array
 
     useEffect(() => {
         // MODIFIED: Add guard for room, and add room to dependency array
