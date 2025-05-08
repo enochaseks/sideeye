@@ -537,9 +537,9 @@ const SideRoomComponent: React.FC = () => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                         userId: currentUser.uid,
-                         userName: currentUser.displayName || currentUser.email, // Keep this
-                         userImage: currentUser.photoURL || undefined // Add userImage
+                         userId: currentUser.uid, // UID should always exist if currentUser is present
+                         userName: currentUser.displayName || currentUser.email || 'UnknownUser', // Ensure a fallback
+                         userImage: currentUser.photoURL || undefined // Explicitly undefined if not present
                         }),
                 });
                 if (!response.ok) {
