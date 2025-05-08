@@ -1931,14 +1931,42 @@ const SideRoomComponent: React.FC = () => {
                  {/* Main Content Area */}
                  <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
                      {/* Loading/Error state BEFORE client/room is ready */}
-                    {!streamClientForProvider || !room ? (
+                    {!room ? ( // Case 1: Room data itself isn't loaded or doesn't exist
                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}>
-                            {loading && <CircularProgress />} 
-                            {!loading && !room && <Alert severity="error">Room not found.</Alert>}
-                            {!loading && room && !streamClientForProvider && <Typography>Initializing audio...</Typography>}
-                         </Box>
-                    ) : activeStreamCallInstance ? (
-                         // Client/Room Ready AND Call is Active: Render Stream UI
+                            {loading && <CircularProgress />}
+                            {/* Ensure error message for room not found also has a way back */}
+                            {!loading && <Alert severity="error">Room not found. <Button onClick={() => navigate('/discover')} sx={{ml:1}}>Back to Discover</Button></Alert>}
+                        </Box>
+                    ) : !streamClientForProvider ? ( // Case 2: Room data IS loaded, but Stream client is NOT ready
+                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', flexDirection: 'column', p: 2, textAlign: 'center' }}>
+                            {!process.env.REACT_APP_STREAM_API_KEY && hasRoomAccess ? (
+                                <Alert severity="error" sx={{mb: 2}}>
+                                    Audio client configuration error. The service cannot be initialized.
+                                    <Typography variant="caption" display="block" sx={{mt: 1}}> (Site admin: REACT_APP_STREAM_API_KEY is missing)</Typography>
+                                </Alert>
+                            ) : (streamToken === null && hasRoomAccess && currentUser?.uid && roomId) || (streamToken !== null && !streamClientForProvider && process.env.REACT_APP_STREAM_API_KEY) ? (
+                                // This covers:
+                                // 1. Token fetch pending/failed (streamToken is null, but conditions to fetch are met)
+                                // 2. Client init pending/failed (streamToken is present, API key is present, but client is not)
+                                <>
+                                    <CircularProgress sx={{mb: 2}}/>
+                                    <Typography>Initializing audio components...</Typography>
+                                    <Typography variant="caption">(If this persists, please check your connection or try refreshing.)</Typography>
+                                </>
+                            ) : !hasRoomAccess && currentUser?.uid ? ( // User is logged in but doesn't have access to this room's audio yet
+                                <Alert severity="info" sx={{mb: 2}}>
+                                    You currently don't have audio access to this room. If this is a private room, ensure you've joined correctly.
+                                </Alert>
+                            ) : (
+                                // Fallback: stream client not ready, but conditions for active initialization aren't fully met.
+                                // This could be due to !currentUser, etc.
+                                <Alert severity="info" sx={{mb: 2}}>
+                                    Audio service is waiting for user authentication or room access.
+                                </Alert>
+                            )}
+                            <Button onClick={() => window.location.reload()} sx={{mt: 2}} variant="outlined">Refresh Page</Button>
+                        </Box>
+                    ) : activeStreamCallInstance ? ( // Case 3: Room loaded, Stream client ready, Call active
                          <StreamVideo client={streamClientForProvider}>
                              <StreamCall call={activeStreamCallInstance}>
                                  <InsideStreamCallContent 
@@ -1958,12 +1986,11 @@ const SideRoomComponent: React.FC = () => {
                                  />
                              </StreamCall>
                          </StreamVideo>
-                     ) : (
-                         // Client/Room Ready, Call NOT Active: Render Firestore-based content
-                         renderRoomContent() // Render the original Firestore view
+                     ) : ( // Case 4: Room loaded, Stream client ready, Call NOT active
+                         renderRoomContent() // Shows participants and "Audio not connected. Use button in header."
                     )}
                  </Box>
-                 
+
                 {/* --- Share Video Dialog --- */}
                 <Dialog open={showShareVideoDialog} onClose={handleCloseShareVideoDialog} fullWidth maxWidth="sm">
                     <DialogTitle>Share a Video</DialogTitle>
