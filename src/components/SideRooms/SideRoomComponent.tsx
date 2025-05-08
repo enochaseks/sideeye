@@ -517,6 +517,26 @@ const SideRoomComponent: React.FC = () => {
 
         const fetchStreamToken = async () => {
             try {
+                // --- DETAILED LOGGING BEFORE FETCH --- 
+                console.log("[Stream Token Fetch - PRE-FETCH CHECK]");
+                console.log(`  - currentUser exists: ${!!currentUser}`);
+                console.log(`  - currentUser.uid: ${currentUser?.uid}`);
+                console.log(`  - currentUser.displayName (from Auth): ${currentUser?.displayName}`);
+                console.log(`  - currentUser.email: ${currentUser?.email}`);
+                console.log(`  - currentUser.photoURL (from Auth): ${currentUser?.photoURL}`);
+                console.log(`  - room exists: ${!!room}`);
+                console.log(`  - room.id: ${room?.id}`);
+                // Ensure all necessary data is present
+                if (!currentUser?.uid || !room?.id) {
+                    console.error("[Stream Token Fetch - ABORTING] Missing critical user or room ID.");
+                    throw new Error("User or Room data missing, cannot fetch token.");
+                }
+                const userNameForStream = currentUser.displayName || currentUser.email || 'UnknownUser';
+                const userImageForStream = currentUser.photoURL || undefined;
+                console.log(`  - userName being sent: ${userNameForStream}`);
+                console.log(`  - userImage being sent: ${userImageForStream}`);
+                // -------------------------------------
+
                 console.log("[Stream] Fetching token for user:", currentUser.uid);
                 // --- ADD LOGS --- 
                 console.log("[Stream] Data being sent - User ID:", currentUser.uid);
