@@ -71,7 +71,7 @@ import {
     Mic, // Re-added Mic
     MicOff, // Re-added MicOff
     VolumeUp, // Re-added VolumeUp
-    VolumeUp as VolumeUpIcon, // Re-added VolumeUpIcon
+    VolumeUp as VolumeUpIcon, // Re-added VolumeUpIcon (KEEP FIRST ONE)
     VolumeOff as VolumeOffIcon, // Re-added VolumeOffIcon
     PersonRemove,
     MusicNote, // Re-added MusicNote
@@ -89,7 +89,10 @@ import {
     Link as LinkIcon,
     Clear as ClearIcon,
     Favorite as FavoriteIcon,
-    FavoriteBorder as FavoriteBorderIcon
+    FavoriteBorder as FavoriteBorderIcon,
+    ScreenShare as ScreenShareIcon, // ADDED
+    StopScreenShare as StopScreenShareIcon, // ADDED
+    // VolumeUp as VolumeUpIcon // REMOVE DUPLICATE
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -106,7 +109,8 @@ import {
     User, 
     useCall, 
     ParticipantView, 
-    StreamVideoParticipant
+    StreamVideoParticipant,
+    // Track // REMOVE Track import
 } from '@stream-io/video-react-sdk'; // UPDATED Stream imports, ADD useCall
 // import AudioDeviceSelector from '../AudioDeviceSelector'; // REMOVED for now, Stream handles devices
 import { storage } from '../../services/firebase';
@@ -115,6 +119,54 @@ import TypingIndicator from '../TypingIndicator';
 import { Helmet } from 'react-helmet-async';
 import { debounce } from 'lodash';
 import { io, Socket } from 'socket.io-client'; // Import socket.io-client
+
+// --- YouTube Iframe Player API Types (Basic) ---
+declare global {
+    interface Window {
+        onYouTubeIframeAPIReady?: () => void;
+        YT?: {
+            Player: new (id: string, options: YT.PlayerOptions) => YT.Player;
+            PlayerState: {
+                ENDED: number;
+                PLAYING: number;
+                PAUSED: number;
+                BUFFERING: number;
+                CUED: number;
+            };
+        };
+    }
+}
+
+namespace YT {
+    export interface Player {
+        playVideo: () => void;
+        pauseVideo: () => void;
+        stopVideo: () => void;
+        loadVideoById: (videoId: string) => void;
+        destroy: () => void;
+        getPlayerState: () => number;
+        // Add other methods as needed
+    }
+    export interface PlayerOptions {
+        height?: string;
+        width?: string;
+        videoId?: string;
+        playerVars?: PlayerVars;
+        events?: PlayerEvents;
+    }
+    export interface PlayerVars {
+        autoplay?: 0 | 1;
+        controls?: 0 | 1;
+        rel?: 0 | 1;
+        // Add other vars as needed
+    }
+    export interface PlayerEvents {
+        onReady?: (event: { target: Player }) => void;
+        onStateChange?: (event: { data: number; target: Player }) => void;
+        // Add other events as needed
+    }
+}
+// --- End YouTube Iframe Player API Types ---
 
 
 // Define type for Sade AI messages
@@ -281,6 +333,23 @@ const SideRoomComponent: React.FC = () => {
 
     // --- State for Owner Leave Confirmation --- (NEW)
     const [showEndRoomConfirmDialog, setShowEndRoomConfirmDialog] = useState(false);
+
+    // --- State for Screen Sharing --- (NEW)
+    const [isScreenSharing, setIsScreenSharing] = useState(false); // Local state to manage button appearance
+    const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024); // Example breakpoint for desktop
+
+    // --- State for YouTube Player ---
+    const [youtubePlayer, setYoutubePlayer] = useState<YT.Player | null>(null);
+    const youtubePlayerPlaceholderId = 'youtube-player-placeholder';
+
+    // --- Effect for Desktop Check --- (NEW)
+    useEffect(() => {
+        const handleResize = () => {
+            setIsDesktop(window.innerWidth > 1024);
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     // --- Socket.IO Connection useEffect --- (NEW)
     useEffect(() => {
@@ -1288,6 +1357,13 @@ const SideRoomComponent: React.FC = () => {
                             <ExitToApp />
                         </IconButton>
                     </Tooltip>
+                    {isRoomOwner && isDesktop && activeStreamCallInstance && ( // ADDED screen share button condition
+                        <Tooltip title={isScreenSharing ? "Stop Sharing Screen" : "Share Screen (Desktop Only)"}>
+                            <IconButton onClick={handleToggleScreenShare} sx={{ color: room?.style?.accentColor || 'inherit' }}>
+                                {isScreenSharing ? <StopScreenShareIcon /> : <ScreenShareIcon />}
+                            </IconButton>
+                        </Tooltip>
+                    )}
                 </Box>
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1583,7 +1659,7 @@ const SideRoomComponent: React.FC = () => {
     };
 
     // Helper function to get embed URL
-    const getVideoEmbedUrl = (url: string): string | null => {
+    const getVideoEmbedUrl = (url: string): string | null => { // This will now just return videoId or null
         url = url.trim();
         let videoId: string | null = null;
 
@@ -1593,33 +1669,96 @@ const SideRoomComponent: React.FC = () => {
         } else if (url.includes('youtu.be/')) {
             videoId = url.substring(url.lastIndexOf('/') + 1).split('?')[0];
         }
-        if (videoId) return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+        if (videoId) return videoId; // Return only videoId
 
-        // TikTok (basic placeholder - requires oEmbed or more complex handling)
-        // For now, just returning a message, actual embedding is more complex
-        if (url.includes('tiktok.com/')) {
-            // Simple iframe approach if available, otherwise might need oEmbed
-            // Example: return `https://www.tiktok.com/embed/v2/${videoId}`; (this is hypothetical)
-            // toast.info("TikTok embedding is more complex and not fully supported yet in this example.");
-            return null; // Or a placeholder iframe if a generic embed exists
-        }
-
-        // Instagram Reels (similar to TikTok, requires oEmbed)
-        if (url.includes('instagram.com/reel/')) {
-            // toast.info("Instagram Reels embedding is more complex and not fully supported yet in this example.");
+        // TikTok, Instagram, direct files will return null for now
+        // as they are not handled by the YouTube API player
+        if (url.includes('tiktok.com/') || url.includes('instagram.com/reel/')) {
+            toast("TikTok/Instagram Reels will be shown as links soon."); // Ensure this is a standard toast call
             return null;
         }
-        
-        // If no specific platform matched, but it's a direct video file (less common for sharing)
         if (url.match(/\.(mp4|webm|ogg)$/i)) {
-          return url; // Can be used in a <video> tag directly
+            toast("Direct video files will be shown as links soon."); // Ensure this is a standard toast call
+            return null; 
         }
 
-        toast.error("Unsupported video URL or format. Try a YouTube link.");
-        return null;
+        toast.error("Unsupported video URL. Only YouTube links are currently embeddable.");
+            return null;
     };
 
-    const renderVideoPlayer = (videoUrl: string) => {
+    // --- Effect for YouTube Player Initialization ---
+    useEffect(() => {
+        const videoId = currentVideoUrl ? getVideoEmbedUrl(currentVideoUrl) : null;
+
+        const initializePlayer = () => {
+            if (youtubePlayer) {
+                youtubePlayer.destroy();
+                setYoutubePlayer(null);
+            }
+            if (videoId && document.getElementById(youtubePlayerPlaceholderId)) {
+                console.log(`[YouTube API] Initializing player for videoId: ${videoId}`);
+                const player = new window.YT!.Player(youtubePlayerPlaceholderId, {
+                    videoId: videoId,
+                    width: '100%',
+                    height: '100%', // Will be controlled by placeholder's parent div size
+                    playerVars: {
+                        autoplay: 0, // Start with autoplay 0, especially for mobile
+                        rel: 0,      // Do not show related videos at the end
+                        controls: 1  // Show YouTube player controls
+                    },
+                    events: {
+                        'onReady': (event) => {
+                            console.log('[YouTube API] Player ready.');
+                            // Optionally, try to play here if on desktop?
+                            // event.target.playVideo(); // Be cautious with autoplay
+                        },
+                        'onStateChange': (event) => {
+                            console.log('[YouTube API] Player state changed:', event.data);
+                            // Handle state changes if needed (e.g., video ended)
+                        }
+                    }
+                });
+                setYoutubePlayer(player);
+            } else if (!videoId && youtubePlayer) {
+                youtubePlayer.destroy();
+                setYoutubePlayer(null);
+            }
+        };
+
+        if (!window.YT || !window.YT.Player) {
+            console.log('[YouTube API] API not ready yet. Setting up onYouTubeIframeAPIReady.');
+            // Store a reference to the function to avoid re-defining it if the effect runs multiple times
+            // before the API loads. Or, ensure the API script is only loaded once.
+            window.onYouTubeIframeAPIReady = () => {
+                console.log('[YouTube API] onYouTubeIframeAPIReady called.');
+                initializePlayer();
+            };
+        } else {
+            console.log('[YouTube API] API already loaded. Initializing player directly.');
+            initializePlayer();
+        }
+
+        // Cleanup: Destroy player when component unmounts or video URL changes to null
+        return () => {
+            if (youtubePlayer) {
+                console.log('[YouTube API] Cleaning up player on unmount/URL change.');
+                youtubePlayer.destroy();
+                setYoutubePlayer(null);
+            }
+        };
+    // Ensure videoId is a dependency if it's derived outside and can change
+    // }, [currentVideoUrl, youtubePlayer]); // Removed youtubePlayer from deps to avoid loop on setYoutubePlayer
+    }, [currentVideoUrl]); // Re-run when currentVideoUrl changes
+
+
+    const renderVideoPlayer = (videoUrl: string) => { // videoUrl is still passed for consistency, but videoId is derived in useEffect
+        // const videoId = getVideoEmbedUrl(videoUrl); // videoId logic moved to useEffect
+
+        // Always render the placeholder. The useEffect will manage the player instance.
+        return <div id={youtubePlayerPlaceholderId} style={{ width: '100%', height: '100%' }} />; 
+
+        // Old iframe logic (REMOVE/COMMENT OUT):
+        /*
         const embedUrl = getVideoEmbedUrl(videoUrl);
 
         if (!embedUrl) {
@@ -1647,10 +1786,8 @@ const SideRoomComponent: React.FC = () => {
                 />
             );
         }
-        // Add more conditions here for TikTok, Reels if direct iframe embed URLs are found
-        // For now, this will fall through to the unsupported message if getVideoEmbedUrl returns null
-        // or a non-YouTube URL that isn't a direct video file.
         return <Typography sx={{p:2, textAlign: 'center'}}>Video format not directly embeddable. Try a YouTube link.</Typography>;
+        */
     };
 
     // --- Heart Feature Handler ---
@@ -1669,16 +1806,13 @@ const SideRoomComponent: React.FC = () => {
                     throw "Room does not exist!";
                 }
 
-                // const currentHeartCount = roomDoc.data().heartCount || 0; // Not needed for optimistic updates with listeners
                 const userProfile = await getDoc(doc(db, 'users', currentUser.uid));
                 const username = userProfile.exists() ? userProfile.data()?.username || currentUser.displayName : 'Someone';
 
                 if (heartDoc.exists()) {
-                    // Unheart the room
                     transaction.delete(heartRef);
                     transaction.update(roomRef, { heartCount: increment(-1) });
                 } else {
-                    // Heart the room
                     transaction.set(heartRef, {
                         userId: currentUser.uid,
                         username: username,
@@ -1892,6 +2026,42 @@ const SideRoomComponent: React.FC = () => {
         </Box>
     );
 
+    // --- Handler for Screen Sharing --- (NEW)
+    const handleToggleScreenShare = async () => {
+        if (!activeStreamCallInstance) {
+            toast.error("Audio/video call not active to share screen.");
+            return;
+        }
+        if (!isDesktop) {
+            toast.error("Screen sharing is only available on desktop devices.");
+            return;
+        }
+        try {
+            await activeStreamCallInstance.screenShare.toggle();
+            const currentlySharing = activeStreamCallInstance.screenShare.enabled;
+            setIsScreenSharing(currentlySharing);
+            if (currentlySharing) {
+                toast.success("Screen sharing started. Choose what to share.");
+            } else {
+                toast.success("Screen sharing stopped.");
+            }
+        } catch (error: any) {
+            console.error("Error toggling screen share:", error);
+            if (error.name === 'NotAllowedError' || error.message?.includes('Permission denied')) {
+                toast.error("Screen share permission denied. Please allow access in your browser.");
+            } else if (error.message?.includes('InvalidStateError')) {
+                toast.error("Cannot toggle screen share: an operation is already in progress or call state is invalid.");
+            } else if (error.message?.includes("getDisplayMedia is not supported") || error.message?.includes("getDisplayMedia API is not available")){
+                toast.error("Screen sharing is not supported by your browser.");
+            } else {
+                toast.error(`Failed to toggle screen sharing: ${error.message || 'Unknown error'}`);
+            }
+            if (activeStreamCallInstance.screenShare) {
+                 setIsScreenSharing(activeStreamCallInstance.screenShare.enabled);
+            }
+        }
+    };
+
     // Main return for SideRoomComponent
     return (
         <>
@@ -1933,10 +2103,10 @@ const SideRoomComponent: React.FC = () => {
                      {/* Loading/Error state BEFORE client/room is ready */}
                     {!room ? ( // Case 1: Room data itself isn't loaded or doesn't exist
                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}>
-                            {loading && <CircularProgress />}
+                            {loading && <CircularProgress />} 
                             {/* Ensure error message for room not found also has a way back */}
                             {!loading && <Alert severity="error">Room not found. <Button onClick={() => navigate('/discover')} sx={{ml:1}}>Back to Discover</Button></Alert>}
-                        </Box>
+                         </Box>
                     ) : !streamClientForProvider ? ( // Case 2: Room data IS loaded, but Stream client is NOT ready
                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', flexDirection: 'column', p: 2, textAlign: 'center' }}>
                             {!process.env.REACT_APP_STREAM_API_KEY && hasRoomAccess ? (
@@ -1990,7 +2160,7 @@ const SideRoomComponent: React.FC = () => {
                          renderRoomContent() // Shows participants and "Audio not connected. Use button in header."
                     )}
                  </Box>
-
+                 
                 {/* --- Share Video Dialog --- */}
                 <Dialog open={showShareVideoDialog} onClose={handleCloseShareVideoDialog} fullWidth maxWidth="sm">
                     <DialogTitle>Share a Video</DialogTitle>
@@ -2371,12 +2541,16 @@ const InsideStreamCallContent: React.FC<{
 }> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme }) => {
     const call = useCall(); // Ensure useCall is used here
     // Define hooks ONCE here
-    const { useParticipants, useMicrophoneState } = useCallStateHooks(); // Ensure these hooks are called
+    const { useParticipants, useMicrophoneState, useScreenShareState } = useCallStateHooks(); // Re-add useScreenShareState
     const participants = useParticipants(); 
-    const { isMute: localUserIsMute } = useMicrophoneState(); // Ensure localUserIsMute is defined here
+    const { isMute: localUserIsMute } = useMicrophoneState(); 
+    const screenShareState = useScreenShareState(); // Keep hook for isEnabled status
     const client = useStreamVideoClient(); 
     const navigate = useNavigate(); 
     const { currentUser } = useAuth(); 
+
+    // Find the participant who has an active screenShareStream property
+    const screenSharingParticipant = participants.find(p => p.screenShareStream);
 
     // Define handleLeaveCall within this component's scope
     const handleLeaveCall = () => {
@@ -2445,7 +2619,62 @@ const InsideStreamCallContent: React.FC<{
                 overflowY: 'auto', 
                 p: 2, 
             }}>
-                 {/* --- Video Player Section (Added) --- */}
+                 {/* --- Screen Share Display Section (NEW) --- */}
+                 {screenSharingParticipant && (
+                    <Box sx={{ 
+                        mb: 3, 
+                        p: 1, 
+                        border: `2px solid ${theme.palette.primary.main}`,
+                        borderRadius: 2, 
+                        backgroundColor: 'rgba(0,0,0,0.05)',
+                        boxShadow: theme.shadows[3],
+                    }}>
+                        {/* REMOVE Typography from here 
+                        <Typography variant="subtitle2" sx={{ textAlign: 'center', mb: 1, color: theme.palette.text.secondary }}>
+                            {screenSharingParticipant.name || screenSharingParticipant.userId} is sharing their screen
+                        </Typography>
+                        */}
+                        <Box sx={{
+                            // Simpler container styling for debugging
+                            width: '100%', 
+                            height: '300px', // Set an explicit height for now
+                            maxHeight: '50vh', // Limit height relative to viewport
+                            overflow: 'hidden', // Keep overflow hidden
+                            position: 'relative', // Keep relative for absolute positioning inside
+                            // background: '#000', // Remove background to ensure it's not hiding video
+                            border: '1px dashed grey', // Add border for visibility
+
+                            '& .str-video__participant-view': { 
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100% !important',
+                                height: '100% !important',
+                                border: 'none',
+                                display: 'flex', // Ensure flex layout
+                                justifyContent: 'center', // Center content
+                                alignItems: 'center', // Center content
+                                '& video': { 
+                                    width: '100%', // Let video width fill container
+                                    height: '100%', // Let video height fill container
+                                    objectFit: 'contain' // Important: fit video within bounds
+                                },
+                            },
+                        }}>
+                            <ParticipantView 
+                                participant={screenSharingParticipant} 
+                                trackType="screenShareTrack" 
+                            />
+                        </Box>
+                        {/* ADD Typography here, below the video Box */}
+                        <Typography variant="subtitle2" sx={{ textAlign: 'center', mt: 1, mb: 0.5, color: theme.palette.text.secondary }}>
+                            {screenSharingParticipant.name || screenSharingParticipant.userId} is sharing their screen
+                        </Typography>
+                    </Box>
+                 )}
+                 {/* --- End Screen Share Display Section --- */}
+
+                 {/* --- Video Player Section (Remains after screen share) --- */}
                  {currentVideoUrl && (
                      <Box sx={{ mt: 1, mb: 3, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1, backgroundColor: 'action.hover' }}>
                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
@@ -2611,7 +2840,8 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     const handleRemoteMuteToggle = async () => {
         handleMenuClose();
         if (onForceMuteToggle) {
-            onForceMuteToggle(participant.userId, participantIsMuted);
+            // Ensure participantIsMuted is correctly reflecting the participant's state, not local state
+            onForceMuteToggle(participant.userId, !participant.publishedTracks.includes('audio' as any));
         }
     };
     const handleKickUser = () => {
@@ -2640,7 +2870,8 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     // Assert the type of participant.custom
     const customData = participant.custom as StreamCustomParticipantData | undefined;
 
-    if (isLocalParticipant && localUserAuthData) {
+    // Corrected logic for displayName and avatarUrl, ensuring isLocalParticipant is available
+    if (isLocalParticipant && localUserAuthData) { // isLocalParticipant is a prop
         displayName = localUserAuthData.displayName || localUserAuthData.email || participant.userId; 
         avatarUrl = localUserAuthData.photoURL || participant.image || undefined; 
     } else if (customData && typeof customData.displayName === 'string' && customData.displayName.trim() !== '') {
@@ -2689,7 +2920,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                     cursor: isLocalParticipant ? 'pointer' : 'default', // Add cursor pointer for local user
                 }}
             />
-            {/* Mute Icon Display Logic */}
+            {/* Mute Icon Display Logic - Ensure isLocalParticipant is used */}
             {(isLocalParticipant ? localUserIsMute : participantIsMuted) && (
                 <MicOff 
                     sx={{ 
