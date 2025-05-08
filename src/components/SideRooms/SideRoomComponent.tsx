@@ -292,8 +292,9 @@ const SideRoomComponent: React.FC = () => {
         const socketInstance = io(backendUrl, {
             // Add auth or other options if needed, e.g.:
             // auth: { token: authToken }, 
-            // withCredentials: true, // If using cookies/sessions
-            reconnectionAttempts: 5 // Example: Limit reconnection attempts
+            // withCredentials: true, // If using cookies/sessions -- ENSURE THIS IS NOT ACTIVE FOR BASIC SOCKET CONNECTION
+            reconnectionAttempts: 5, // Example: Limit reconnection attempts
+            transports: ['websocket', 'polling'] // Explicitly define transports
         });
 
         socketInstance.on('connect', () => {
