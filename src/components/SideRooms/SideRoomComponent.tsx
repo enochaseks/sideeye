@@ -541,7 +541,7 @@ const SideRoomComponent: React.FC = () => {
                 const apiUrl = `${backendUrl}/api/stream-token`;
                 console.log(`[Stream] Fetching token from: ${apiUrl}`); // Log the full URL
                 
-                const response = await fetch(apiUrl, { // Use the absolute apiUrl
+                const response = await fetch(apiUrl, { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -550,10 +550,30 @@ const SideRoomComponent: React.FC = () => {
                          userImage: currentUser.photoURL || undefined // Explicitly undefined if not present
                         }),
                 });
+
+                // Log status and headers REGARDLESS of response.ok
+                console.log(`[Stream] Response status: ${response.status}`);
+                const headersObject: Record<string, string> = {}; // FIX: Define type for dynamic keys
+                response.headers.forEach((value, key) => { headersObject[key] = value; });
+                console.log('[Stream] Response headers:', JSON.stringify(headersObject, null, 2));
+
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || 'Failed to fetch Stream token');
+                    // Attempt to read body even if !ok, might fail
+                    let errorData = { error: `HTTP error! Status: ${response.status}` };
+                    try {
+                        const text = await response.text(); // Try reading as text first
+                        console.log('[Stream] Non-OK response body (text):', text);
+                        errorData = JSON.parse(text); // Try parsing as JSON
+                    } catch (e) {
+                        console.warn('[Stream] Could not parse non-OK response body as JSON.', e);
+                        // Use the status text as the error message if body parsing fails
+                        errorData.error = response.statusText || errorData.error;
+                    }
+                    // Use the parsed error OR the HTTP status error
+                    throw new Error(errorData?.error || `HTTP status ${response.status}`);
                 }
+
+                // If response IS ok, proceed to parse JSON
                 const { token } = await response.json();
                 if (!token) {
                     throw new Error('Stream token was not provided by backend.');
