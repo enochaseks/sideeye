@@ -512,9 +512,17 @@ const SideRoomComponent: React.FC = () => {
     };
 
     // --- Stream API Token Fetch & Client Initialization ---
+    // Add hasRoomAccess to dependency array
     useEffect(() => {
-        if (!currentUser?.uid || streamToken) return; // Don't fetch if no user or token already fetched
+        // Check conditions INSIDE the effect
+        // Ensure we have a user, a room ID, access permission, AND haven't fetched the token yet.
+        if (!currentUser?.uid || !roomId || !hasRoomAccess || streamToken) {
+            // If conditions aren't met, explicitly log why we're not fetching
+            // console.log(`[Stream Token Fetch Effect] Skipping fetch. User: ${!!currentUser?.uid}, RoomId: ${!!roomId}, HasAccess: ${hasRoomAccess}, TokenExists: ${!!streamToken}`);
+            return; 
+        }
 
+        // Define the async function inside the effect
         const fetchStreamToken = async () => {
             try {
                 console.log("[Stream] Fetching token for user:", currentUser.uid);
@@ -554,12 +562,17 @@ const SideRoomComponent: React.FC = () => {
                 console.log("[Stream] Token fetched successfully.");
             } catch (error: any) { // FIX: Add : any to error
                 console.error('[Stream] Error fetching token:', error);
-                toast.error(`Stream Token Error: ${error.message}`);
+                // Ensure the error message includes the actual error from the catch
+                toast.error(`Stream Token Error: ${error.message || 'Load failed'}`); // Modified toast
                 setStreamToken(null); // Ensure it's null on error
             }
         };
+        
+        // Call the function
         fetchStreamToken();
-    }, [currentUser, streamToken]);
+
+    // Refined dependency array:
+    }, [currentUser, roomId, hasRoomAccess, streamToken]); // Added roomId, hasRoomAccess
 
     useEffect(() => {
         if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider) return;
