@@ -227,7 +227,6 @@ const SideRoomComponent: React.FC = () => {
     const [activeStreamCallInstance, setActiveStreamCallInstance] = useState<Call | null>(null);
     const [isStreamJoiningCall, setIsStreamJoiningCall] = useState<boolean>(false);
     const [attemptToJoinCall, setAttemptToJoinCall] = useState<boolean>(false); 
-    const [isFetchingToken, setIsFetchingToken] = useState<boolean>(false); // ADDED: State to prevent token fetch spam
 
     // --- State for Heart Feature ---
     const [roomHeartCount, setRoomHeartCount] = useState<number>(0);
@@ -508,42 +507,10 @@ const SideRoomComponent: React.FC = () => {
 
     // --- Stream API Token Fetch & Client Initialization ---
     useEffect(() => {
-        // MODIFIED: Add guard for room, and add room to dependency array
-        // MODIFIED: Add guard for isFetchingToken
-        if (!currentUser?.uid || streamToken || !room || isFetchingToken) { 
-            if (!room && !isFetchingToken) { // Only log waiting if not already fetching
-                console.warn("[Stream Token Fetch] Waiting for room data before fetching token...");
-            }
-            if (isFetchingToken) {
-                console.log("[Stream Token Fetch] Already fetching token, skipping run.");
-            }
-            return; 
-        }
+        if (!currentUser?.uid || streamToken) return; // Don't fetch if no user or token already fetched
 
         const fetchStreamToken = async () => {
-            setIsFetchingToken(true); // Set flag BEFORE starting async
-            console.log("[Stream Token Fetch] Attempting to fetch token..."); 
             try {
-                // --- DETAILED LOGGING BEFORE FETCH --- 
-                console.log("[Stream Token Fetch - PRE-FETCH CHECK]");
-                console.log(`  - currentUser exists: ${!!currentUser}`);
-                console.log(`  - currentUser.uid: ${currentUser?.uid}`);
-                console.log(`  - currentUser.displayName (from Auth): ${currentUser?.displayName}`);
-                console.log(`  - currentUser.email: ${currentUser?.email}`);
-                console.log(`  - currentUser.photoURL (from Auth): ${currentUser?.photoURL}`);
-                console.log(`  - room exists: ${!!room}`);
-                console.log(`  - room.id: ${room?.id}`);
-                // Ensure all necessary data is present
-                if (!currentUser?.uid || !room?.id) {
-                    console.error("[Stream Token Fetch - ABORTING] Missing critical user or room ID.");
-                    throw new Error("User or Room data missing, cannot fetch token.");
-                }
-                const userNameForStream = currentUser.displayName || currentUser.email || 'UnknownUser';
-                const userImageForStream = currentUser.photoURL || undefined;
-                console.log(`  - userName being sent: ${userNameForStream}`);
-                console.log(`  - userImage being sent: ${userImageForStream}`);
-                // -------------------------------------
-
                 console.log("[Stream] Fetching token for user:", currentUser.uid);
                 // --- ADD LOGS --- 
                 console.log("[Stream] Data being sent - User ID:", currentUser.uid);
@@ -568,7 +535,6 @@ const SideRoomComponent: React.FC = () => {
                          userName: currentUser.displayName || currentUser.email, // Keep this
                          userImage: currentUser.photoURL || undefined // Add userImage
                         }),
-                    credentials: 'include' // ADDED: Explicitly include credentials
                 });
                 if (!response.ok) {
                     const errorData = await response.json();
@@ -584,25 +550,13 @@ const SideRoomComponent: React.FC = () => {
                 console.error('[Stream] Error fetching token:', error);
                 toast.error(`Stream Token Error: ${error.message}`);
                 setStreamToken(null); // Ensure it's null on error
-            } finally {
-                setIsFetchingToken(false); // Reset flag AFTER attempt completes (success or fail)
-                console.log("[Stream Token Fetch] Fetch attempt finished.");
             }
         };
-
-        // Trigger the fetch
         fetchStreamToken();
-
-    }, [currentUser, streamToken, room, isFetchingToken]); // MODIFIED: Add room and isFetchingToken to dependency array
+    }, [currentUser, streamToken]);
 
     useEffect(() => {
-        // MODIFIED: Add guard for room, and add room to dependency array
-        if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider || !room) {
-            if (!room) {
-                console.warn("[Stream Client Init] Waiting for room data before initializing client...");
-            }
-            return;
-        }
+        if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider) return;
 
         console.log("[Stream] Initializing StreamVideoClient with token.");
         // Ensure we use the most reliable source for displayName and photoURL from AuthContext
@@ -638,15 +592,11 @@ const SideRoomComponent: React.FC = () => {
                 setStreamClientForProvider(null); // Clear the client
             }
         }
-    }, [streamToken, currentUser, streamClientForProvider, room]); // MODIFIED: Add room to dependency array
+    }, [streamToken, currentUser, streamClientForProvider]);
 
     // --- Effect to Join/Create Stream Call ---
     useEffect(() => {
-        // MODIFIED: Add guard for room to ensure it's loaded
-        if (!attemptToJoinCall || !streamClientForProvider || !roomId || !currentUser?.uid || !room) {
-            if (!room) {
-                console.warn("[Stream Call Join] Waiting for room data before attempting to join call...");
-            }
+        if (!attemptToJoinCall || !streamClientForProvider || !roomId || !currentUser?.uid) {
             if (attemptToJoinCall) { 
                 setAttemptToJoinCall(false);
             }
@@ -683,7 +633,7 @@ const SideRoomComponent: React.FC = () => {
             setAttemptToJoinCall(false); 
         };
 
-    }, [attemptToJoinCall, streamClientForProvider, roomId, currentUser?.uid, activeStreamCallInstance, room]); // MODIFIED: Add room to dependency array
+    }, [attemptToJoinCall, streamClientForProvider, roomId, currentUser?.uid, activeStreamCallInstance]);
 
 
     // --- Effect to Leave Stream Call on Unmount or Room Change ---
@@ -1950,7 +1900,7 @@ const SideRoomComponent: React.FC = () => {
                                      currentVideoUrl={currentVideoUrl}
                                      renderVideoPlayer={renderVideoPlayer}
                                      // Ensure moderation handlers are passed correctly
-                                     onForceMuteToggle={handleForceMuteToggle} 
+                                     onForceMuteToggle={handleForceMuteToggle}
                                      onForceRemove={handleForceRemove}
                                      onForceBan={handleForceBan}
                                      theme={theme}
@@ -2137,13 +2087,13 @@ const SideRoomComponent: React.FC = () => {
                         <Box sx={{ display: 'flex', width: '100%'}}>
                             <TextField 
                                 fullWidth 
-                                variant="outlined"
+                            variant="outlined"
                                 size="small" 
-                                placeholder="Talk to Sade..."
+                            placeholder="Talk to Sade..."
                                 value={sadeInput} 
-                                onChange={(e) => setSadeInput(e.target.value)}
-                                onKeyPress={(e) => e.key === 'Enter' && !sadeLoading && sendSadeMessage()}
-                                sx={{mr:1}}
+                            onChange={(e) => setSadeInput(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && !sadeLoading && sendSadeMessage()}
+                            sx={{mr:1}}
                                 disabled={sadeLoading}
                             />
                             <IconButton onClick={() => !sadeLoading && sendSadeMessage(sadeInput, false)} disabled={sadeLoading || !sadeInput.trim()} color="primary">
@@ -2319,7 +2269,7 @@ const SideRoomComponent: React.FC = () => {
                     </DialogActions>
                 </Dialog>
 
-            </Box>
+                        </Box>
         </>
     );
 };
@@ -2471,7 +2421,7 @@ const InsideStreamCallContent: React.FC<{
                                 call={call} // Pass call object
                                 localUserIsMute={localUserIsMute} // Pass local mute state
                             />
-                        </Grid>
+                </Grid>
                     ))}
                 </Grid>
                 
@@ -2493,7 +2443,7 @@ const InsideStreamCallContent: React.FC<{
                  <Button
                     variant="outlined"
                     color="error" 
-                    startIcon={<ExitToApp />}
+                    startIcon={<ExitToApp />} 
                     onClick={handleLeaveCall} // Use defined handleLeaveCall
                     sx={{ borderRadius: '20px', textTransform: 'none' }} 
                 >
@@ -2533,7 +2483,7 @@ const InsideStreamCallContent: React.FC<{
 // Participant Card for Clubhouse Style (Final Version)
 // Define the props interface for StreamParticipantCard
 interface StreamParticipantCardProps {
-    participant: StreamVideoParticipant;
+    participant: StreamVideoParticipant; 
     isRoomOwner: boolean;
     isLocalParticipant: boolean;
     onForceMuteToggle: Function;
@@ -2678,13 +2628,13 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                          fontSize: '1rem',
                          color: theme.palette.success.contrastText, // Example color
                          backgroundColor: alpha(theme.palette.success.main, 0.8), // Example color
-                         borderRadius: '50%',
-                         padding: '3px',
-                         position: 'absolute',
-                         bottom: 20,
-                         right: 5,
-                     }}
-                 />
+                        borderRadius: '50%',
+                        padding: '3px',
+                        position: 'absolute',
+                        bottom: 20, 
+                        right: 5, 
+                    }}
+                />
             )}
             <Typography variant="caption" noWrap sx={{ width: '100%', lineHeight: 1.2, fontSize: '0.75rem', fontWeight: 'medium', color: theme.palette.text.primary }}>
                 {displayName}
