@@ -308,8 +308,13 @@ const SideRoomComponent: React.FC = () => {
         });
 
         socketInstance.on('connect_error', (error) => {
-            console.error('[SideRoomComponent] Socket connection error:', error);
-            toast.error("Chat/Invite connection failed. Trying to reconnect...");
+            console.error('[SideRoomComponent] Socket connection error (raw error object):', error);
+            if (error && error.message) {
+              console.error('[SideRoomComponent] Socket connection error message:', error.message);
+              toast.error(`Chat/Invite connection failed: ${error.message}. Trying to reconnect...`);
+            } else {
+              toast.error("Chat/Invite connection failed. Trying to reconnect...");
+            }
             setSocket(null); // Ensure socket state is null on connection error
         });
 
