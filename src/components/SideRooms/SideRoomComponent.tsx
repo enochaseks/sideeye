@@ -881,6 +881,10 @@ const SideRoomComponent: React.FC = () => {
                     displayName: userDisplayName,
                     photoURL: userProfilePic
                 };
+                // --- ADDED DEBUG LOG ---
+                const myPresenceRefPath = `sideRooms/${roomId}/presence/${componentUserId}`;
+                console.log('[DEBUG Presence Writer] Attempting setDoc to path:', myPresenceRefPath, 'with data:', JSON.stringify(presenceData, null, 2));
+                // --- END DEBUG LOG ---
                 console.log(`[Presence Writer - Self Debug] Data being written to presence:`, presenceData);
         
                 await setDoc(myPresenceRef, presenceData, { merge: true });
@@ -2357,6 +2361,10 @@ const InsideStreamCallContent: React.FC<{
         // Otherwise, this useEffect would need to be in a component with db in scope, or db passed as a prop.
         if (call && currentUser?.uid && room?.id && typeof localUserIsMute === 'boolean' && db) { // Added db check
             const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
+            // --- ADDED DEBUG LOG ---
+            const userPresencePath = `sideRooms/${room.id}/presence/${currentUser.uid}`;
+            console.log('[DEBUG Mute Sync] Attempting updateDoc to path:', userPresencePath, 'with data:', JSON.stringify({ isMuted: localUserIsMute }, null, 2));
+            // --- END DEBUG LOG ---
             updateDoc(userPresenceRef, { isMuted: localUserIsMute })
                 .then(() => {
                     console.log(`[InsideStreamCallContent] Synced local mute state (${localUserIsMute}) to Firestore for ${currentUser.uid}`);
