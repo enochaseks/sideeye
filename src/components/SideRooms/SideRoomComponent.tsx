@@ -2820,7 +2820,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     call, 
     localUserAuthData, 
     localUserIsMute 
-}: {
+}: { // This type annotation for props seems redundant if StreamParticipantCardProps is defined and used, but keeping for now if it resolved prior issues for you.
     participant: StreamVideoParticipant; 
     isRoomOwner: boolean;
     isLocalParticipant: boolean;
@@ -2832,9 +2832,14 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     localUserIsMute?: boolean; 
 }) => {
     const theme = useTheme(); 
-    const isAudioPublished = participant.publishedTracks.includes('audio' as any);
-    const participantIsMuted = !isAudioPublished; // Revert to simpler logic
-    const { isSpeaking } = participant; 
+    // const isAudioPublished = participant.publishedTracks.includes('audio' as any); // Old calculation
+    // const participantIsMuted = !isAudioPublished; // Old calculation
+    const { isSpeaking, publishedTracks } = participant; // Destructure for clarity
+
+    // Corrected logic for determining if a remote participant's mute icon should be shown
+    const isAudioTrackPublished = publishedTracks.includes('audio' as any);
+    const showRemoteMuteIcon = !isAudioTrackPublished && !isSpeaking; 
+
     const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
     const menuOpen = Boolean(anchorEl);
 
@@ -2907,7 +2912,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
 
     // Console logs immediately before the return statement
     console.log('[StreamParticipantCard] Rendering with props:', { participant, isRoomOwner, isLocalParticipant, localUserAuthData });
-    console.log('[StreamParticipantCard] Determined values - displayName:', displayName, 'avatarUrl:', avatarUrl, 'isSpeaking:', isSpeaking, 'participantIsMuted:', participantIsMuted);
+    console.log('[StreamParticipantCard] Determined values - displayName:', displayName, 'avatarUrl:', avatarUrl, 'isSpeaking:', isSpeaking, 'participantIsMuted:', showRemoteMuteIcon);
     if (isLocalParticipant) {
         console.log('[StreamParticipantCard - LOCAL Focus] localUserAuthData:', localUserAuthData, 'Stream participant.userId:', participant.userId);
     }
@@ -2935,7 +2940,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                 }}
             />
             {/* Mute Icon Display Logic - Ensure isLocalParticipant is used */}
-            {(isLocalParticipant ? localUserIsMute : participantIsMuted) && (
+            {(isLocalParticipant ? (localUserIsMute ?? true) : showRemoteMuteIcon) && (
                 <MicOff 
                     sx={{ 
                         fontSize: '1rem', 
@@ -2981,8 +2986,8 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                         MenuListProps={{ dense: true }}
                     >
                         <MenuItem onClick={handleRemoteMuteToggle} sx={{ fontSize: '0.8rem' }}>
-                            <ListItemIcon sx={{minWidth: '30px'}}>{participantIsMuted ? <VolumeUpIcon fontSize="small"/> : <VolumeOffIcon fontSize="small"/>}</ListItemIcon>
-                            {participantIsMuted ? 'Unmute' : 'Mute'}
+                            <ListItemIcon sx={{minWidth: '30px'}}>{showRemoteMuteIcon ? <VolumeUpIcon fontSize="small"/> : <VolumeOffIcon fontSize="small"/>}</ListItemIcon>
+                            {showRemoteMuteIcon ? 'Unmute' : 'Mute'}
                         </MenuItem>
                         <MenuItem onClick={handleKickUser} sx={{ color: 'warning.dark', fontSize: '0.8rem' }}>
                             <ListItemIcon sx={{minWidth: '30px'}}><PersonRemoveIcon fontSize="small" color="warning"/></ListItemIcon>
