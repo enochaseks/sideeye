@@ -451,8 +451,8 @@ const SideRoomComponent: React.FC = () => {
         return room.viewers?.some(member => member.userId === currentUser.uid && member.role === 'guest') || false;
     }, [room, currentUser?.uid]);
 
-    const isViewer = useMemo(() => !!room?.viewers?.some((viewer: RoomMember) => viewer.userId === currentUser?.uid), [room?.viewers, currentUser?.uid]);
-    const hasRoomAccess = isRoomOwner || isViewer;
+    const isViewer = true;
+    const hasRoomAccess = !!room && (isRoomOwner || isViewer || isGuest);
     const onlineParticipants = useMemo(() => {
         console.log('[onlineParticipants Memo] Raw presence state:', presence);
         const uniqueParticipants = new Map<string, PresenceData>();
@@ -503,6 +503,109 @@ const SideRoomComponent: React.FC = () => {
         }
         return foundOwner;
     }, [room]); // Dependency on `room` is correct as `room.viewers` is part of it
+
+    // --- Helper function to write user's presence (sets online: true) ---
+    const writeUserPresence = useCallback(async (
+        currentRoomId: string,
+        user: AuthContextUser, // Changed from currentUser to user for clarity as param
+        database: typeof db, // Pass db instance
+        roomOwner: boolean, // Pass isRoomOwner
+        currentRoomData: SideRoom | null // Pass room object
+    ) => {
+        if (!currentRoomId || !user?.uid || !currentRoomData) {
+            console.warn('[Presence Helper] Missing critical data to write presence.');
+            return;
+        }
+        const componentUserId = user.uid;
+
+        try {
+            const userProfileRef = doc(database, 'users', componentUserId);
+            const userProfileSnap = await getDoc(userProfileRef);
+            
+            let userDisplayName = '';
+            let userProfilePic = '';
+            // Use user.email (passed in) instead of currentUser.email
+            let userUsername = user.email?.split('@')[0] || `user_${componentUserId.substring(0, 4)}`;
+
+            if (userProfileSnap.exists()) {
+                const profileData = userProfileSnap.data() as UserProfile;
+                userDisplayName = profileData.name || profileData.username || '';
+                userProfilePic = profileData.profilePic || '';
+                userUsername = profileData.username || userUsername;
+            } else {
+                console.warn(`[Presence Helper] Firestore profile missing for ${componentUserId}. Using fallbacks from auth user.`);
+                userDisplayName = user.displayName || ''; // Fallback to auth user
+                userProfilePic = user.photoURL || '';     // Fallback to auth user
+            }
+
+            let userRole: 'owner' | 'viewer' | 'guest' = 'viewer'; // Default to viewer
+            if (roomOwner) {
+                userRole = 'owner';
+            // Use currentRoomData.viewers (passed in) instead of room.viewers
+            } else if (currentRoomData.viewers?.some(member => member.userId === componentUserId && member.role === 'guest')) {
+                userRole = 'guest';
+            }
+
+            const myPresenceRef = doc(database, 'sideRooms', currentRoomId, 'presence', componentUserId);
+            const presenceData: PresenceData = { 
+                userId: componentUserId,
+                username: userUsername,
+                avatar: userProfilePic,
+                lastSeen: Date.now(), // Use client time for 'online' heartbeats
+                isOnline: true, // Always true when this function is called
+                role: userRole,
+                displayName: userDisplayName,
+                photoURL: userProfilePic
+            };
+            
+            console.log(`[Presence Helper] Writing presence for ${componentUserId} in room ${currentRoomId}:`, JSON.stringify(presenceData, null, 2));
+            await setDoc(myPresenceRef, presenceData, { merge: true });
+            console.log(`[Presence Helper] Presence updated for ${componentUserId}`);
+
+        } catch (profileError) {
+            console.error(`[Presence Helper] Error fetching profile or writing presence for ${componentUserId}:`, profileError);
+        }
+    }, []); // useCallback with empty deps as it's a self-contained utility now, params provide all context
+
+    // --- Effect A: Maintain Online Status & Details ---
+    useEffect(() => {
+        console.log(`[Presence Effect A] Initializing. RoomId: ${roomId}, HasAccess: ${hasRoomAccess}, CurrentUserUID: ${currentUser?.uid}, IsRoomOwner: ${isRoomOwner}, RoomExists: ${!!room}`);
+
+        if (hasRoomAccess && roomId && currentUser && room) {
+            console.log(`[Presence Effect A] Conditions met. Writing/updating presence for user ${currentUser.uid} in room ${roomId}.`);
+            writeUserPresence(roomId, currentUser, db, isRoomOwner, room);
+        } else {
+            console.log(`[Presence Effect A] Conditions NOT met. Skipping presence write. HasAccess: ${hasRoomAccess}, RoomId: ${!!roomId}, CurrentUser: ${!!currentUser}, Room: ${!!room}`);
+        }
+        // No cleanup here that sets offline. Cleanup for going offline is in Effect B.
+    }, [roomId, currentUser, db, isRoomOwner, room, hasRoomAccess, writeUserPresence]); // Dependencies for updating presence details
+
+    // --- Effect B: Handle Going Offline ---
+    useEffect(() => {
+        // This effect's primary purpose is its cleanup function.
+        // It establishes which user and room we are talking about for the cleanup.
+        const effectUserId = currentUser?.uid;
+        const effectRoomId = roomId;
+
+        console.log(`[Presence Effect B] Monitoring user ${effectUserId} in room ${effectRoomId} for cleanup.`);
+
+        return () => {
+            if (effectUserId && effectRoomId) {
+                console.log(`[Presence Effect B - Cleanup] Running for user ${effectUserId} in room ${effectRoomId}. Setting offline.`);
+                const userPresenceRef = doc(db, 'sideRooms', effectRoomId, 'presence', effectUserId);
+                updateDoc(userPresenceRef, {
+                    isOnline: false,
+                    lastSeen: serverTimestamp()
+                }).catch(error => {
+                    if (error.code !== 'not-found') { // Ignore if doc doesn't exist, as it might have been deleted
+                        console.error(`[Presence Effect B - Cleanup] Error setting user ${effectUserId} offline:`, error);
+                    }
+                });
+            } else {
+                console.log(`[Presence Effect B - Cleanup] Cleanup called but effectUserId or effectRoomId is missing. Skipping Firestore update. UID: ${effectUserId}, RoomID: ${effectRoomId}`);
+            }
+        };
+    }, [roomId, currentUser?.uid, db]); // Dependencies: cleanup runs if room or user changes, or on unmount.
 
     // --- Audio Handlers ---
     // const handleJoinAudio = useCallback(async () => { // REMOVED ENTIRE FUNCTION
@@ -574,7 +677,7 @@ const SideRoomComponent: React.FC = () => {
         // audioService.shareVideo(roomId, ''); // REMOVED
         // Similar to above, update Firestore and rely on listeners or custom signaling.
         const roomRef = doc(db, 'sideRooms', roomId);
-        updateDoc(roomRef, { currentSharedVideoUrl: null, lastActive: serverTimestamp() })
+        updateDoc(roomRef, { currentSharedVideoUrl: null })
              .catch(error => console.error("Error clearing video URL in Firestore:", error));
         // socket?.emit('share-video', { roomId, videoUrl: '', userId: currentUser?.uid });
 
@@ -853,27 +956,12 @@ const SideRoomComponent: React.FC = () => {
                 ...doc.data()
             })) as PresenceData[];
 
-            if (presenceClearTimeoutRef.current) {
-                clearTimeout(presenceClearTimeoutRef.current);
-                presenceClearTimeoutRef.current = null;
-            }
+            // Directly set presence from the snapshot data
+            // The query `where("isOnline", "==", true)` should ensure we only get online users.
+            // If the snapshot is empty, onlineUsersData will be an empty array.
+            console.log('[Presence Listener - Others] Received presence snapshot. Users:', onlineUsersData.length, onlineUsersData);
+            setPresence(onlineUsersData);
 
-            if (onlineUsersData.length > 0) {
-                console.log('[Presence Listener - Others] Received presence snapshot (updating). Users:', onlineUsersData.length, onlineUsersData);
-                setPresence(onlineUsersData);
-            } else {
-                console.log('[Presence Listener - Others] Received presence snapshot (empty). Users:', onlineUsersData.length);
-                if (presence.length > 0) { // Check current state before scheduling clear
-                    console.log('[Presence Listener - Others] Current presence not empty, scheduling clear.');
-                    presenceClearTimeoutRef.current = setTimeout(() => {
-                        console.log('[Presence Listener - Others] Timeout fired. Clearing presence.');
-                        setPresence([]);
-                    }, 150);
-                } else {
-                    console.log('[Presence Listener - Others] Current presence already empty, setting to empty.');
-                    setPresence([]);
-                }
-            }
         }, (error) => {
             console.error('[Presence Listener - Others] CRITICAL: Snapshot error:', error);
             toast.error("Error listening to room presence updates. See console.");
@@ -883,9 +971,10 @@ const SideRoomComponent: React.FC = () => {
         return () => {
             console.log(`[Presence Listener - Others] Cleanup for room ${roomId}.`);
             unsubscribe();
-            if (presenceClearTimeoutRef.current) {
-                clearTimeout(presenceClearTimeoutRef.current);
-            }
+            // Remove timeout clearing as ref is removed
+            // if (presenceClearTimeoutRef.current) {
+            //     clearTimeout(presenceClearTimeoutRef.current);
+            // }
         };
     }, [roomId, hasRoomAccess, currentUser?.uid, db]); // Minimal dependencies: db added as it's used directly
 
