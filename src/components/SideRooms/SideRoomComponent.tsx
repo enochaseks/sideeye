@@ -110,6 +110,7 @@ import {
     useCall, 
     ParticipantView, 
     StreamVideoParticipant,
+    ParticipantsAudio, // ADD THIS IMPORT
     // Audio, // REMOVE THIS IMPORT
     // Track // REMOVE Track import
 } from '@stream-io/video-react-sdk'; // UPDATED Stream imports, ADD useCall
@@ -2717,6 +2718,9 @@ const InsideStreamCallContent: React.FC<{
                  <Typography variant="overline" display="block" sx={{ color: 'text.secondary', mb: 1 }}>
                      Participants ({gridParticipants.length})
                 </Typography>
+                {/* Add ParticipantsAudio component to handle audio playback for all participants */}
+                {gridParticipants.length > 0 && <ParticipantsAudio participants={gridParticipants} />}
+
                 <Grid container spacing={2}>
                     {gridParticipants.map((p) => (
                         <Grid item key={p.sessionId} xs={4} sm={3} md={2}>
@@ -2733,10 +2737,12 @@ const InsideStreamCallContent: React.FC<{
                                 call={call} // Pass call object
                                 localUserIsMute={localUserIsMute} // Pass local mute state
                             />
-                            {/* Use ParticipantView to render remote participant's media, including audio */}
+                            {/* REMOVE the individual ParticipantView that was here for audio playback */}
+                            {/* 
                             {p.userId !== currentUser?.uid && (
                                 <ParticipantView participant={p} />
                             )}
+                            */}
                 </Grid>
                     ))}
                 </Grid>
