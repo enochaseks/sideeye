@@ -110,6 +110,7 @@ import {
     useCall, 
     ParticipantView, 
     StreamVideoParticipant,
+    // Audio, // REMOVE THIS IMPORT
     // Track // REMOVE Track import
 } from '@stream-io/video-react-sdk'; // UPDATED Stream imports, ADD useCall
 // import AudioDeviceSelector from '../AudioDeviceSelector'; // REMOVED for now, Stream handles devices
@@ -2732,6 +2733,10 @@ const InsideStreamCallContent: React.FC<{
                                 call={call} // Pass call object
                                 localUserIsMute={localUserIsMute} // Pass local mute state
                             />
+                            {/* Use ParticipantView to render remote participant's media, including audio */}
+                            {p.userId !== currentUser?.uid && (
+                                <ParticipantView participant={p} />
+                            )}
                 </Grid>
                     ))}
                 </Grid>
@@ -2836,6 +2841,20 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
     const handleMenuClose = () => setAnchorEl(null);
 
+    // Handler for local microphone toggle
+    const handleLocalMicToggle = async () => {
+        if (!isLocalParticipant || !call) return; // Guard clause
+
+        try {
+            console.log('[StreamParticipantCard] Attempting to toggle local microphone. Current SDK mute state (from prop localUserIsMute):', localUserIsMute);
+            await call.microphone.toggle();
+            console.log('[StreamParticipantCard] Local microphone toggle command completed. SDK state should update.');
+        } catch (error) {
+            console.error('[StreamParticipantCard] Error toggling local microphone:', error);
+            toast.error("Failed to toggle microphone. See console.");
+        }
+    };
+
     // Moderation Handlers (ensure these are defined as they are used in JSX)
     const handleRemoteMuteToggle = async () => {
         handleMenuClose();
@@ -2904,12 +2923,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
             <Avatar 
                 src={avatarUrl}
                 alt={displayName}
-                onClick={() => {
-                    if (isLocalParticipant && call) {
-                        call.microphone.toggle();
-                        // The useEffect in InsideStreamCallContent will handle Firestore update
-                    }
-                }}
+                onClick={handleLocalMicToggle} // Assign the async handler correctly
                 sx={{
                     width: 64,
                     height: 64, 
