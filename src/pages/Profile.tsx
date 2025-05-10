@@ -340,7 +340,7 @@ const Profile: React.FC = () => {
     try {
       setIsLoading(true);
       const file = event.target.files[0];
-      const storageRef = ref(storage, `profilePics/${currentUser.uid}`);
+      const storageRef = ref(storage, `profilePics/${currentUser.uid}/${file.name}`);
       
       await uploadBytes(storageRef, file);
       const downloadURL = await getDownloadURL(storageRef);
@@ -403,6 +403,7 @@ const Profile: React.FC = () => {
                         hidden
                         accept="image/*"
                         onChange={handleProfilePicChange}
+                        onClick={(event) => { (event.target as HTMLInputElement).value = ''; }}
                       />
                       <PhotoCamera fontSize="small" />
                     </IconButton>

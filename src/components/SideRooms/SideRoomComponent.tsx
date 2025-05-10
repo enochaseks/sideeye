@@ -93,6 +93,7 @@ import {
     ScreenShare as ScreenShareIcon, // ADDED
     StopScreenShare as StopScreenShareIcon, // ADDED
     // VolumeUp as VolumeUpIcon // REMOVE DUPLICATE
+    PushPin as PushPinIcon,
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -1141,18 +1142,34 @@ const SideRoomComponent: React.FC = () => {
             }
         };
 
+        // Listener for when the current user is removed from the room by the host
+        const handleBeenRemoved = (removedInRoomId: string) => {
+            if (removedInRoomId === roomId && currentUser?.uid) { // Ensure it's this room and user is defined
+                toast("The host has removed you from the room."); // Changed from toast.info
+                activeStreamCallInstance?.leave()
+                    .catch(err => console.error("[SideRoomComponent] Error leaving Stream call after being removed:", err))
+                    .finally(() => {
+                        navigate('/side-rooms'); // Navigate to the main room list
+                    });
+                // Additional cleanup of local room-specific state might be done here if necessary,
+                // but navigation and Stream leave should cover most.
+            }
+        };
+
         socket.on('invite-success', handleInviteSuccess);
         socket.on('invite-failed', handleInviteFailed);
         socket.on('guest-joined', handleGuestJoined);
         socket.on('user-search-results-for-invite', handleUserSearchResults);
+        socket.on('force-remove', handleBeenRemoved); // Listen for the server's force-remove directive
 
         return () => {
             socket.off('invite-success', handleInviteSuccess);
             socket.off('invite-failed', handleInviteFailed);
             socket.off('guest-joined', handleGuestJoined);
             socket.off('user-search-results-for-invite', handleUserSearchResults);
+            socket.off('force-remove', handleBeenRemoved); // Clean up listener
         };
-    }, [socket, roomId]); // Depend on socket and roomId
+    }, [socket, roomId, navigate, activeStreamCallInstance, currentUser?.uid]); // Depend on socket, roomId, navigate, call instance, and currentUser
 
     // --- Debounced search function for inviting users --- (Ensure this uses the socket state)
     const debouncedSearchForInvite = useCallback(
@@ -1598,18 +1615,15 @@ const SideRoomComponent: React.FC = () => {
     }, [isRoomOwner, roomId, currentUser?.uid, db]); // Added db dependency
 
     const handleForceRemove = useCallback((targetUserId: string, targetUsername?: string) => {
-        if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid) return;
+        if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid || !socket) return;
         
         const name = targetUsername || 'this user';
         if (window.confirm(`Are you sure you want to remove ${name} from the room?`)) {
-             console.log(`Owner removing user ${targetUserId} from room ${roomId}`);
-             // audioService.sendForceRemove(roomId, targetUserId); // REMOVED
-             // Use general socket emit:
-             // socket?.emit('force-remove', { roomId, targetUserId });
-             console.warn("[SideRoomComponent] handleForceRemove needs to be connected to the correct signaling (e.g., general Socket.IO emit)")
-             toast.success(`Removing ${name}...`);
+             console.log(`[SideRoomComponent] Owner removing user ${targetUserId} from room ${roomId}`);
+             socket.emit('force-remove', { roomId, targetUserId }); // Emit to server
+             toast.success(`Removing ${name}...`); // Optimistic toast
         }
-    }, [isRoomOwner, roomId, currentUser?.uid]);
+    }, [isRoomOwner, roomId, currentUser?.uid, socket]); // Added socket dependency
 
     // Add Ban Handler
     const handleForceBan = useCallback((targetUserId: string, targetUsername?: string) => {
@@ -2630,22 +2644,50 @@ const InsideStreamCallContent: React.FC<{
     onForceBan: Function, 
     theme: any
 }> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme }) => {
-    const call = useCall(); // Ensure useCall is used here
-    // Define hooks ONCE here
-    const { useParticipants, useMicrophoneState, useScreenShareState } = useCallStateHooks(); // Re-add useScreenShareState
-    const participants = useParticipants(); 
-    const { isMute: localUserIsMute } = useMicrophoneState(); 
-    const screenShareState = useScreenShareState(); // Keep hook for isEnabled status
-    const client = useStreamVideoClient(); 
-    const navigate = useNavigate(); 
-    const { currentUser } = useAuth(); 
+    const call = useCall(); // Get the call object
+    const { useParticipants, useCallState, useMicrophoneState } = useCallStateHooks(); // Add useMicrophoneState
+    const participants = useParticipants(); // Get participants from Stream
+    // const { localParticipant } = useCallState(); // We get local mic state differently
+    const { isMute: localUserIsMute } = useMicrophoneState(); // Correct way to get local mute state
+    const navigate = useNavigate(); // Add useNavigate hook
 
-    // Find the participant who has an active screenShareStream property
-    const screenSharingParticipant = participants.find(p => p.screenShareStream);
+    // --- Get current user from AuthContext ---
+    const { currentUser } = useAuth();
 
-    // Define handleLeaveCall within this component's scope
+    // --- State for Pinned Participants ---
+    const [pinnedUserIds, setPinnedUserIds] = useState<string[]>([]);
+
+    // --- Handler to Toggle Pin ---
+    const handleTogglePinParticipant = (userId: string) => {
+        setPinnedUserIds(prevPinnedIds => {
+            if (prevPinnedIds.includes(userId)) {
+                return prevPinnedIds.filter(id => id !== userId); // Unpin
+            } else {
+                return [...prevPinnedIds, userId]; // Pin
+            }
+        });
+    };
+
+    // Sort participants to ensure the room owner is always first, then pinned, then others
+    const sortedParticipants = useMemo(() => {
+        if (!participants || !room?.ownerId) return [];
+        
+        const ownerParticipant = participants.find(p => p.userId === room.ownerId);
+        const pinnedParticipantsList = participants.filter(p => pinnedUserIds.includes(p.userId) && p.userId !== room.ownerId);
+        const otherParticipants = participants.filter(p => p.userId !== room.ownerId && !pinnedUserIds.includes(p.userId));
+
+        return [
+            ...(ownerParticipant ? [ownerParticipant] : []), // Owner first
+            ...pinnedParticipantsList, // Then pinned users
+            ...otherParticipants // Then the rest
+        ].filter(Boolean); // Ensure no undefined entries if owner is not in participants list for some reason
+    }, [participants, room?.ownerId, pinnedUserIds]);
+
+    // Use the sorted list for the grid
+    const gridParticipants = sortedParticipants;
+
     const handleLeaveCall = () => {
-        call?.leave().then(() => navigate('/side-rooms'));
+        call?.leave().then(() => navigate('/side-rooms')); // navigate is now in scope
     }; 
 
     useEffect(() => {
@@ -2668,7 +2710,7 @@ const InsideStreamCallContent: React.FC<{
     }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); // Added db to dependencies
 
 
-    if (!call || !client) {
+    if (!call) {
         return (
              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1, height: '100%' }}>
                 <CircularProgress />
@@ -2692,8 +2734,8 @@ const InsideStreamCallContent: React.FC<{
             </Box>
         );
 
-    // Simple participant list for the grid
-    const gridParticipants = participants;
+    // Find the participant who has an active screenShareStream property
+    const screenSharingParticipant = participants.find(p => p.screenShareStream);
 
         return (
         <Box sx={{ 
@@ -2811,29 +2853,35 @@ const InsideStreamCallContent: React.FC<{
                 {gridParticipants.length > 0 && <ParticipantsAudio participants={gridParticipants} />}
 
                 <Grid container spacing={2}>
-                    {gridParticipants.map((p) => (
-                        <Grid item key={p.sessionId} xs={4} sm={3} md={2}>
-                            {/* Use the corrected Participant Card name */}
-                            <StreamParticipantCard 
-                                participant={p} 
-                                isRoomOwner={isRoomOwner}
-                                isLocalParticipant={p.userId === currentUser?.uid} 
-                                localUserAuthData={currentUser} 
-                                // Pass down moderation functions
-                                onForceMuteToggle={onForceMuteToggle} 
-                                onForceRemove={onForceRemove}
-                                onForceBan={onForceBan}
-                                call={call} // Pass call object
-                                localUserIsMute={localUserIsMute} // Pass local mute state
-                            />
-                            {/* REMOVE the individual ParticipantView that was here for audio playback */}
-                            {/* 
+                    {gridParticipants.map((p) => {
+                        const isCardParticipantTheHost = p.userId === room.ownerId; // Determine if this participant is the host
+                        return (
+                            <Grid item key={p.sessionId} xs={4} sm={3} md={2}>
+                                {/* Use the corrected Participant Card name */}
+                                <StreamParticipantCard 
+                                    participant={p} 
+                                    isRoomOwner={isRoomOwner}
+                                    isLocalParticipant={p.userId === currentUser?.uid} 
+                                    localUserAuthData={currentUser} 
+                                    // Pass down moderation functions
+                                    onForceMuteToggle={onForceMuteToggle} 
+                                    onForceRemove={onForceRemove}
+                                    onForceBan={onForceBan}
+                                    call={call} // Pass call object
+                                    localUserIsMute={localUserIsMute} // Pass local mute state
+                                    isDesignatedHost={isCardParticipantTheHost} // PASS THE NEW PROP
+                                    onPinToggle={handleTogglePinParticipant} // Pass pin toggle handler
+                                    isPinned={pinnedUserIds.includes(p.userId)} // Pass pinned status
+                                />
+                                {/* REMOVE the individual ParticipantView that was here for audio playback */}
+                                {/* 
                             {p.userId !== currentUser?.uid && (
                                 <ParticipantView participant={p} />
                             )}
                             */}
-                </Grid>
-                    ))}
+                            </Grid>
+                        ); // Ensure this semicolon terminates the return statement
+                    })}
                 </Grid>
                 
                 {gridParticipants.length === 0 && (
@@ -2903,6 +2951,9 @@ interface StreamParticipantCardProps {
     call: Call;
     localUserAuthData: AuthContextUser | null;
     localUserIsMute?: boolean;
+    isDesignatedHost?: boolean; // ADD THIS NEW PROP
+    onPinToggle: (userId: string) => void; // ADD THIS NEW PROP for pinning
+    isPinned?: boolean; // ADD THIS NEW PROP for pinned status
 }
 
 const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({ 
@@ -2914,17 +2965,11 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     onForceBan, 
     call, 
     localUserAuthData, 
-    localUserIsMute 
-}: { // This type annotation for props seems redundant if StreamParticipantCardProps is defined and used, but keeping for now if it resolved prior issues for you.
-    participant: StreamVideoParticipant; 
-    isRoomOwner: boolean;
-    isLocalParticipant: boolean;
-    onForceMuteToggle: Function;
-    onForceRemove: Function;
-    onForceBan: Function;
-    call: Call;
-    localUserAuthData: AuthContextUser | null; 
-    localUserIsMute?: boolean; 
+    localUserIsMute, 
+    isDesignatedHost, // ADD THIS NEW PROP
+    onPinToggle,      // ADD THIS NEW PROP
+    isPinned          // ADD THIS NEW PROP
+    // REMOVE the explicit type definition from here, as React.FC<StreamParticipantCardProps> already covers it.
 }) => {
     const theme = useTheme(); 
     // const isAudioPublished = participant.publishedTracks.includes('audio' as any); // Old calculation
@@ -2974,6 +3019,12 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
         if (onForceBan) {
             onForceBan(participant.userId, participant.name || participant.userId);
         }
+    };
+
+    // --- NEW: Handler for Pin Toggle ---
+    const handlePinToggle = () => {
+        handleMenuClose();
+        onPinToggle(participant.userId);
     };
 
     // Determine display name and avatar URL
@@ -3034,6 +3085,24 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                     cursor: isLocalParticipant ? 'pointer' : 'default', // Add cursor pointer for local user
                 }}
             />
+            {/* Host Label */}
+            {isDesignatedHost && (
+                <Chip 
+                    label="Host"
+                    size="small"
+                    color="secondary" // Or any color you prefer
+                    sx={{ 
+                        position: 'absolute',
+                        bottom: 12.5, 
+                        // left: '50%', 
+                        // transform: 'translateX(-50%)',
+                        zIndex: 2, // Ensure it's above the avatar
+                        fontWeight: 'bold',
+                        height: '18px',
+                        fontSize: '0.65rem'
+                    }}
+                />
+            )}
             {/* Mute Icon Display Logic - Ensure isLocalParticipant is used */}
             {(isLocalParticipant ? (localUserIsMute ?? true) : showRemoteMuteIcon) && (
                 <MicOff 
@@ -3084,6 +3153,13 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                             <ListItemIcon sx={{minWidth: '30px'}}>{showRemoteMuteIcon ? <VolumeUpIcon fontSize="small"/> : <VolumeOffIcon fontSize="small"/>}</ListItemIcon>
                             {showRemoteMuteIcon ? 'Unmute' : 'Mute'}
                         </MenuItem>
+                        {/* --- NEW: Pin/Unpin Menu Item --- */}
+                        <MenuItem onClick={handlePinToggle} sx={{ fontSize: '0.8rem' }}>
+                            <ListItemIcon sx={{minWidth: '30px'}}>
+                                <PushPinIcon fontSize="small" color={isPinned ? "primary" : "inherit"} />
+                            </ListItemIcon>
+                            {isPinned ? 'Unpin from top' : 'Pin to top'}
+                        </MenuItem>
                         <MenuItem onClick={handleKickUser} sx={{ color: 'warning.dark', fontSize: '0.8rem' }}>
                             <ListItemIcon sx={{minWidth: '30px'}}><PersonRemoveIcon fontSize="small" color="warning"/></ListItemIcon>
                             Remove
@@ -3094,6 +3170,24 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                         </MenuItem>
                     </Menu>
                 </Box>
+            )}
+            {/* Pin Icon Display Logic */}
+            {isPinned && !isDesignatedHost && ( // Don't show pin on host card if they are pinned (host is already at top)
+                <Tooltip title="Pinned">
+                    <PushPinIcon 
+                        sx={{
+                            fontSize: '1rem',
+                            color: theme.palette.primary.contrastText,
+                            backgroundColor: alpha(theme.palette.primary.main, 0.8),
+                            borderRadius: '50%',
+                            padding: '3px',
+                            position: 'absolute',
+                            top: 0,
+                            left: 5,
+                            zIndex: 2, 
+                        }}
+                    />
+                </Tooltip>
             )}
         </Box>
     );
