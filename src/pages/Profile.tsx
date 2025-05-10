@@ -708,7 +708,7 @@ const Profile: React.FC = () => {
             {createdRooms.length === 0 && joinedRooms.length === 0 && (
               <Box sx={{ textAlign: 'center', py: 4 }}>
                 <Typography variant="body1" color="text.secondary">
-                  Not a member of any side rooms yet
+                  You have not created any side rooms yet.
                 </Typography>
                 <Button
                   variant="contained"
@@ -717,7 +717,7 @@ const Profile: React.FC = () => {
                   to="/side-rooms"
                   sx={{ mt: 2 }}
                 >
-                  Browse Side Rooms
+                  Create Side Rooms
                 </Button>
               </Box>
             )}
