@@ -55,7 +55,9 @@ import {
     FormControlLabel,
     SelectChangeEvent,
     Card,
-    CardContent
+    CardContent,
+    Tabs,
+    Tab
 } from '@mui/material';
 import { useTheme, alpha } from '@mui/material/styles';
 import {
@@ -94,6 +96,13 @@ import {
     StopScreenShare as StopScreenShareIcon, // ADDED
     // VolumeUp as VolumeUpIcon // REMOVE DUPLICATE
     PushPin as PushPinIcon,
+    Videocam as VideocamIcon, // ADDED for camera toggle
+    VideocamOff as VideocamOffIcon, // ADDED for camera toggle
+    Close as CloseIcon, // ADDED for PiP close button
+    PictureInPicture as PictureInPictureIcon, // ADDED for PiP toggle button
+    Send as SendIcon,
+    ZoomIn as ZoomInIcon,
+    ZoomOut as ZoomOutIcon
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -247,10 +256,152 @@ const PREDEFINED_THEMES: RoomTheme[] = [
     accentColor: '#00B4D8', // Bright Cyan
     headerGradient: false,
     backgroundGradient: false,
+  },
+  // Anime-inspired themes
+  {
+    name: "Sakura Dream",
+    headerColor: '#F8BBD0', // Soft Pink
+    backgroundColor: '#FCE4EC', // Very Light Pink
+    textColor: '#880E4F', // Dark Pink
+    accentColor: '#EC407A', // Medium Pink
+    headerGradient: true,
+    backgroundGradient: true,
+  },
+  {
+    name: "Cyber Neon",
+    headerColor: '#000000', // Black
+    backgroundColor: '#0D0221', // Very Dark Purple
+    textColor: '#00FF9F', // Bright Neon Green
+    accentColor: '#FF00E4', // Bright Neon Pink
+    headerGradient: true,
+    backgroundGradient: true,
+  },
+  {
+    name: "Shonen Hero",
+    headerColor: '#FF9800', // Orange
+    backgroundColor: '#FFF9C4', // Very Light Yellow
+    textColor: '#BF360C', // Deep Red-Orange
+    accentColor: '#F57F17', // Dark Amber
+    headerGradient: true,
+    backgroundGradient: false,
+  },
+  {
+    name: "Magic Academy",
+    headerColor: '#4527A0', // Deep Purple
+    backgroundColor: '#E8EAF6', // Very Light Indigo
+    textColor: '#283593', // Dark Indigo
+    accentColor: '#7C4DFF', // Deep Purple Accent
+    headerGradient: true,
+    backgroundGradient: false,
+  },
+  {
+    name: "Tokyo Night",
+    headerColor: '#1A237E', // Dark Indigo
+    backgroundColor: '#0D1117', // Very Dark Blue-Black
+    textColor: '#E1F5FE', // Very Light Blue
+    accentColor: '#2979FF', // Bright Blue
+    headerGradient: true,
+    backgroundGradient: true,
+  },
+  {
+    name: "Spirit Forest",
+    headerColor: '#2E7D32', // Dark Green
+    backgroundColor: '#E8F5E9', // Very Light Green
+    textColor: '#1B5E20', // Dark Green
+    accentColor: '#00C853', // Light Green A700
+    headerGradient: true,
+    backgroundGradient: false,
+  },
+  // Cutesy Girly Themes
+  {
+    name: "Cotton Candy",
+    headerColor: '#F48FB1', // Pink
+    backgroundColor: '#F8BBD0', // Light Pink
+    textColor: '#AD1457', // Dark Pink
+    accentColor: '#CE93D8', // Light Purple
+    headerGradient: true,
+    backgroundGradient: true,
+  },
+  {
+    name: "Fairy Tale",
+    headerColor: '#E1BEE7', // Light Purple
+    backgroundColor: '#F3E5F5', // Very Light Purple
+    textColor: '#6A1B9A', // Dark Purple
+    accentColor: '#BA68C8', // Medium Purple
+    headerGradient: true,
+    backgroundGradient: true,
+  },
+  {
+    name: "Pastel Princess",
+    headerColor: '#FFCDD2', // Light Red
+    backgroundColor: '#FAFAFA', // Almost White
+    textColor: '#C2185B', // Pink
+    accentColor: '#FFB74D', // Light Orange
+    headerGradient: true,
+    backgroundGradient: false,
+  },
+  {
+    name: "Unicorn Dream",
+    headerColor: '#B39DDB', // Light Purple
+    backgroundColor: '#EDE7F6', // Very Light Purple
+    textColor: '#512DA8', // Deep Purple
+    accentColor: '#81D4FA', // Light Blue
+    headerGradient: true,
+    backgroundGradient: true,
+  },
+  {
+    name: "Kawaii Kitty",
+    headerColor: '#FFCCBC', // Light Orange
+    backgroundColor: '#FFF3E0', // Lighter Orange
+    textColor: '#D84315', // Deep Orange
+    accentColor: '#FF8A65', // Medium Orange
+    headerGradient: true,
+    backgroundGradient: false,
+  },
+  {
+    name: "Bubblegum Pop",
+    headerColor: '#F06292', // Medium Pink
+    backgroundColor: '#FCE4EC', // Very Light Pink
+    textColor: '#880E4F', // Dark Pink
+    accentColor: '#64B5F6', // Light Blue
+    headerGradient: true,
+    backgroundGradient: true,
   }
 ];
 
-const AVAILABLE_FONTS = ['Arial', 'Verdana', 'Georgia', 'Times New Roman', 'Courier New', 'Roboto', 'Open Sans', 'Lato', 'Montserrat'];
+const AVAILABLE_FONTS = [
+  // Standard System Fonts
+  'Arial', 
+  'Verdana', 
+  'Georgia', 
+  'Times New Roman', 
+  'Courier New', 
+  'Roboto', 
+  'Open Sans', 
+  'Lato', 
+  'Montserrat',
+  
+  // Anime-Style Fonts
+  'Comic Sans MS', 
+  'Comic Neue',
+  'Bangers',
+  'Kalam',
+  'Indie Flower',
+  'Permanent Marker',
+  'Architects Daughter',
+  'Fredoka One',
+  
+  // Girly/Fancy Fonts
+  'Pacifico',
+  'Dancing Script',
+  'Satisfy',
+  'Great Vibes',
+  'Playball',
+  'Sacramento',
+  'Tangerine',
+  'Petit Formal Script'
+];
+
 const AVAILABLE_TEXT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32]; // in pixels
 // --- End Room Theme Definitions & Constants ---
 
@@ -2638,37 +2789,175 @@ const InsideStreamCallContent: React.FC<{
     handleClearSharedVideo: Function, 
     currentVideoUrl: string | null, 
     renderVideoPlayer: (videoUrl: string) => React.ReactNode, 
-    // Ensure prop names match where the component is called
     onForceMuteToggle: Function, 
     onForceRemove: Function, 
     onForceBan: Function, 
     theme: any
 }> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme }) => {
-    const call = useCall(); // Get the call object
-    const { useParticipants, useCallState, useMicrophoneState } = useCallStateHooks(); // Add useMicrophoneState
-    const participants = useParticipants(); // Get participants from Stream
-    // const { localParticipant } = useCallState(); // We get local mic state differently
-    const { isMute: localUserIsMute } = useMicrophoneState(); // Correct way to get local mute state
-    const navigate = useNavigate(); // Add useNavigate hook
+    const call = useCall(); 
+    const { useParticipants, useCallState, useMicrophoneState, useCameraState } = useCallStateHooks(); 
+    const participants = useParticipants(); 
+    const { localParticipant } = useCallState(); 
+    const { isMute: localUserIsMute } = useMicrophoneState(); 
+    const { isEnabled: isCameraEnabled, isTogglePending } = useCameraState(); 
+    const navigate = useNavigate(); 
 
-    // --- Get current user from AuthContext ---
     const { currentUser } = useAuth();
 
-    // --- State for Pinned Participants ---
-    const [pinnedUserIds, setPinnedUserIds] = useState<string[]>([]);
+    // Add state for desktop detection
+    const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024);
 
-    // --- Handler to Toggle Pin ---
+    // Add state to track PiP visibility separately from camera state
+    const [isPipVisible, setIsPipVisible] = useState(true);
+    const [isPipEnlarged, setIsPipEnlarged] = useState(false);
+
+    const [pinnedUserIds, setPinnedUserIds] = useState<string[]>([]);
+    
+    // Add state for chat tab
+    const [activeTab, setActiveTab] = useState<'participants' | 'chat'>('participants');
+    const [chatMessages, setChatMessages] = useState<{id: string, userId: string, userName: string, message: string, timestamp: number}[]>([]);
+    const [chatInput, setChatInput] = useState('');
+    const chatEndRef = useRef<null | HTMLDivElement>(null);
+
+    // State to cache usernames from Firestore
+    const [firestoreUserData, setFirestoreUserData] = useState<{[key: string]: {username: string, avatar?: string}}>({});
+
+    // Fetch Firestore username for a user
+    const fetchUserFirestoreData = useCallback(async (userId: string) => {
+        if (firestoreUserData[userId]) return firestoreUserData[userId];
+        
+        try {
+            const userProfileRef = doc(db, 'users', userId);
+            const userProfileSnap = await getDoc(userProfileRef);
+            
+            if (userProfileSnap.exists()) {
+                const profileData = userProfileSnap.data() as UserProfile;
+                const userData = {
+                    username: profileData.username || `user_${userId.substring(0, 4)}`,
+                    avatar: profileData.profilePic
+                };
+                
+                // Cache the result
+                setFirestoreUserData(prev => ({
+                    ...prev,
+                    [userId]: userData
+                }));
+                
+                return userData;
+            } else {
+                console.warn(`[Chat] No Firestore profile found for user ${userId}`);
+                // Fallback if no profile exists
+                const fallbackData = {
+                    username: `user_${userId.substring(0, 4)}`,
+                    avatar: undefined
+                };
+                
+                setFirestoreUserData(prev => ({
+                    ...prev,
+                    [userId]: fallbackData
+                }));
+                
+                return fallbackData;
+            }
+        } catch (error) {
+            console.error(`[Chat] Error fetching user data for ${userId}:`, error);
+            // Return a fallback on error
+            return {
+                username: `user_${userId.substring(0, 4)}`,
+                avatar: undefined
+            };
+        }
+    }, [firestoreUserData, db]);
+
+    // Remove prefetch effect from here
+
+    // Handler for sending chat messages
+    const handleSendChatMessage = useCallback(async () => {
+        if (!chatInput.trim() || !currentUser?.uid) return;
+        
+        // Get the current user's Firestore username
+        const userData = await fetchUserFirestoreData(currentUser.uid);
+        
+        const newMessage = {
+            id: `${Date.now()}-${currentUser.uid}`,
+            userId: currentUser.uid,
+            userName: userData.username,
+            message: chatInput.trim(),
+            timestamp: Date.now()
+        };
+        
+        setChatMessages(prev => [...prev, newMessage]);
+        setChatInput('');
+    }, [chatInput, currentUser?.uid, fetchUserFirestoreData]);
+
+    // Screen sharing toggle handler
+    const handleToggleScreenShare = useCallback(async () => {
+        if (!call) {
+            toast.error("Audio/video call not active to share screen.");
+            return;
+        }
+        if (!isDesktop) {
+            toast.error("Screen sharing is only available on desktop devices.");
+            return;
+        }
+        try {
+            await call.screenShare.toggle();
+            // No local state needed as we're using the button directly in the screen share section
+            if (call.screenShare.enabled) {
+                toast.success("Screen sharing started.");
+            } else {
+                toast.success("Screen sharing stopped.");
+            }
+        } catch (error: any) {
+            console.error("Error toggling screen share:", error);
+            if (error.name === 'NotAllowedError' || error.message?.includes('Permission denied')) {
+                toast.error("Screen share permission denied. Please allow access in your browser.");
+            } else if (error.message?.includes('InvalidStateError')) {
+                toast.error("Cannot toggle screen share: an operation is already in progress or call state is invalid.");
+            } else if (error.message?.includes("getDisplayMedia is not supported") || error.message?.includes("getDisplayMedia API is not available")){
+                toast.error("Screen sharing is not supported by your browser.");
+            } else {
+                toast.error(`Failed to toggle screen sharing: ${error.message || 'Unknown error'}`);
+            }
+        }
+    }, [call, isDesktop]);
+
+    // Effect for Desktop Check
+    useEffect(() => {
+        const handleResize = () => {
+            setIsDesktop(window.innerWidth > 1024);
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     const handleTogglePinParticipant = (userId: string) => {
         setPinnedUserIds(prevPinnedIds => {
             if (prevPinnedIds.includes(userId)) {
-                return prevPinnedIds.filter(id => id !== userId); // Unpin
+                return prevPinnedIds.filter(id => id !== userId);
             } else {
-                return [...prevPinnedIds, userId]; // Pin
+                return [...prevPinnedIds, userId];
             }
         });
     };
 
-    // Sort participants to ensure the room owner is always first, then pinned, then others
+    // Function to show the PiP
+    const handleShowPip = () => {
+        setIsPipVisible(true);
+    };
+
+    // Toggle camera function that can be reused
+    const toggleCamera = () => {
+        if (call) {
+            call.camera.toggle();
+        }
+    };
+
+    // Auto scroll to bottom when new messages arrive
+    useEffect(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [chatMessages]);
+
     const sortedParticipants = useMemo(() => {
         if (!participants || !room?.ownerId) return [];
         
@@ -2677,28 +2966,45 @@ const InsideStreamCallContent: React.FC<{
         const otherParticipants = participants.filter(p => p.userId !== room.ownerId && !pinnedUserIds.includes(p.userId));
 
         return [
-            ...(ownerParticipant ? [ownerParticipant] : []), // Owner first
-            ...pinnedParticipantsList, // Then pinned users
-            ...otherParticipants // Then the rest
-        ].filter(Boolean); // Ensure no undefined entries if owner is not in participants list for some reason
+            ...(ownerParticipant ? [ownerParticipant] : []), 
+            ...pinnedParticipantsList, 
+            ...otherParticipants 
+        ].filter(Boolean); 
     }, [participants, room?.ownerId, pinnedUserIds]);
 
-    // Use the sorted list for the grid
+    // Reset PiP visibility when camera is enabled
+    useEffect(() => {
+        if (isCameraEnabled) {
+            setIsPipVisible(true);
+        }
+    }, [isCameraEnabled]);
+
     const gridParticipants = sortedParticipants;
 
+    // Add prefetch effect after gridParticipants is declared
+    useEffect(() => {
+        if (!participants?.length) return;
+        
+        const fetchAllUserData = async () => {
+            const promises = participants
+                .filter(p => !firestoreUserData[p.userId])
+                .map(p => fetchUserFirestoreData(p.userId));
+            
+            await Promise.all(promises);
+        };
+        
+        fetchAllUserData();
+    }, [participants, fetchUserFirestoreData, firestoreUserData]);
+
     const handleLeaveCall = () => {
-        call?.leave().then(() => navigate('/side-rooms')); // navigate is now in scope
+        call?.leave().then(() => navigate('/side-rooms')); 
     }; 
 
     useEffect(() => {
-        // Ensure db is in scope. If SideRoomComponent passes db down or imports it globally for the file, this is fine.
-        // Otherwise, this useEffect would need to be in a component with db in scope, or db passed as a prop.
-        if (call && currentUser?.uid && room?.id && typeof localUserIsMute === 'boolean' && db) { // Added db check
+        if (call && currentUser?.uid && room?.id && typeof localUserIsMute === 'boolean' && db) { 
             const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
-            // --- ADDED DEBUG LOG ---
             const userPresencePath = `sideRooms/${room.id}/presence/${currentUser.uid}`;
             console.log('[DEBUG Mute Sync] Attempting updateDoc to path:', userPresencePath, 'with data:', JSON.stringify({ isMuted: localUserIsMute }, null, 2));
-            // --- END DEBUG LOG ---
             updateDoc(userPresenceRef, { isMuted: localUserIsMute })
                 .then(() => {
                     console.log(`[InsideStreamCallContent] Synced local mute state (${localUserIsMute}) to Firestore for ${currentUser.uid}`);
@@ -2707,8 +3013,7 @@ const InsideStreamCallContent: React.FC<{
                     console.error(`[InsideStreamCallContent] Error syncing local mute state to Firestore for ${currentUser.uid}:`, error);
                 });
         }
-    }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); // Added db to dependencies
-
+    }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); 
 
     if (!call) {
         return (
@@ -2726,16 +3031,37 @@ const InsideStreamCallContent: React.FC<{
             borderColor: 'divider', 
             textAlign: 'center', 
             flexShrink: 0, 
-            backgroundColor: alpha(theme.palette.background.paper, 0.95) 
+            backgroundColor: room?.style?.headerGradient 
+                ? `linear-gradient(to right, ${room?.style?.headerColor || theme.palette.primary.main}, ${room?.style?.accentColor || theme.palette.secondary.light})` 
+                : room?.style?.headerColor || alpha(theme.palette.background.paper, 0.95),
+            color: room?.style?.textColor || 'inherit'
         }}>
-            <Typography variant="body2" fontWeight="medium">{room.name}</Typography>
-            {/* Use localUserIsMute here */}
-            <Typography variant="caption" color="text.secondary">(Mic: {localUserIsMute ? 'Muted' : 'On'})</Typography>
+            <Typography 
+                variant="body2" 
+                fontWeight="medium"
+                sx={{ 
+                    fontFamily: room?.style?.font || 'inherit'
+                }}
+            >
+                {room.name}
+            </Typography>
+            <Typography 
+                variant="caption" 
+                color={room?.style?.textColor ? alpha(room?.style?.textColor, 0.8) : "text.secondary"}
+                sx={{
+                    fontFamily: room?.style?.font || 'inherit'
+                }}
+            >
+                (Mic: {localUserIsMute ? 'Muted' : 'On'})
+            </Typography>
             </Box>
         );
 
-    // Find the participant who has an active screenShareStream property
     const screenSharingParticipant = participants.find(p => p.screenShareStream);
+    const isRoomOwnerSharing = screenSharingParticipant?.userId === room.ownerId;
+
+    // Determine if chat tab should be shown
+    const shouldShowChatTab = isRoomOwnerSharing;
 
         return (
         <Box sx={{ 
@@ -2743,7 +3069,11 @@ const InsideStreamCallContent: React.FC<{
             flexDirection: 'column', 
             height: '100%', 
             width: '100%', 
-            backgroundColor: theme.palette.background.default 
+            fontFamily: room?.style?.font || 'inherit',
+            backgroundColor: room?.style?.backgroundGradient
+                ? `linear-gradient(to bottom right, ${room?.style?.backgroundColor || theme.palette.background.default}, ${room?.style?.accentColor || theme.palette.secondary.main})` 
+                : room?.style?.backgroundColor || theme.palette.background.default,
+            color: room?.style?.textColor || theme.palette.text.primary
         }}>
             {renderCallStatusHeader()}
             
@@ -2752,31 +3082,49 @@ const InsideStreamCallContent: React.FC<{
                 overflowY: 'auto', 
                 p: 2, 
             }}>
-                 {/* --- Screen Share Display Section (NEW) --- */}
                  {screenSharingParticipant && (
                     <Box sx={{ 
-                        mb: 3, 
-                        p: 1, 
-                        border: `2px solid ${theme.palette.primary.main}`,
-                        borderRadius: 2, 
-                        backgroundColor: 'rgba(0,0,0,0.05)',
-                        boxShadow: theme.shadows[3],
+                        m: 0,
+                        p: 0,
+                        border: 'none',
+                        borderRadius: 0,
+                        backgroundColor: '#000',
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        height: 'auto',
+                        width: '100%',
+                        maxWidth: '1920px',
+                        margin: '0 auto',
+                        overflow: 'hidden'
                     }}>
-                        {/* REMOVE Typography from here 
-                        <Typography variant="subtitle2" sx={{ textAlign: 'center', mb: 1, color: theme.palette.text.secondary }}>
-                            {screenSharingParticipant.name || screenSharingParticipant.userId} is sharing their screen
-                        </Typography>
-                        */}
+                        {/* Show screen share when PiP is not enlarged */}
+                        {!isPipEnlarged && (
                         <Box sx={{
-                            // Simpler container styling for debugging
                             width: '100%', 
-                            height: '300px', // Set an explicit height for now
-                            maxHeight: '50vh', // Limit height relative to viewport
-                            overflow: 'hidden', // Keep overflow hidden
-                            position: 'relative', // Keep relative for absolute positioning inside
-                            // background: '#000', // Remove background to ensure it's not hiding video
-                            border: '1px dashed grey', // Add border for visibility
-
+                            paddingTop: '56.25%', // 16:9 aspect ratio (9/16 = 0.5625)
+                            overflow: 'hidden', 
+                            position: 'relative', 
+                            border: 'none',
+                            '& .str-video__screen-share-info': {
+                                display: 'none !important',
+                                visibility: 'hidden !important',
+                                opacity: 0,
+                                height: 0,
+                                overflow: 'hidden',
+                                pointerEvents: 'none',
+                                position: 'absolute',
+                                zIndex: -9999
+                            },
+                            '& .str-video__participant-details, & .str-video__participant-bar, & .str-video__loading-indicator, & .str-video__screen-share-text, & .str-video__screen-share-status, & .str-video__participant__name, & .str-video__participant__info, & .str-video__participant-flag, & div[class*="screen-share"], & span[class*="presentation"]': {
+                                display: 'none !important',
+                                visibility: 'hidden !important',
+                                opacity: 0,
+                                height: 0,
+                                width: 0,
+                                overflow: 'hidden',
+                                pointerEvents: 'none'
+                            },
                             '& .str-video__participant-view': { 
                                 position: 'absolute',
                                 top: 0,
@@ -2784,14 +3132,24 @@ const InsideStreamCallContent: React.FC<{
                                 width: '100% !important',
                                 height: '100% !important',
                                 border: 'none',
-                                display: 'flex', // Ensure flex layout
-                                justifyContent: 'center', // Center content
-                                alignItems: 'center', // Center content
+                                display: 'flex', 
+                                justifyContent: 'center', 
+                                alignItems: 'center', 
                                 '& video': { 
-                                    width: '100%', // Let video width fill container
-                                    height: '100%', // Let video height fill container
-                                    objectFit: 'contain' // Important: fit video within bounds
+                                    width: '100%', 
+                                    height: '100%', 
+                                    objectFit: 'contain',
+                                    background: '#000'
                                 },
+                                '& .str-video__participant-details': {
+                                    display: 'none !important'
+                                },
+                                '& .str-video__participant-status': {
+                                    display: 'none !important'
+                                },
+                                '& .str-video__participant-flag-container': {
+                                    display: 'none !important'
+                                }
                             },
                         }}>
                             <ParticipantView 
@@ -2799,23 +3157,240 @@ const InsideStreamCallContent: React.FC<{
                                 trackType="screenShareTrack" 
                             />
                         </Box>
-                        {/* ADD Typography here, below the video Box */}
-                        <Typography variant="subtitle2" sx={{ textAlign: 'center', mt: 1, mb: 0.5, color: theme.palette.text.secondary }}>
-                            {screenSharingParticipant.name || screenSharingParticipant.userId} is sharing their screen
-                        </Typography>
+                        )}
+                        
+                        {/* Show enlarged camera when PiP is enlarged */}
+                        {isPipEnlarged && isPipVisible && localParticipant && (
+                            <Box sx={{
+                                width: '100%', 
+                                paddingTop: '56.25%', // Maintain 16:9 aspect ratio
+                                overflow: 'hidden', 
+                                position: 'relative', 
+                                border: 'none',
+                                backgroundColor: '#000',
+                                '& .str-video__participant-view': { 
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100% !important',
+                                    height: '100% !important',
+                                    border: 'none',
+                                    display: 'flex', 
+                                    justifyContent: 'center', 
+                                    alignItems: 'center', 
+                                    '& video': { 
+                                        width: '100%', 
+                                        height: '100%', 
+                                        objectFit: 'cover',
+                                        background: '#000'
+                                    }
+                                }
+                            }}>
+                                {isCameraEnabled ? (
+                                    <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                ) : (
+                                    <Box sx={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: '100%',
+                                        display: 'flex',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        color: 'white',
+                                        backgroundColor: 'rgba(0,0,0,0.8)'
+                                    }}>
+                                        <VideocamOffIcon sx={{ fontSize: '5rem' }} />
+                                    </Box>
+                                )}
+                                
+                                <IconButton
+                                    size="medium"
+                                    onClick={toggleCamera}
+                                    sx={{
+                                        position: 'absolute',
+                                        top: 16,
+                                        right: 80,
+                                        padding: '8px',
+                                        color: 'white',
+                                        backgroundColor: 'rgba(0,0,0,0.5)',
+                                        '&:hover': {
+                                            backgroundColor: 'rgba(0,0,0,0.7)',
+                                        }
+                                    }}
+                                >
+                                    {isCameraEnabled ? 
+                                        <VideocamIcon /> : 
+                                        <VideocamOffIcon />
+                                    }
+                                </IconButton>
+                                
+                                <IconButton
+                                    size="medium"
+                                    onClick={() => setIsPipEnlarged(false)}
+                                    sx={{
+                                        position: 'absolute',
+                                        top: 16,
+                                        right: 16,
+                                        padding: '8px',
+                                        color: 'white',
+                                        backgroundColor: 'rgba(0,0,0,0.5)',
+                                        '&:hover': {
+                                            backgroundColor: 'rgba(0,0,0,0.7)',
+                                        }
+                                    }}
+                                >
+                                    <CloseIcon />
+                                </IconButton>
+                            </Box>
+                        )}
+                        
+                        <Box sx={{ 
+                            position: 'absolute',
+                            top: 10,
+                            right: 10,
+                            zIndex: 10
+                        }}>
+                            {isRoomOwner && (
+                                <Button
+                                    variant="contained"
+                                    color="error"
+                                    size="small"
+                                    startIcon={<StopScreenShareIcon />}
+                                    onClick={handleToggleScreenShare}
+                                    sx={{ 
+                                        borderRadius: '20px',
+                                        textTransform: 'none',
+                                        py: 0.5,
+                                        px: 1.5,
+                                        bgcolor: 'error.main',
+                                        fontWeight: 'bold',
+                                        minWidth: 0,
+                                        boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
+                                        fontFamily: room?.style?.font || 'inherit'
+                                    }}
+                                >
+                                    Stop
+                                </Button>
+                            )}
+                        </Box>
+
+                        {/* Only show small PiP when not enlarged */}
+                        {!isPipEnlarged && isPipVisible && localParticipant && (
+                            <Box
+                                sx={{
+                                    position: 'absolute', 
+                                    bottom: 10, 
+                                    left: 10, 
+                                    width: 110,
+                                    height: 80,
+                                    backgroundColor: 'rgba(0,0,0,0.6)',
+                                    border: '1px solid rgba(255,255,255,0.3)',
+                                    borderRadius: 1,
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
+                                    zIndex: 10, 
+                                    overflow: 'hidden',
+                                    display: 'flex', 
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    transition: 'all 0.3s ease-in-out',
+                                    '& .str-video__participant-view': {
+                                        width: '100% !important',
+                                        height: '100% !important',
+                                        '& video': {
+                                            width: '100%',
+                                            height: '100%',
+                                            objectFit: 'cover',
+                                        },
+                                    },
+                                }}
+                            >
+                                {isCameraEnabled ? (
+                                    <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                ) : (
+                                    <Box sx={{
+                                        display: 'flex',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        width: '100%',
+                                        height: '100%',
+                                        color: 'white',
+                                        backgroundColor: 'rgba(0,0,0,0.5)'
+                                    }}>
+                                        <VideocamOffIcon sx={{ fontSize: '1.2rem' }} />
                     </Box>
                  )}
-                 {/* --- End Screen Share Display Section --- */}
+                                
+                                <IconButton
+                                    size="small"
+                                    onClick={toggleCamera}
+                                    sx={{
+                                        position: 'absolute',
+                                        top: 2,
+                                        right: 2,
+                                        padding: '3px',
+                                        color: 'white',
+                                        backgroundColor: 'rgba(0,0,0,0.5)',
+                                        '&:hover': {
+                                            backgroundColor: 'rgba(0,0,0,0.7)',
+                                        }
+                                    }}
+                                >
+                                    {isCameraEnabled ? 
+                                        <VideocamIcon sx={{ fontSize: '0.8rem' }} /> : 
+                                        <VideocamOffIcon sx={{ fontSize: '0.8rem' }} />
+                                    }
+                                </IconButton>
+                                
+                                {isRoomOwner && (
+                                    <IconButton
+                                        size="small"
+                                        onClick={() => setIsPipEnlarged(true)}
+                                        sx={{
+                                            position: 'absolute',
+                                            top: 2,
+                                            left: 2,
+                                            padding: '3px',
+                                            color: 'white',
+                                            backgroundColor: 'rgba(0,0,0,0.5)',
+                                            '&:hover': {
+                                                backgroundColor: 'rgba(0,0,0,0.7)',
+                                            }
+                                        }}
+                                    >
+                                        <ZoomInIcon sx={{ fontSize: '0.8rem' }} />
+                                    </IconButton>
+                                )}
+                            </Box>
+                        )}
+                    </Box>
+                 )}
+                 {/* End Screen Share Display Section */}
 
-                 {/* --- Video Player Section (Remains after screen share) --- */}
                  {currentVideoUrl && (
                      <Box sx={{ mt: 1, mb: 3, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1, backgroundColor: 'action.hover' }}>
                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                             <Typography variant="subtitle1" sx={{ textAlign: 'center', flexGrow: 1 }}>Shared Video</Typography>
+                             <Typography 
+                                 variant="subtitle1" 
+                                 sx={{ 
+                                     textAlign: 'center', 
+                                     flexGrow: 1,
+                                     fontFamily: room?.style?.font || 'inherit',
+                                     color: room?.style?.textColor || 'inherit'
+                                 }}
+                             >
+                                 Shared Video
+                             </Typography>
                              {isRoomOwner && (
                                  <Tooltip title="Clear Shared Video">
-                                     {/* Use the passed-in handler */}
-                                     <IconButton onClick={() => handleClearSharedVideo()} size="small">
+                                     <IconButton 
+                                         onClick={() => handleClearSharedVideo()} 
+                                         size="small"
+                                         sx={{
+                                             color: room?.style?.accentColor || 'inherit'
+                                         }}
+                                     >
                                          <ClearIcon />
                                      </IconButton>
                                  </Tooltip>
@@ -2824,7 +3399,7 @@ const InsideStreamCallContent: React.FC<{
                          <Box
                              sx={{
                                  position: 'relative',
-                                 paddingBottom: '56.25%', // 16:9
+                                 paddingBottom: '56.25%', 
                                  height: 0,
                                  overflow: 'hidden',
                                  maxWidth: '100%',
@@ -2839,102 +3414,407 @@ const InsideStreamCallContent: React.FC<{
                                  },
                              }}
                          >
-                             {/* Use the passed-in render function */}
                              {renderVideoPlayer(currentVideoUrl)}
                          </Box>
                      </Box>
                  )}
-                 {/* --- End Video Player Section --- */}
 
-                 <Typography variant="overline" display="block" sx={{ color: 'text.secondary', mb: 1 }}>
-                     Participants ({gridParticipants.length})
-                </Typography>
-                {/* Add ParticipantsAudio component to handle audio playback for all participants */}
+                 {/* Tabs UI */}
+                 <Box sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
+                     <Tabs 
+                         value={activeTab} 
+                         onChange={(_, newValue) => setActiveTab(newValue)}
+                         aria-label="room content tabs"
+                         sx={{ 
+                             '& .MuiTab-root': {
+                                 fontFamily: room?.style?.font || 'inherit',
+                                 color: room?.style?.textColor || 'inherit',
+                                 opacity: 0.7
+                             },
+                             '& .Mui-selected': {
+                                 color: `${room?.style?.accentColor || theme.palette.primary.main} !important`,
+                                 opacity: 1
+                             },
+                             '& .MuiTabs-indicator': {
+                                 backgroundColor: room?.style?.accentColor || theme.palette.primary.main
+                             }
+                         }}
+                     >
+                         <Tab 
+                             label={`Participants (${gridParticipants.length})`} 
+                             value="participants" 
+                         />
+                         {shouldShowChatTab && (
+                             <Tab 
+                                 label="Chat" 
+                                 value="chat" 
+                                 icon={<Badge 
+                                     color="primary" 
+                                     variant="dot" 
+                                     invisible={activeTab === 'chat' || chatMessages.length === 0}
+                                     sx={{
+                                         '& .MuiBadge-badge': {
+                                             backgroundColor: room?.style?.accentColor || theme.palette.primary.main
+                                         }
+                                     }}
+                                 />}
+                                 iconPosition="end"
+                             />
+                         )}
+                     </Tabs>
+                 </Box>
+
+                 {/* Participants Tab Content */}
+                 {activeTab === 'participants' && (
+                     <>
                 {gridParticipants.length > 0 && <ParticipantsAudio participants={gridParticipants} />}
 
                 <Grid container spacing={2}>
-                    {gridParticipants.map((p) => {
-                        const isCardParticipantTheHost = p.userId === room.ownerId; // Determine if this participant is the host
+                             {gridParticipants.map((p: StreamVideoParticipant) => {
+                        const isCardParticipantTheHost = p.userId === room.ownerId; 
                         return (
                             <Grid item key={p.sessionId} xs={4} sm={3} md={2}>
-                                {/* Use the corrected Participant Card name */}
                                 <StreamParticipantCard 
                                     participant={p} 
                                     isRoomOwner={isRoomOwner}
                                     isLocalParticipant={p.userId === currentUser?.uid} 
                                     localUserAuthData={currentUser} 
-                                    // Pass down moderation functions
                                     onForceMuteToggle={onForceMuteToggle} 
                                     onForceRemove={onForceRemove}
                                     onForceBan={onForceBan}
-                                    call={call} // Pass call object
-                                    localUserIsMute={localUserIsMute} // Pass local mute state
-                                    isDesignatedHost={isCardParticipantTheHost} // PASS THE NEW PROP
-                                    onPinToggle={handleTogglePinParticipant} // Pass pin toggle handler
-                                    isPinned={pinnedUserIds.includes(p.userId)} // Pass pinned status
+                                    call={call} 
+                                    localUserIsMute={localUserIsMute} 
+                                    isDesignatedHost={isCardParticipantTheHost} 
+                                    onPinToggle={handleTogglePinParticipant} 
+                                    isPinned={pinnedUserIds.includes(p.userId)} 
+                                             roomStyle={room?.style}
                                 />
-                                {/* REMOVE the individual ParticipantView that was here for audio playback */}
-                                {/* 
-                            {p.userId !== currentUser?.uid && (
-                                <ParticipantView participant={p} />
-                            )}
-                            */}
                             </Grid>
-                        ); // Ensure this semicolon terminates the return statement
+                        ); 
                     })}
                 </Grid>
                 
                 {gridParticipants.length === 0 && (
-                    <Typography sx={{width: '100%', textAlign: 'center', color: theme.palette.text.secondary, mt: 4}}>
+                             <Typography sx={{
+                                 width: '100%', 
+                                 textAlign: 'center', 
+                                 color: room?.style?.textColor ? alpha(room?.style?.textColor, 0.7) : theme.palette.text.secondary, 
+                                 mt: 4,
+                                 fontFamily: room?.style?.font || 'inherit'
+                             }}>
                         Waiting for others to join...
                     </Typography>
+                         )}
+                     </>
+                 )}
+
+                 {/* Chat Tab Content */}
+                 {activeTab === 'chat' && shouldShowChatTab && (
+                     <Box sx={{ 
+                         display: 'flex', 
+                         flexDirection: 'column', 
+                         height: 400, 
+                         maxHeight: '50vh',
+                         border: `1px solid ${room?.style?.accentColor ? alpha(room?.style?.accentColor, 0.3) : theme.palette.divider}`, 
+                         borderRadius: 1, 
+                         overflow: 'hidden' 
+                     }}>
+                         {/* Users in Room */}
+                         <Box sx={{
+                             p: 1.5,
+                             borderBottom: `1px solid ${room?.style?.accentColor ? alpha(room?.style?.accentColor, 0.3) : theme.palette.divider}`,
+                             bgcolor: room?.style?.headerColor ? alpha(room?.style?.headerColor, 0.1) : alpha(theme.palette.background.paper, 0.7),
+                             display: 'flex',
+                             flexDirection: 'column',
+                             gap: 0.5
+                         }}>
+                             <Typography variant="subtitle2" fontWeight="medium" sx={{ fontFamily: room?.style?.font || 'inherit', color: room?.style?.textColor || 'inherit' }}>
+                                 Users in Room ({gridParticipants.length})
+                             </Typography>
+                             <Box sx={{
+                                 display: 'flex',
+                                 flexWrap: 'wrap',
+                                 gap: 0.5
+                             }}>
+                                 {gridParticipants.map((p: StreamVideoParticipant) => {
+                                     // Use cached Firestore username if available
+                                     const userData = firestoreUserData[p.userId];
+                                     const displayName = userData?.username || p.name || p.userId.substring(0, 8);
+                                     const avatarUrl = userData?.avatar || p.image;
+                                     
+                                     return (
+                                         <Chip
+                                             key={p.sessionId}
+                                             size="small"
+                                             label={displayName}
+                                             avatar={<Avatar 
+                                                 src={avatarUrl} 
+                                                 alt={displayName}
+                                                 sx={{ 
+                                                     width: 24, 
+                                                     height: 24
+                                                 }}
+                                             />}
+                                             sx={{
+                                                 backgroundColor: p.userId === room.ownerId 
+                                                     ? alpha(room?.style?.accentColor || theme.palette.secondary.main, 0.1) 
+                                                     : alpha(room?.style?.headerColor || theme.palette.primary.main, 0.05),
+                                                 borderColor: p.userId === room.ownerId 
+                                                     ? room?.style?.accentColor || theme.palette.secondary.main 
+                                                     : room?.style?.headerColor || theme.palette.primary.main,
+                                                 border: '1px solid',
+                                                 color: room?.style?.textColor || 'inherit',
+                                                 fontFamily: room?.style?.font || 'inherit',
+                                                 '& .MuiChip-label': {
+                                                     px: 1,
+                                                     fontSize: '0.7rem'
+                                                 }
+                                             }}
+                                         />
+                                     );
+                                 })}
+                             </Box>
+                         </Box>
+
+                         {/* Chat Messages */}
+                         <Box sx={{ 
+                             flexGrow: 1, 
+                             overflowY: 'auto', 
+                             p: 2, 
+                             bgcolor: room?.style?.backgroundGradient ? alpha(room?.style?.backgroundColor || theme.palette.background.default, 0.3) : alpha(theme.palette.background.paper, 0.5) 
+                         }}>
+                             {chatMessages.length === 0 ? (
+                                 <Typography 
+                                     variant="body2" 
+                                     color={room?.style?.textColor ? alpha(room?.style?.textColor, 0.7) : "text.secondary"}
+                                     sx={{ 
+                                         textAlign: 'center', 
+                                         fontStyle: 'italic', 
+                                         mt: 4,
+                                         fontFamily: room?.style?.font || 'inherit'
+                                     }}
+                                 >
+                                     Chat messages will appear here. Be the first to send a message!
+                                 </Typography>
+                             ) : (
+                                 <>
+                                     {chatMessages.map(msg => (
+                                         <Box 
+                                             key={msg.id} 
+                                             sx={{ 
+                                                 display: 'flex', 
+                                                 flexDirection: msg.userId === currentUser?.uid ? 'row-reverse' : 'row',
+                                                 mb: 1.5 
+                                             }}
+                                         >
+                                             {msg.userId !== currentUser?.uid && (
+                                                 <Avatar 
+                                                     sx={{ 
+                                                         width: 28, 
+                                                         height: 28, 
+                                                         mr: 1,
+                                                         fontSize: '0.8rem'
+                                                     }}
+                                                     src={firestoreUserData[msg.userId]?.avatar}
+                                                 >
+                                                     {msg.userName.charAt(0).toUpperCase()}
+                                                 </Avatar>
+                                             )}
+                                             <Box>
+                                                 <Typography 
+                                                     variant="caption" 
+                                                     color={room?.style?.textColor ? alpha(room?.style?.textColor, 0.8) : "text.secondary"}
+                                                     sx={{ 
+                                                         display: 'block', 
+                                                         mb: 0.2,
+                                                         textAlign: msg.userId === currentUser?.uid ? 'right' : 'left',
+                                                         fontFamily: room?.style?.font || 'inherit'
+                                                     }}
+                                                 >
+                                                     {msg.userName}
+                                                 </Typography>
+                                                 <Paper 
+                                                     sx={{ 
+                                                         p: 1, 
+                                                         bgcolor: msg.userId === currentUser?.uid ? room?.style?.accentColor || 'primary.main' : 'background.paper',
+                                                         color: msg.userId === currentUser?.uid 
+                                                            ? (room?.style?.accentColor ? theme.palette.getContrastText(room.style.accentColor) : 'primary.contrastText') 
+                                                            : room?.style?.textColor || 'text.primary',
+                                                         borderRadius: msg.userId === currentUser?.uid ? '16px 16px 0 16px' : '16px 16px 16px 0',
+                                                         maxWidth: '85%',
+                                                         fontFamily: room?.style?.font || 'inherit'
+                                                     }}
+                                                 >
+                                                     <Typography variant="body2" sx={{ fontFamily: 'inherit' }}>{msg.message}</Typography>
+                                                 </Paper>
+                                                 <Typography 
+                                                     variant="caption" 
+                                                     color={room?.style?.textColor ? alpha(room?.style?.textColor, 0.6) : "text.secondary"}
+                                                     sx={{ 
+                                                         display: 'block', 
+                                                         mt: 0.2, 
+                                                         textAlign: msg.userId === currentUser?.uid ? 'right' : 'left',
+                                                         fontSize: '0.65rem',
+                                                         fontFamily: room?.style?.font || 'inherit'
+                                                     }}
+                                                 >
+                                                     {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                                 </Typography>
+                                             </Box>
+                                         </Box>
+                                     ))}
+                                     <div ref={chatEndRef} />
+                                 </>
+                             )}
+                         </Box>
+                         
+                         {/* Chat Input */}
+                         <Box sx={{ 
+                             p: 1, 
+                             borderTop: `1px solid ${room?.style?.accentColor ? alpha(room?.style?.accentColor, 0.3) : theme.palette.divider}`, 
+                             bgcolor: room?.style?.headerColor || theme.palette.background.paper,
+                             display: 'flex'
+                         }}>
+                             <TextField
+                                 fullWidth
+                                 placeholder="Type your message..."
+                                 variant="outlined"
+                                 size="small"
+                                 value={chatInput}
+                                 onChange={(e) => setChatInput(e.target.value)}
+                                 onKeyPress={(e) => {
+                                     if (e.key === 'Enter') {
+                                         e.preventDefault();
+                                         handleSendChatMessage();
+                                     }
+                                 }}
+                                 InputProps={{
+                                     sx: {
+                                         fontFamily: room?.style?.font || 'inherit',
+                                         color: room?.style?.textColor || 'inherit',
+                                         '& .MuiOutlinedInput-notchedOutline': {
+                                             borderColor: room?.style?.accentColor ? alpha(room?.style?.accentColor, 0.3) : 'inherit'
+                                         },
+                                         '&:hover .MuiOutlinedInput-notchedOutline': {
+                                             borderColor: room?.style?.accentColor ? alpha(room?.style?.accentColor, 0.5) : 'inherit'
+                                         },
+                                         '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                                             borderColor: room?.style?.accentColor || theme.palette.primary.main
+                                         }
+                                     },
+                                     endAdornment: (
+                                         <IconButton 
+                                             size="small" 
+                                             onClick={handleSendChatMessage}
+                                             disabled={!chatInput.trim()}
+                                             color="primary"
+                                             sx={{
+                                                 color: room?.style?.accentColor || 'primary'
+                                             }}
+                                         >
+                                             <SendIcon fontSize="small" />
+                                         </IconButton>
+                                     )
+                                 }}
+                             />
+                         </Box>
+                     </Box>
                 )}
             </Box>
 
+            {/* Bottom Control Bar - Ensuring all buttons, including Camera Toggle, are here */}
             <Box sx={{ 
                 flexShrink: 0, 
                 p: 2, 
                 borderTop: `1px solid ${theme.palette.divider}`,
                 display: 'flex',
                 justifyContent: 'center',
-                backgroundColor: theme.palette.background.paper
+                alignItems: 'center', 
+                backgroundColor: room?.style?.headerColor || theme.palette.background.paper
             }}>
                  <Button
                     variant="outlined"
                     color="error" 
                     startIcon={<ExitToApp />} 
-                    onClick={handleLeaveCall} // Use defined handleLeaveCall
-                    sx={{ borderRadius: '20px', textTransform: 'none' }} 
+                    onClick={handleLeaveCall} 
+                    sx={{ 
+                        borderRadius: '20px', 
+                        textTransform: 'none',
+                        fontFamily: room?.style?.font || 'inherit'
+                    }} 
                 >
                     Leave quietly
                 </Button>
 
                 <Tooltip title={localUserIsMute ? "Unmute Microphone" : "Mute Microphone"}>
                     <IconButton 
-                        onClick={() => call?.microphone.toggle()} // Use call object
+                        onClick={() => call?.microphone.toggle()} 
                         color={localUserIsMute ? "default" : "primary"} 
-                        sx={{ ml: 2 }} // Add some margin
-                        disabled={!call} // Disable if call object is somehow not available
+                        sx={{ 
+                            ml: 2,
+                            color: !localUserIsMute ? (room?.style?.accentColor || 'primary.main') : 'default'
+                        }} 
+                        disabled={!call} 
                     >
-                        {/* Use localUserIsMute */} 
                         {localUserIsMute ? <MicOff /> : <Mic />}
                     </IconButton>
                 </Tooltip>
 
-                 {/* Add Share Video Button (Added) */}
+                {/* THIS IS THE MAIN CAMERA TOGGLE BUTTON */}
+                {/* It turns the camera ON/OFF but doesn't affect PiP visibility */}
+                <Tooltip title={isCameraEnabled ? "Turn Camera Off" : "Turn Camera On"}>
+                    <IconButton
+                        onClick={() => {
+                            // Toggle camera
+                            toggleCamera();
+                            // If PiP is not visible, make it visible again
+                            if (!isPipVisible) {
+                                handleShowPip();
+                            }
+                        }}
+                        color={isCameraEnabled ? "primary" : "default"}
+                        sx={{ 
+                            ml: 1,
+                            color: isCameraEnabled ? (room?.style?.accentColor || 'primary.main') : 'default'
+                        }} 
+                        disabled={!call || isTogglePending} 
+                    >
+                        {isCameraEnabled ? <VideocamIcon /> : <VideocamOffIcon />}
+                    </IconButton>
+                </Tooltip>
+
+                {/* Separate button to toggle PiP visibility */}
+                <Tooltip title={isPipVisible ? "Hide Camera Window" : "Show Camera Window"}>
+                    <IconButton
+                        onClick={() => setIsPipVisible(!isPipVisible)}
+                        color={isPipVisible ? "primary" : "default"}
+                        sx={{ 
+                            ml: 1,
+                            color: isPipVisible ? (room?.style?.accentColor || 'primary.main') : 'default'
+                        }}
+                        disabled={!screenSharingParticipant} // Only enable when screen sharing is active
+                    >
+                        <PictureInPictureIcon />
+                    </IconButton>
+                </Tooltip>
+
                  <Tooltip title="Share Video Link">
-                     <span> {/* Span needed for Tooltip when button is disabled */} 
+                     <span> 
                      <IconButton 
                          onClick={() => handleOpenShareVideoDialog()} 
                          color={"secondary"} 
-                         sx={{ ml: 2 }} 
-                         disabled={!isRoomOwner && !isGuest} // Use passed-in props
+                         sx={{ 
+                             ml: 2,
+                             color: room?.style?.accentColor || 'secondary.main'
+                         }} 
+                         disabled={!isRoomOwner && !isGuest} 
                      >
                          <LinkIcon />
                      </IconButton>
                      </span>
                  </Tooltip>
             </Box>
+            {/* End Bottom Control Bar */}
         </Box>
     );
 }
@@ -2951,9 +3831,10 @@ interface StreamParticipantCardProps {
     call: Call;
     localUserAuthData: AuthContextUser | null;
     localUserIsMute?: boolean;
-    isDesignatedHost?: boolean; // ADD THIS NEW PROP
-    onPinToggle: (userId: string) => void; // ADD THIS NEW PROP for pinning
-    isPinned?: boolean; // ADD THIS NEW PROP for pinned status
+    isDesignatedHost?: boolean; 
+    onPinToggle: (userId: string) => void; 
+    isPinned?: boolean; 
+    roomStyle?: RoomStyle;
 }
 
 const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({ 
@@ -2966,17 +3847,14 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     call, 
     localUserAuthData, 
     localUserIsMute, 
-    isDesignatedHost, // ADD THIS NEW PROP
-    onPinToggle,      // ADD THIS NEW PROP
-    isPinned          // ADD THIS NEW PROP
-    // REMOVE the explicit type definition from here, as React.FC<StreamParticipantCardProps> already covers it.
+    isDesignatedHost, 
+    onPinToggle,      
+    isPinned,
+    roomStyle
 }) => {
     const theme = useTheme(); 
-    // const isAudioPublished = participant.publishedTracks.includes('audio' as any); // Old calculation
-    // const participantIsMuted = !isAudioPublished; // Old calculation
-    const { isSpeaking, publishedTracks } = participant; // Destructure for clarity
+    const { isSpeaking, publishedTracks } = participant;
 
-    // Corrected logic for determining if a remote participant's mute icon should be shown
     const isAudioTrackPublished = publishedTracks.includes('audio' as any);
     const showRemoteMuteIcon = !isAudioTrackPublished && !isSpeaking; 
 
@@ -2986,10 +3864,8 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
     const handleMenuClose = () => setAnchorEl(null);
 
-    // Handler for local microphone toggle
     const handleLocalMicToggle = async () => {
-        if (!isLocalParticipant || !call) return; // Guard clause
-
+        if (!isLocalParticipant || !call) return;
         try {
             console.log('[StreamParticipantCard] Attempting to toggle local microphone. Current SDK mute state (from prop localUserIsMute):', localUserIsMute);
             await call.microphone.toggle();
@@ -3000,11 +3876,9 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
         }
     };
 
-    // Moderation Handlers (ensure these are defined as they are used in JSX)
     const handleRemoteMuteToggle = async () => {
         handleMenuClose();
         if (onForceMuteToggle) {
-            // Ensure participantIsMuted is correctly reflecting the participant's state, not local state
             onForceMuteToggle(participant.userId, !participant.publishedTracks.includes('audio' as any));
         }
     };
@@ -3021,27 +3895,22 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
         }
     };
 
-    // --- NEW: Handler for Pin Toggle ---
     const handlePinToggle = () => {
         handleMenuClose();
         onPinToggle(participant.userId);
     };
 
-    // Determine display name and avatar URL
     let displayName: string;
     let avatarUrl: string | undefined;
 
-    // Define an interface for the expected shape of participant.custom
     interface StreamCustomParticipantData {
         displayName?: string;
         customAvatarUrl?: string;
     }
 
-    // Assert the type of participant.custom
     const customData = participant.custom as StreamCustomParticipantData | undefined;
 
-    // Corrected logic for displayName and avatarUrl, ensuring isLocalParticipant is available
-    if (isLocalParticipant && localUserAuthData) { // isLocalParticipant is a prop
+    if (isLocalParticipant && localUserAuthData) { 
         displayName = localUserAuthData.displayName || localUserAuthData.email || participant.userId; 
         avatarUrl = localUserAuthData.photoURL || participant.image || undefined; 
     } else if (customData && typeof customData.displayName === 'string' && customData.displayName.trim() !== '') {
@@ -3056,7 +3925,6 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
         avatarUrl = participant.image || undefined;
     }
 
-    // Console logs immediately before the return statement
     console.log('[StreamParticipantCard] Rendering with props:', { participant, isRoomOwner, isLocalParticipant, localUserAuthData });
     console.log('[StreamParticipantCard] Determined values - displayName:', displayName, 'avatarUrl:', avatarUrl, 'isSpeaking:', isSpeaking, 'participantIsMuted:', showRemoteMuteIcon);
     if (isLocalParticipant) {
@@ -3074,7 +3942,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
             <Avatar 
                 src={avatarUrl}
                 alt={displayName}
-                onClick={handleLocalMicToggle} // Assign the async handler correctly
+                onClick={handleLocalMicToggle} 
                 sx={{
                     width: 64,
                     height: 64, 
@@ -3082,28 +3950,24 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                     border: isSpeaking ? `3px solid ${theme.palette.success.main}` : `2px solid ${alpha(theme.palette.divider, 0.5)}`,
                     boxShadow: isSpeaking ? `0 0 8px ${theme.palette.success.light}` : 'none',
                     transition: 'border 0.2s ease-in-out, boxShadow 0.2s ease-in-out',
-                    cursor: isLocalParticipant ? 'pointer' : 'default', // Add cursor pointer for local user
+                    cursor: isLocalParticipant ? 'pointer' : 'default', 
                 }}
             />
-            {/* Host Label */}
             {isDesignatedHost && (
                 <Chip 
                     label="Host"
                     size="small"
-                    color="secondary" // Or any color you prefer
+                    color="secondary" 
                     sx={{ 
                         position: 'absolute',
                         bottom: 12.5, 
-                        // left: '50%', 
-                        // transform: 'translateX(-50%)',
-                        zIndex: 2, // Ensure it's above the avatar
+                        zIndex: 2, 
                         fontWeight: 'bold',
                         height: '18px',
                         fontSize: '0.65rem'
                     }}
                 />
             )}
-            {/* Mute Icon Display Logic - Ensure isLocalParticipant is used */}
             {(isLocalParticipant ? (localUserIsMute ?? true) : showRemoteMuteIcon) && (
                 <MicOff 
                     sx={{ 
@@ -3119,11 +3983,11 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                 />
             )}
             {isLocalParticipant && !localUserIsMute && (
-                 <Mic // Or some other indicator if preferred
+                 <Mic 
                      sx={{
                          fontSize: '1rem',
-                         color: theme.palette.success.contrastText, // Example color
-                         backgroundColor: alpha(theme.palette.success.main, 0.8), // Example color
+                         color: theme.palette.success.contrastText, 
+                         backgroundColor: alpha(theme.palette.success.main, 0.8), 
                         borderRadius: '50%',
                         padding: '3px',
                         position: 'absolute',
@@ -3153,7 +4017,6 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                             <ListItemIcon sx={{minWidth: '30px'}}>{showRemoteMuteIcon ? <VolumeUpIcon fontSize="small"/> : <VolumeOffIcon fontSize="small"/>}</ListItemIcon>
                             {showRemoteMuteIcon ? 'Unmute' : 'Mute'}
                         </MenuItem>
-                        {/* --- NEW: Pin/Unpin Menu Item --- */}
                         <MenuItem onClick={handlePinToggle} sx={{ fontSize: '0.8rem' }}>
                             <ListItemIcon sx={{minWidth: '30px'}}>
                                 <PushPinIcon fontSize="small" color={isPinned ? "primary" : "inherit"} />
@@ -3171,8 +4034,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                     </Menu>
                 </Box>
             )}
-            {/* Pin Icon Display Logic */}
-            {isPinned && !isDesignatedHost && ( // Don't show pin on host card if they are pinned (host is already at top)
+            {isPinned && !isDesignatedHost && ( 
                 <Tooltip title="Pinned">
                     <PushPinIcon 
                         sx={{
