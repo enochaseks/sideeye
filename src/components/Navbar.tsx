@@ -107,8 +107,8 @@ const Navbar: React.FC = () => {
               src="/logo.png"
               alt="Side Eye"
               sx={{ 
-                width: 40, 
-                height: 40, 
+                width: 50, 
+                height: 50, 
                 cursor: 'pointer',
                 '&:hover': {
                   opacity: 0.8,
@@ -116,21 +116,6 @@ const Navbar: React.FC = () => {
               }}
               onClick={() => navigate('/')}
             />
-            <Typography
-              variant="h5"
-              component="div"
-              sx={{ 
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                color: 'primary.main',
-                '&:hover': {
-                  opacity: 0.8,
-                },
-              }}
-              onClick={() => navigate('/')}
-            >
-              SideEye
-            </Typography>
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
