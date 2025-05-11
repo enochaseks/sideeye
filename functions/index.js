@@ -13,6 +13,7 @@ const { onDocumentCreated, onDocumentDeleted } = require("firebase-functions/v2/
 const admin = require("firebase-admin");
 const Shotstack = require("shotstack-sdk"); 
 const functions = require("firebase-functions"); // Still needed for config
+const nodemailer = require("nodemailer"); // Add nodemailer
 
 // Create and deploy your first functions
 // https://firebase.google.com/docs/functions/get-started
@@ -28,6 +29,7 @@ const functions = require("firebase-functions"); // Still needed for config
 
 let adminApp;
 let firestoreDb;
+let mailTransport;
 
 function initializeFirebase() {
   if (!adminApp) {
@@ -35,6 +37,37 @@ function initializeFirebase() {
     adminApp = admin.initializeApp();
     firestoreDb = admin.firestore();
     console.log("Firebase Admin SDK initialized.");
+    
+    // Initialize email transport with more flexible configuration
+    const emailConfig = functions.config().email || {};
+    const gmailConfig = functions.config().gmail || {}; // Keep for backward compatibility
+    
+    // Use either the new email config or fall back to gmail config
+    if (emailConfig.host && emailConfig.user && emailConfig.password) {
+      // Use generic SMTP configuration
+      mailTransport = nodemailer.createTransport({
+        host: emailConfig.host,
+        port: emailConfig.port || 587,
+        secure: emailConfig.secure === 'true',
+        auth: {
+          user: emailConfig.user,
+          pass: emailConfig.password,
+        },
+      });
+      console.log(`Email transport initialized with host: ${emailConfig.host}`);
+    } else if (gmailConfig.email && gmailConfig.password) {
+      // Fall back to Gmail-specific configuration for backward compatibility
+      mailTransport = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: gmailConfig.email,
+          pass: gmailConfig.password,
+        },
+      });
+      console.log("Email transport initialized with Gmail service.");
+    } else {
+      console.warn("Email configuration not found. Email functionality will not work.");
+    }
   }
 }
 
@@ -378,31 +411,49 @@ exports.processShotstackWebhook = onRequest(async (request, response) => { // Ch
 // stored in the /users collection.
 // --- UPDATED TO V2 SYNTAX --- 
 exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId}", async (event) => {
-      // Use event.data?.data() to get the data in v2
-      const snapshot = event.data;
-      if (!snapshot) {
-        console.log("No data associated with the event");
-        return;
-      }
-      const notificationData = snapshot.data();
-
-      if (!notificationData) {
-        console.log("No data associated with the event snapshot");
-        return;
-      }
-
-      const recipientId = notificationData.recipientId;
-      const notificationContent = notificationData.content;
-      const notificationType = notificationData.type || "notification"; // Default type
-
-      if (!recipientId) {
-        console.log("Notification missing recipientId");
-        return;
-      }
-
-      console.log(`Notification created for recipient: ${recipientId}`);
-
+      // Important: Initialize Firebase FIRST before doing anything else
       try {
+        initializeFirebase(); // Ensure Firebase is initialized
+        console.log("Firebase initialized successfully for notification handling");
+      
+        // Use event.data?.data() to get the data in v2
+        const snapshot = event.data;
+        if (!snapshot) {
+          console.log("No data associated with the event");
+          return;
+        }
+        const notificationData = snapshot.data();
+
+        if (!notificationData) {
+          console.log("No data associated with the event snapshot");
+          return;
+        }
+
+        const recipientId = notificationData.recipientId;
+        const notificationContent = notificationData.content;
+        const notificationType = notificationData.type || "notification"; // Default type
+        const notificationId = event.params?.notificationId || "unknown";
+
+        console.log(`Processing notification ${notificationId} of type ${notificationType}`);
+
+        if (!recipientId) {
+          console.log("Notification missing recipientId");
+          return;
+        }
+
+        console.log(`Notification created for recipient: ${recipientId}, type: ${notificationType}`);
+
+        // Ensure firestoreDb is available
+        if (!firestoreDb) {
+          console.error("Firestore DB not initialized properly!");
+          initializeFirebase(); // Try again
+          
+          if (!firestoreDb) {
+            console.error("Failed to initialize Firestore DB after retry");
+            return;
+          }
+        }
+
         // Fetch the recipient's user document from the 'users' collection
         const userRef = firestoreDb.collection("users").doc(recipientId);
         const userDoc = await userRef.get();
@@ -421,7 +472,22 @@ exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId
           return;
         }
 
-        console.log(`Found email: ${recipientEmail} for user: ${recipientId}`);
+        // Check if user has enabled email notifications for this type
+        const emailPreferences = userData.emailPreferences || {};
+        
+        // Skip sending if the user has disabled this notification type
+        if (notificationType === 'message' && emailPreferences.messageNotifications === false) {
+          console.log(`User ${recipientId} has disabled message email notifications`);
+          return;
+        } else if (notificationType === 'follow' && emailPreferences.followNotifications === false) {
+          console.log(`User ${recipientId} has disabled follow email notifications`);
+          return;
+        } else if (notificationType === 'live_stream' && emailPreferences.liveNotifications === false) {
+          console.log(`User ${recipientId} has disabled live stream email notifications`);
+          return;
+        }
+        
+        console.log(`Found email: ${recipientEmail} for user: ${recipientId}, sending notification`);
 
         // Prepare email data for the Trigger Email extension
         const mailData = {
@@ -429,23 +495,65 @@ exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId
           message: {
             subject: `New ${notificationType} from SideEye!`,
             text: notificationContent,
-            // You can also add an HTML version
-            // html: `<p>${notificationContent}</p><p>Visit SideEye to see more!</p>`,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #1976d2;">${getNotificationIcon(notificationType)} New ${capitalizeFirstLetter(notificationType)}</h2>
+                <p style="font-size: 16px; color: #333;">
+                  ${notificationContent}
+                </p>
+                <div style="margin: 30px 0;">
+                  <a href="https://sideeye.app/notifications" 
+                     style="background-color: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                    View Notification
+                  </a>
+                </div>
+                <p style="font-size: 14px; color: #666; margin-top: 40px;">
+                  You're receiving this email because you have enabled notifications on SideEye.
+                  <br><br>
+                  To unsubscribe from these notifications, update your email preferences in your 
+                  <a href="https://sideeye.app/settings" style="color: #1976d2; text-decoration: none;">SideEye settings</a>.
+                </p>
+              </div>
+            `,
           },
         };
 
         // Add the email document to the 'mail' collection
         // (Ensure this collection name matches your Trigger Email extension config)
-        await firestoreDb.collection("mail").add(mailData);
-
-        console.log(`Email queued successfully for ${recipientEmail}`);
+        const mailRef = await firestoreDb.collection("mail").add(mailData);
+        console.log(`Email queued successfully with ID ${mailRef.id} for ${recipientEmail}`);
+        
         return null; // Indicate successful processing
 
       } catch (error) {
-        console.error("Error fetching user data or queuing email:", error);
+        console.error("Error processing notification:", error);
+        console.error("Error details:", error.message, error.stack);
         return null; // Avoid retrying indefinitely for this kind of error
       }
     });
+
+// Helper function to get appropriate icon for notification type
+function getNotificationIcon(type) {
+  switch (type) {
+    case 'message':
+      return '💬';
+    case 'follow':
+      return '👋';
+    case 'live_stream':
+      return '📱';
+    case 'like':
+      return '❤️';
+    case 'comment':
+      return '💬';
+    default:
+      return '🔔';
+  }
+}
+
+// Helper function to capitalize the first letter
+function capitalizeFirstLetter(string) {
+  return string.charAt(0).toUpperCase() + string.slice(1);
+}
 
 // --- NEW FUNCTION: Handle User Deletion Cascade ---
 
@@ -530,5 +638,142 @@ exports.onUserDeleted = onDocumentDeleted("users/{userId}", async (event) => {
   } catch (error) {
     console.error(`Error during deletion cascade for user ${userId}:`, error);
     // Consider adding specific error handling or logging
+  }
+});
+
+// --- NEW FUNCTION: Send Live Stream Notification Emails ---
+
+/**
+ * Sends email notifications to a user's followers when they go live.
+ * This function is triggered via an HTTPS callable function.
+ */
+exports.sendLiveNotificationEmails = onCall(async (request) => {
+  initializeFirebase(); // Ensure Firebase is initialized before use
+  
+  // Check if the user is authenticated
+  if (!request.auth) {
+    throw new HttpsError(
+      'unauthenticated',
+      'The function must be called while authenticated.'
+    );
+  }
+
+  try {
+    const data = request.data;
+    const { roomId, userId, userName } = data;
+    
+    if (!roomId || !userId) {
+      throw new HttpsError(
+        'invalid-argument',
+        'The function requires a roomId and userId.'
+      );
+    }
+
+    // Email configuration check
+    const emailConfig = functions.config().email || {};
+    const gmailConfig = functions.config().gmail || {};
+    const senderEmail = emailConfig.user || gmailConfig.email;
+    
+    if (!senderEmail || !mailTransport) {
+      console.error('Email transport not configured properly');
+      throw new HttpsError(
+        'failed-precondition',
+        'Email configuration is missing or incomplete.'
+      );
+    }
+
+    // Get the room details
+    const roomDoc = await firestoreDb.collection('sideRooms').doc(roomId).get();
+    if (!roomDoc.exists) {
+      throw new HttpsError(
+        'not-found',
+        'The specified room does not exist.'
+      );
+    }
+    
+    const roomData = roomDoc.data();
+    if (!roomData) {
+      throw new HttpsError(
+        'not-found',
+        'The room data could not be retrieved.'
+      );
+    }
+
+    // Get all followers of the user
+    const followersSnapshot = await firestoreDb
+      .collection('users')
+      .doc(userId)
+      .collection('followers')
+      .get();
+
+    if (followersSnapshot.empty) {
+      console.log('No followers to notify');
+      return { success: true, count: 0 };
+    }
+
+    // Get email preferences and email addresses for all followers
+    const followerIds = followersSnapshot.docs.map(doc => doc.id);
+    const usersSnapshot = await firestoreDb
+      .collection('users')
+      .where(admin.firestore.FieldPath.documentId(), 'in', followerIds)
+      .get();
+    
+    // Filter users who have email notifications enabled and have an email
+    const emailPromises = [];
+    
+    usersSnapshot.forEach(userDoc => {
+      const userData = userDoc.data();
+      // Skip if user has no email or has disabled live notifications
+      if (!userData.email || (userData.emailPreferences && userData.emailPreferences.liveNotifications === false)) {
+        return;
+      }
+      
+      // Create email content
+      const mailOptions = {
+        from: `SideEye <${senderEmail}>`,
+        to: userData.email,
+        subject: `${userName} is now live on SideEye!`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #1976d2;">📱 Live Stream Alert!</h2>
+            <p style="font-size: 16px; color: #333;">
+              <strong>${userName}</strong> just started a live stream in <strong>${roomData.name}</strong>.
+            </p>
+            <p style="font-size: 16px; color: #333;">
+              Don't miss out! Join now to watch and interact with the stream.
+            </p>
+            <div style="margin: 30px 0;">
+              <a href="https://sideeye.app/side-room/${roomId}" 
+                 style="background-color: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                Join Stream Now
+              </a>
+            </div>
+            <p style="font-size: 14px; color: #666; margin-top: 40px;">
+              You're receiving this email because you follow ${userName} on SideEye and have enabled live notifications.
+              <br><br>
+              To unsubscribe from these notifications, update your email preferences in your 
+              <a href="https://sideeye.app/settings" style="color: #1976d2; text-decoration: none;">SideEye settings</a>.
+            </p>
+          </div>
+        `
+      };
+      
+      // Send the email
+      emailPromises.push(mailTransport.sendMail(mailOptions));
+    });
+    
+    // Wait for all emails to be sent
+    await Promise.all(emailPromises);
+    
+    return { 
+      success: true, 
+      count: emailPromises.length 
+    };
+  } catch (error) {
+    console.error('Error sending notification emails:', error);
+    throw new HttpsError(
+      'internal',
+      'An error occurred while sending notification emails.'
+    );
   }
 });

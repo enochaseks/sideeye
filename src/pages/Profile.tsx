@@ -214,6 +214,32 @@ const Profile: React.FC = () => {
       setFollowers(newFollowers);
     });
 
+    // Debug: Fetch user data to verify the profile picture field
+    const fetchUserDataForDebug = async () => {
+      try {
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          console.log('DEBUG - User data structure:', userData);
+          console.log('DEBUG - Profile pic field:', userData.profilePic);
+          // Also check if there's an alternate field name that might be used
+          console.log('DEBUG - Alternate fields:', {
+            photoURL: userData.photoURL,
+            avatarUrl: userData.avatarUrl,
+            avatar: userData.avatar,
+            photo: userData.photo,
+            image: userData.image,
+            profileImage: userData.profileImage
+          });
+        }
+      } catch (error) {
+        console.error('Error in debug fetch:', error);
+      }
+    };
+    
+    fetchUserDataForDebug();
+
     return () => unsubscribe();
   }, [db, userId]);
 
@@ -459,11 +485,18 @@ const Profile: React.FC = () => {
                         Unfollow
                       </Button>
                     )}
+                    <Button
+                      variant="outlined"
+                      startIcon={<MessageIcon />}
+                      onClick={() => navigate(`/chat/${userId}`)}
+                    >
+                      Message
+                    </Button>
                   </Box>
                 </Box>
               ) : (
                 <>
-                  <Typography variant="body1" sx={{ mb: 2 }}>
+                  <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
                     {bio || 'No bio set'}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -708,17 +741,21 @@ const Profile: React.FC = () => {
             {createdRooms.length === 0 && joinedRooms.length === 0 && (
               <Box sx={{ textAlign: 'center', py: 4 }}>
                 <Typography variant="body1" color="text.secondary">
-                  You have not created any side rooms yet.
+                  {currentUser?.uid === targetUserId 
+                    ? "You have not created any side rooms yet."
+                    : `${name || username || 'This person'} does not have an active room.`}
                 </Typography>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  component={Link}
-                  to="/side-rooms"
-                  sx={{ mt: 2 }}
-                >
-                  Create Side Rooms
-                </Button>
+                {currentUser?.uid === targetUserId && (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    component={Link}
+                    to="/side-rooms"
+                    sx={{ mt: 2 }}
+                  >
+                    Create Side Rooms
+                  </Button>
+                )}
               </Box>
             )}
           </Box>

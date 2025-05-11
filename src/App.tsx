@@ -136,6 +136,11 @@ const AppContent: React.FC = () => {
               <Chat />
             </ProtectedRoute>
           } />
+          <Route path="/chat/conversation/:conversationId" element={
+            <ProtectedRoute>
+              <Chat />
+            </ProtectedRoute>
+          } />
           <Route path="/trash" element={
             <ProtectedRoute>
               <TrashPage />

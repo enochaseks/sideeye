@@ -34,7 +34,8 @@ import {
   Search as SearchIcon,
   PersonAdd as PersonAddIcon,
   Message as MessageIcon,
-  People as PeopleIcon
+  People as PeopleIcon,
+  Public as PublicIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -141,6 +142,7 @@ const Discover: React.FC = () => {
   const searchRef = React.useRef<HTMLDivElement>(null);
   const [roomListeners, setRoomListeners] = useState<(() => void)[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [showPeopleTab, setShowPeopleTab] = useState<boolean>(false);
 
   const categories = [
     'ASMR',
@@ -666,6 +668,14 @@ const Discover: React.FC = () => {
     }
   };
 
+  const handleMainTabChange = (_: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue);
+    // When changing to the People tab, ensure we fetch users if they haven't been loaded
+    if (newValue === 1 && users.length === 0) {
+      fetchDefaultUsers();
+    }
+  };
+
   if (loading && !isSearchView) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
@@ -837,8 +847,26 @@ const Discover: React.FC = () => {
             </ClickAwayListener>
           </Box>
 
-          {/* Category Tabs - Add this section */}
+          {/* Main Tabs - Rooms vs People */}
           {!isSearchView && (
+            <Tabs
+              value={activeTab}
+              onChange={handleMainTabChange}
+              variant="standard"
+              sx={{
+                mb: 2,
+                '& .MuiTabs-indicator': {
+                  height: 3
+                }
+              }}
+            >
+              <Tab icon={<PublicIcon />} label="ROOMS" iconPosition="start" />
+              <Tab icon={<PeopleIcon />} label="PEOPLE" iconPosition="start" />
+            </Tabs>
+          )}
+
+          {/* Category Tabs - Only show for Rooms tab */}
+          {!isSearchView && activeTab === 0 && (
              <Tabs
                value={selectedCategory}
                onChange={handleCategoryChange}
@@ -862,7 +890,7 @@ const Discover: React.FC = () => {
         </Container>
       </Box>
 
-      {/* Search Results or Rooms Grid */}
+      {/* Search Results or Content Grid */}
       <Container 
         maxWidth={false} 
         sx={{ 
@@ -935,7 +963,7 @@ const Discover: React.FC = () => {
                               <IconButton
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  navigate(`/messages/${user.id}`);
+                                  navigate(`/chat/${user.id}`);
                                 }}
                                 size="small"
                               >
@@ -970,7 +998,6 @@ const Discover: React.FC = () => {
                   {rooms
                     .filter(room => {
                       const shouldInclude = selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory));
-                      console.log(`Filtering Room: '${room.name}', Tags: ${JSON.stringify(room.tags)}, Selected: '${selectedCategory}', Included: ${shouldInclude}`);
                       return shouldInclude;
                     })
                     .map((room) => (
@@ -1120,117 +1147,106 @@ const Discover: React.FC = () => {
             )}
           </Box>
         ) : (
-          <Grid container spacing={3}>
-            {rooms
-              .filter(room => {
-                const shouldInclude = selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory));
-                console.log(`Filtering Room: '${room.name}', Tags: ${JSON.stringify(room.tags)}, Selected: '${selectedCategory}', Included: ${shouldInclude}`);
-                return shouldInclude;
-              })
-              .map((room) => (
-              <Grid item xs={12} sm={6} md={4} key={room.id}>
-                <Card 
-                  sx={{ 
-                    display: 'flex',
-                    flexDirection: 'column',
-                    cursor: 'pointer',
-                    borderRadius: 2,
-                    overflow: 'hidden',
-                    boxShadow: theme.shadows[3],
-                    '&:hover': {
-                      transform: 'translateY(-4px)',
-                      transition: 'transform 0.2s ease-in-out',
-                      boxShadow: theme.shadows[6]
-                    }
-                  }}
-                  onClick={() => handleRoomClick(room.id)}
-                >
-                  <Box sx={{ position: 'relative' }}>
-                    <CardMedia
-                      component="img"
-                      height={isMobile ? "220" : "280"}
-                      image={room.thumbnailUrl || room.creatorAvatar || '/default-room.jpg'}
-                      alt={room.name}
-                      sx={{ 
-                        objectFit: 'cover',
-                        width: '100%'
-                      }}
-                    />
-                    {room.isLive && (
-                      <Chip
-                        label="LIVE"
-                        color="error"
-                        size="small"
+          // Show either Rooms (activeTab === 0) or People (activeTab === 1)
+          activeTab === 0 ? (
+            // Rooms tab content
+            <Grid container spacing={3}>
+              {rooms
+                .filter(room => {
+                  const shouldInclude = selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory));
+                  return shouldInclude;
+                })
+                .map((room) => (
+                <Grid item xs={12} sm={6} md={4} key={room.id}>
+                  <Card 
+                    sx={{ 
+                      display: 'flex',
+                      flexDirection: 'column',
+                      cursor: 'pointer',
+                      borderRadius: 2,
+                      overflow: 'hidden',
+                      boxShadow: theme.shadows[3],
+                      '&:hover': {
+                        transform: 'translateY(-4px)',
+                        transition: 'transform 0.2s ease-in-out',
+                        boxShadow: theme.shadows[6]
+                      }
+                    }}
+                    onClick={() => handleRoomClick(room.id)}
+                  >
+                    <Box sx={{ position: 'relative' }}>
+                      <CardMedia
+                        component="img"
+                        height={isMobile ? "220" : "280"}
+                        image={room.thumbnailUrl || room.creatorAvatar || '/default-room.jpg'}
+                        alt={room.name}
                         sx={{ 
-                          position: 'absolute',
-                          top: 12,
-                          right: 12,
-                          fontWeight: 'bold',
-                          fontSize: isMobile ? '0.75rem' : '0.875rem',
-                          height: 'auto',
-                          padding: '6px 12px'
+                          objectFit: 'cover',
+                          width: '100%'
                         }}
                       />
-                    )}
-                  </Box>
-                  <CardContent sx={{ 
-                    flexGrow: 1,
-                    p: 3,
-                    '&:last-child': { pb: 3 }
-                  }}>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography 
-                        gutterBottom 
-                        variant={isMobile ? "h6" : "h5"} 
-                        component="h2" 
-                        noWrap
-                        sx={{ 
-                          fontWeight: 600,
-                          mb: 1
-                        }}
-                      >
-                        {room.name}
-                      </Typography>
-                      <Typography 
-                        variant="body1" 
-                        color="text.secondary" 
-                        sx={{ 
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                          mb: 2,
-                          lineHeight: 1.5
-                        }}
-                      >
-                        {room.description}
-                      </Typography>
-                    </Box>
-                    <Box sx={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: 1.5, 
-                      mb: 2,
-                      flexWrap: 'wrap'
-                    }}>
-                      <Chip
-                        icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
-                        label={`${room.activeUsers || 0} viewing`}
-                        color="primary"
-                        variant="outlined"
-                        sx={{ 
-                          height: 'auto',
-                          padding: '8px 12px',
-                          '& .MuiChip-label': {
-                            padding: '0 4px',
-                            fontSize: isMobile ? '0.875rem' : '1rem'
-                          }
-                        }}
-                      />
-                      {room.isPrivate && (
+                      {room.isLive && (
                         <Chip
-                          label="Private"
-                          color="secondary"
+                          label="LIVE"
+                          color="error"
+                          size="small"
+                          sx={{ 
+                            position: 'absolute',
+                            top: 12,
+                            right: 12,
+                            fontWeight: 'bold',
+                            fontSize: isMobile ? '0.75rem' : '0.875rem',
+                            height: 'auto',
+                            padding: '6px 12px'
+                          }}
+                        />
+                      )}
+                    </Box>
+                    <CardContent sx={{ 
+                      flexGrow: 1,
+                      p: 3,
+                      '&:last-child': { pb: 3 }
+                    }}>
+                      <Box sx={{ mb: 2 }}>
+                        <Typography 
+                          gutterBottom 
+                          variant={isMobile ? "h6" : "h5"} 
+                          component="h2" 
+                          noWrap
+                          sx={{ 
+                            fontWeight: 600,
+                            mb: 1
+                          }}
+                        >
+                          {room.name}
+                        </Typography>
+                        <Typography 
+                          variant="body1" 
+                          color="text.secondary" 
+                          sx={{ 
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                            mb: 2,
+                            lineHeight: 1.5
+                          }}
+                        >
+                          {room.description}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 1.5, 
+                        mb: 2,
+                        flexWrap: 'wrap'
+                      }}>
+                        <Chip
+                          icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
+                          label={`${room.activeUsers || 0} viewing`}
+                          color="primary"
+                          variant="outlined"
                           sx={{ 
                             height: 'auto',
                             padding: '8px 12px',
@@ -1240,31 +1256,142 @@ const Discover: React.FC = () => {
                             }
                           }}
                         />
-                      )}
-                    </Box>
-                    <Typography 
-                      variant="body2" 
-                      color="text.secondary"
-                      sx={{ 
-                        fontSize: isMobile ? '0.75rem' : '0.875rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5
-                      }}
-                    >
-                      Created by {room.creatorName || 'Anonymous'} • {formatTimestamp(room.lastActive)}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
-            ))}
-          </Grid>
-        )}
-
-        {loading && isSearchView && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-            <CircularProgress />
-          </Box>
+                        {room.isPrivate && (
+                          <Chip
+                            label="Private"
+                            color="secondary"
+                            sx={{ 
+                              height: 'auto',
+                              padding: '8px 12px',
+                              '& .MuiChip-label': {
+                                padding: '0 4px',
+                                fontSize: isMobile ? '0.875rem' : '1rem'
+                              }
+                            }}
+                          />
+                        )}
+                      </Box>
+                      <Typography 
+                        variant="body2" 
+                        color="text.secondary"
+                        sx={{ 
+                          fontSize: isMobile ? '0.75rem' : '0.875rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 0.5
+                        }}
+                      >
+                        Created by {room.creatorName || 'Anonymous'} • {formatTimestamp(room.lastActive)}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+          ) : (
+            // People tab content
+            <Box sx={{ mt: 2 }}>
+              {loading ? (
+                <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
+                  <CircularProgress />
+                </Box>
+              ) : users.length > 0 ? (
+                <List>
+                  {users.map((user, index) => (
+                    <React.Fragment key={user.id}>
+                      <ListItem 
+                        sx={{ 
+                          py: 2,
+                          cursor: 'pointer',
+                          '&:hover': {
+                            backgroundColor: 'action.hover'
+                          },
+                          borderRadius: 1
+                        }}
+                        onClick={() => navigate(`/profile/${user.id}`)}
+                      >
+                        <ListItemAvatar>
+                          <Avatar 
+                            src={user.isActive === false ? undefined : user.profilePic}
+                            alt={user.name}
+                            sx={{ width: 60, height: 60 }}
+                          >
+                            {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
+                          </Avatar>
+                        </ListItemAvatar>
+                        <ListItemText
+                          primary={
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                              {user.name}
+                            </Typography>
+                          }
+                          secondary={
+                            <>
+                              <Typography variant="body2" color="text.secondary">
+                                @{user.username}
+                              </Typography>
+                              {user.bio && (
+                                <Typography 
+                                  variant="body2" 
+                                  color="text.secondary"
+                                  sx={{
+                                    mt: 0.5,
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden'
+                                  }}
+                                >
+                                  {user.bio}
+                                </Typography>
+                              )}
+                            </>
+                          }
+                          sx={{ ml: 2 }}
+                        />
+                        {currentUser && user.id !== currentUser.uid && (
+                          <ListItemSecondaryAction>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                              <Button
+                                variant="outlined"
+                                size="small"
+                                startIcon={<MessageIcon />}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/chat/${user.id}`);
+                                }}
+                              >
+                                Message
+                              </Button>
+                              <Button
+                                variant={following.has(user.id) ? "contained" : "outlined"}
+                                size="small"
+                                startIcon={following.has(user.id) ? null : <PersonAddIcon />}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleFollow(user.id);
+                                }}
+                                color="primary"
+                              >
+                                {following.has(user.id) ? "Following" : "Follow"}
+                              </Button>
+                            </Box>
+                          </ListItemSecondaryAction>
+                        )}
+                      </ListItem>
+                      {index < users.length - 1 && <Divider sx={{ my: 1 }} />}
+                    </React.Fragment>
+                  ))}
+                </List>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <Typography variant="h6" color="text.secondary">
+                    No users found
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          )
         )}
       </Container>
     </Box>

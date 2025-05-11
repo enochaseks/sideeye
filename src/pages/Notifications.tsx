@@ -12,7 +12,7 @@ import {
   CircularProgress,
   Divider,
 } from '@mui/material';
-import { Close as CloseIcon, Favorite as FavoriteIcon, Comment as CommentIcon, PersonAdd as PersonAddIcon, Notifications as NotificationsIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Favorite as FavoriteIcon, Comment as CommentIcon, PersonAdd as PersonAddIcon, Notifications as NotificationsIcon, Message as MessageIcon, Videocam as VideocamIcon } from '@mui/icons-material';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
@@ -68,6 +68,24 @@ const NotificationsPage: React.FC = () => {
       case 'follow':
         if (notification.senderId) {
           navigateTo = `/profile/${notification.senderId}`;
+        }
+        break;
+      case 'message':
+        // Handle message notifications - navigate to the chat conversation
+        if (notification.roomId) {
+          navigateTo = `/chat/conversation/${notification.roomId}`;
+        } else if (notification.postId) {
+          // Fallback to postId if roomId is not available
+          navigateTo = `/chat/conversation/${notification.postId}`;
+        } else if (notification.senderId) {
+          // Direct chat with sender if no conversation ID is available
+          navigateTo = `/chat/${notification.senderId}`;
+        }
+        break;
+      case 'live_stream':
+        // Handle live stream notifications - navigate to the side room
+        if (notification.roomId) {
+          navigateTo = `/side-room/${notification.roomId}`;
         }
         break;
       case 'room_invite':
@@ -153,9 +171,16 @@ const NotificationsPage: React.FC = () => {
                 </ListItemAvatar>
                 <ListItemText
                   primary={
-                    <Typography component="span" variant="body2" color="text.primary">
-                      {notification.content || 'Notification content missing.'}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {notification.type === 'like' && <FavoriteIcon fontSize="small" color="error" />}
+                      {notification.type === 'comment' && <CommentIcon fontSize="small" color="primary" />}
+                      {notification.type === 'follow' && <PersonAddIcon fontSize="small" color="primary" />}
+                      {notification.type === 'message' && <MessageIcon fontSize="small" color="primary" />}
+                      {notification.type === 'live_stream' && <VideocamIcon fontSize="small" color="error" />}
+                      <Typography component="span" variant="body2" color="text.primary">
+                        {notification.content || 'Notification content missing.'}
+                      </Typography>
+                    </Box>
                   }
                   secondary={
                     <Typography component="span" variant="caption" color="text.secondary">

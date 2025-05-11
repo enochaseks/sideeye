@@ -160,14 +160,17 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   // Function to add a new notification
   const addNotification = async (notificationData: Omit<Notification, 'id' | 'createdAt' | 'isRead'>) => {
      try {
-       await addDoc(collection(db, 'notifications'), {
+       console.log("Creating notification with data:", notificationData);
+       const notificationRef = await addDoc(collection(db, 'notifications'), {
          ...notificationData,
          isRead: false,
          createdAt: serverTimestamp(), // Use server timestamp
        });
+       console.log("Successfully created notification with ID:", notificationRef.id);
        // Optionally trigger a re-fetch or rely on onSnapshot if listening
      } catch (error) {
-       console.error("Error adding notification: ", error);
+       console.error("Error adding notification:", error);
+       throw error; // Re-throw to allow handling in the calling component
      }
    };
 

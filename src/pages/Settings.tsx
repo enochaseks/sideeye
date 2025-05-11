@@ -151,6 +151,11 @@ const Settings: React.FC = () => {
   const [registrationSourceCode, setRegistrationSourceCode] = useState('');
   const [showSourceCodeDialog, setShowSourceCodeDialog] = useState(false);
   const [sourceCode, setSourceCode] = useState('');
+  const [emailNotifications, setEmailNotifications] = useState({
+    liveNotifications: true,
+    messageNotifications: true, 
+    followNotifications: true
+  });
   const navigate = useNavigate();
 
   const handlePrivacyToggle = async () => {
@@ -293,6 +298,36 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleEmailNotificationToggle = async (type: 'liveNotifications' | 'messageNotifications' | 'followNotifications') => {
+    if (!currentUser?.uid) return;
+    
+    try {
+      const newValue = !emailNotifications[type];
+      setEmailNotifications(prev => ({
+        ...prev,
+        [type]: newValue
+      }));
+      
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
+        [`emailPreferences.${type}`]: newValue,
+        updatedAt: serverTimestamp()
+      });
+      
+      toast.success(`${type === 'liveNotifications' ? 'Live stream' : 
+                    type === 'messageNotifications' ? 'Message' : 
+                    'Follow'} email notifications ${newValue ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.error(`Error updating ${type} preference:`, error);
+      toast.error(`Failed to update notification preferences`);
+      // Revert UI state on error
+      setEmailNotifications(prev => ({
+        ...prev,
+        [type]: !prev[type]
+      }));
+    }
+  };
+
   const settingsItems = [
     {
       title: 'Audio Settings',
@@ -382,6 +417,15 @@ const Settings: React.FC = () => {
         if (doc.exists()) {
           const userData = doc.data();
           setIsPrivate(userData.isPrivate || false);
+          
+          // Load email notification preferences
+          if (userData.emailPreferences) {
+            setEmailNotifications({
+              liveNotifications: userData.emailPreferences.liveNotifications !== false, // Default to true
+              messageNotifications: userData.emailPreferences.messageNotifications !== false, // Default to true
+              followNotifications: userData.emailPreferences.followNotifications !== false // Default to true
+            });
+          }
           
           setPrivacyStats(prev => ({
             ...prev,
@@ -546,6 +590,59 @@ const Settings: React.FC = () => {
               </List>
             </Box>
           )}
+        </Paper>
+      </Box>
+
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>Email Notifications</Typography>
+        <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
+          <Box sx={{ mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+              <Box>
+                <Typography variant="body1" sx={{ fontWeight: 500 }}>Live Stream Notifications</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Receive emails when users you follow go live
+                </Typography>
+              </Box>
+              <Switch
+                checked={emailNotifications.liveNotifications}
+                onChange={() => handleEmailNotificationToggle('liveNotifications')}
+                color="primary"
+              />
+            </Box>
+            
+            <Divider sx={{ my: 2 }} />
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+              <Box>
+                <Typography variant="body1" sx={{ fontWeight: 500 }}>Message Notifications</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Receive emails for new direct messages
+                </Typography>
+              </Box>
+              <Switch
+                checked={emailNotifications.messageNotifications}
+                onChange={() => handleEmailNotificationToggle('messageNotifications')}
+                color="primary"
+              />
+            </Box>
+            
+            <Divider sx={{ my: 2 }} />
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box>
+                <Typography variant="body1" sx={{ fontWeight: 500 }}>Follow Notifications</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Receive emails when someone follows you
+                </Typography>
+              </Box>
+              <Switch
+                checked={emailNotifications.followNotifications}
+                onChange={() => handleEmailNotificationToggle('followNotifications')}
+                color="primary"
+              />
+            </Box>
+          </Box>
         </Paper>
       </Box>
 
