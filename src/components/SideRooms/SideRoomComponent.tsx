@@ -2209,7 +2209,13 @@ const SideRoomComponent: React.FC = () => {
 
     // --- RE-ADD renderRoomContent function definition ---
     const renderRoomContent = () => (
-        <Box sx={{ flexGrow: 1, p: 2, overflowY: 'auto' }}>
+        <Box sx={{ 
+            flexGrow: 1, 
+            p: 2, 
+            // Removing these properties to fix double scrollbar
+            // height: '100vh',
+            // overflowY: 'auto'
+        }}>
             {/* Video Player Section - Render if video exists */}
             {currentVideoUrl && (
                 <Box sx={{ mt: 1, mb: 3, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1, backgroundColor: 'action.hover' }}>
@@ -2343,13 +2349,13 @@ const SideRoomComponent: React.FC = () => {
             <Box sx={{ 
                 display: 'flex',
                 flexDirection: 'column',
-                height: '100vh',
                 fontFamily: room?.style?.font || AVAILABLE_FONTS[0],
                 // Corrected logic for backgroundGradient
                 backgroundColor: room?.style?.backgroundGradient
                     ? `linear-gradient(to bottom right, ${room?.style?.backgroundColor || theme.palette.background.default}, ${room?.style?.accentColor || theme.palette.secondary.main})` // Gradient when true (Switch ON)
                     : room?.style?.backgroundColor || theme.palette.background.default, // Solid color when false (Switch OFF)
                 color: room?.style?.textColor || theme.palette.text.primary,
+                overflow: 'hidden' // Add this to prevent outer scrollbar
             }}>
                  {/* Always render the main Room Header */}
                  {room && renderRoomHeader()}
@@ -2358,13 +2364,13 @@ const SideRoomComponent: React.FC = () => {
                  <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
                      {/* Loading/Error state BEFORE client/room is ready */}
                     {!room ? ( // Case 1: Room data itself isn't loaded or doesn't exist
-                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 2 }}>
                             {loading && <CircularProgress />} 
                             {/* Ensure error message for room not found also has a way back */}
                             {!loading && <Alert severity="error">Room not found. <Button onClick={() => navigate('/discover')} sx={{ml:1}}>Back to Discover</Button></Alert>}
                          </Box>
                     ) : !streamClientForProvider ? ( // Case 2: Room data IS loaded, but Stream client is NOT ready
-                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', flexDirection: 'column', p: 2, textAlign: 'center' }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', p: 2, textAlign: 'center' }}>
                             {!process.env.REACT_APP_STREAM_API_KEY && hasRoomAccess ? (
                                 <Alert severity="error" sx={{mb: 2}}>
                                     Audio client configuration error. The service cannot be initialized.
@@ -3079,24 +3085,29 @@ const InsideStreamCallContent: React.FC<{
             
             <Box sx={{
                 flexGrow: 1, 
-                overflowY: 'auto', 
                 p: 2, 
+                // Removing overflowY to fix double scrollbar issue
+                // overflowY: 'auto', 
             }}>
                  {screenSharingParticipant && (
                     <Box sx={{ 
                         m: 0,
                         p: 0,
-                        border: 'none',
-                        borderRadius: 0,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: '8px',
                         backgroundColor: '#000',
                         position: 'relative',
                         display: 'flex',
                         flexDirection: 'column',
                         height: 'auto',
-                        width: '100%',
-                        maxWidth: '1920px',
-                        margin: '0 auto',
-                        overflow: 'hidden'
+                        width: '90%', // Reduced from 100% to 90%
+                        maxWidth: '1200px', // Reduced from 1920px to 1200px 
+                        margin: '0 auto', // Center horizontally
+                        marginTop: 2, // Add top margin
+                        marginBottom: 2, // Add bottom margin
+                        overflow: 'hidden',
+                        boxShadow: '0 4px 8px rgba(0,0,0,0.1)' // Add subtle shadow
                     }}>
                         {/* Show screen share when PiP is not enlarged */}
                         {!isPipEnlarged && (
@@ -3280,47 +3291,47 @@ const InsideStreamCallContent: React.FC<{
                         {!isPipEnlarged && isPipVisible && localParticipant && (
                             <Box
                                 sx={{
-                                    position: 'absolute', 
-                                    bottom: 10, 
-                                    left: 10, 
-                                    width: 110,
-                                    height: 80,
-                                    backgroundColor: 'rgba(0,0,0,0.6)',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    borderRadius: 1,
-                                    boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
-                                    zIndex: 10, 
+                                    position: 'absolute',
+                                    bottom: 16,
+                                    right: 16,
+                                    width: '160px', // Reduced from original size
+                                    height: '90px', // Reduced from original size
+                                    borderRadius: '8px',
                                     overflow: 'hidden',
-                                    display: 'flex', 
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    transition: 'all 0.3s ease-in-out',
+                                    border: '2px solid',
+                                    borderColor: 'primary.main',
+                                    backgroundColor: '#000',
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                                    zIndex: 10,
                                     '& .str-video__participant-view': {
-                                        width: '100% !important',
-                                        height: '100% !important',
+                                        width: '100%',
+                                        height: '100%',
                                         '& video': {
                                             width: '100%',
                                             height: '100%',
-                                            objectFit: 'cover',
-                                        },
-                                    },
+                                            objectFit: 'cover'
+                                        }
+                                    }
                                 }}
                             >
                                 {isCameraEnabled ? (
                                     <ParticipantView participant={localParticipant} trackType="videoTrack" />
                                 ) : (
                                     <Box sx={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: '100%',
                                         display: 'flex',
                                         justifyContent: 'center',
                                         alignItems: 'center',
-                                        width: '100%',
-                                        height: '100%',
                                         color: 'white',
-                                        backgroundColor: 'rgba(0,0,0,0.5)'
+                                        backgroundColor: 'rgba(0,0,0,0.8)'
                                     }}>
-                                        <VideocamOffIcon sx={{ fontSize: '1.2rem' }} />
-                    </Box>
-                 )}
+                                        <VideocamOffIcon sx={{ fontSize: '1.5rem' }} />
+                                    </Box>
+                                )}
                                 
                                 <IconButton
                                     size="small"
@@ -3328,8 +3339,8 @@ const InsideStreamCallContent: React.FC<{
                                     sx={{
                                         position: 'absolute',
                                         top: 2,
-                                        right: 2,
-                                        padding: '3px',
+                                        right: 26,
+                                        padding: '2px',
                                         color: 'white',
                                         backgroundColor: 'rgba(0,0,0,0.5)',
                                         '&:hover': {
@@ -3338,30 +3349,28 @@ const InsideStreamCallContent: React.FC<{
                                     }}
                                 >
                                     {isCameraEnabled ? 
-                                        <VideocamIcon sx={{ fontSize: '0.8rem' }} /> : 
-                                        <VideocamOffIcon sx={{ fontSize: '0.8rem' }} />
+                                        <VideocamIcon sx={{ fontSize: '0.9rem' }} /> : 
+                                        <VideocamOffIcon sx={{ fontSize: '0.9rem' }} />
                                     }
                                 </IconButton>
                                 
-                                {isRoomOwner && (
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => setIsPipEnlarged(true)}
-                                        sx={{
-                                            position: 'absolute',
-                                            top: 2,
-                                            left: 2,
-                                            padding: '3px',
-                                            color: 'white',
-                                            backgroundColor: 'rgba(0,0,0,0.5)',
-                                            '&:hover': {
-                                                backgroundColor: 'rgba(0,0,0,0.7)',
-                                            }
-                                        }}
-                                    >
-                                        <ZoomInIcon sx={{ fontSize: '0.8rem' }} />
-                                    </IconButton>
-                                )}
+                                <IconButton
+                                    size="small"
+                                    onClick={() => setIsPipEnlarged(true)}
+                                    sx={{
+                                        position: 'absolute',
+                                        top: 2,
+                                        right: 2,
+                                        padding: '2px',
+                                        color: 'white',
+                                        backgroundColor: 'rgba(0,0,0,0.5)',
+                                        '&:hover': {
+                                            backgroundColor: 'rgba(0,0,0,0.7)',
+                                        }
+                                    }}
+                                >
+                                    <ZoomInIcon sx={{ fontSize: '0.9rem' }} />
+                                </IconButton>
                             </Box>
                         )}
                     </Box>

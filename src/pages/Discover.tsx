@@ -686,8 +686,6 @@ const Discover: React.FC = () => {
 
   return (
     <Box sx={{ 
-      height: '100vh',
-      overflowY: 'auto',
       position: 'relative',
       backgroundColor: theme.palette.background.default
     }}>

@@ -1,11 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Dispatch, SetStateAction } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   BottomNavigation,
   BottomNavigationAction,
   Box,
   Avatar,
-  Badge
+  Badge,
+  Paper,
+  useTheme,
+  useMediaQuery,
+  Drawer,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Typography,
+  IconButton,
+  Tooltip,
+  Divider
 } from '@mui/material';
 import {
   Home as HomeIcon,
@@ -14,16 +26,29 @@ import {
   Person as PersonIcon,
   Psychology as PsychologyIcon,
   Message as MessageIcon,
+  Menu as MenuIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
-const BottomNav: React.FC = () => {
+const DRAWER_WIDTH = 240;
+const COLLAPSED_DRAWER_WIDTH = 64;
+
+interface BottomNavProps {
+  isDrawerOpen: boolean;
+  setIsDrawerOpen: Dispatch<SetStateAction<boolean>>;
+}
+
+const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentUser } = useAuth();
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   useEffect(() => {
     if (!currentUser?.uid) return;
@@ -50,62 +75,176 @@ const BottomNav: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser?.uid]);
 
-  const handleNavigation = (event: React.SyntheticEvent, newValue: string) => {
-    navigate(newValue);
+  const handleNavigation = (path: string) => {
+    navigate(path);
   };
 
-  return (
-    <>
-      <BottomNavigation
-        value={location.pathname}
-        onChange={handleNavigation}
+  const toggleDrawer = () => {
+    setIsDrawerOpen(!isDrawerOpen);
+  };
+
+  const navigationItems = [
+    {
+      label: "Discover",
+      path: "/",
+      icon: <TrendingUpIcon />,
+    },
+    {
+      label: "Side Rooms",
+      path: "/side-rooms",
+      icon: <MeetingRoomIcon />,
+    },
+    {
+      label: "Messages",
+      path: "/messages",
+      icon: (
+        <Badge color="error" badgeContent={unreadMessages} invisible={unreadMessages === 0}>
+          <MessageIcon />
+        </Badge>
+      ),
+    },
+    {
+      label: "Sade AI",
+      path: "/sade-ai",
+      icon: (
+        <Avatar 
+          src="/images/sade-avatar.jpg" 
+          sx={{ width: 24, height: 24 }}
+        />
+      ),
+    },
+    {
+      label: "Profile",
+      path: `/profile/${currentUser?.uid}`,
+      icon: <PersonIcon />,
+    },
+  ];
+
+  const renderNavigationContent = () => (
+    <List>
+      {navigationItems.map((item) => (
+        <ListItem
+          button
+          key={item.label}
+          selected={location.pathname === item.path}
+          onClick={() => handleNavigation(item.path)}
+          sx={{
+            borderRadius: '8px',
+            mx: 1,
+            my: 0.5,
+            minHeight: 48,
+            justifyContent: isDrawerOpen ? 'initial' : 'center',
+            '&.Mui-selected': {
+              backgroundColor: theme.palette.primary.main,
+              color: 'white',
+              '&:hover': {
+                backgroundColor: theme.palette.primary.dark,
+              },
+              '& .MuiListItemIcon-root': {
+                color: 'white',
+              },
+            },
+          }}
+        >
+          <Tooltip title={!isDrawerOpen ? item.label : ""} placement="right">
+            <ListItemIcon 
+              sx={{ 
+                minWidth: 40, 
+                color: location.pathname === item.path ? 'white' : 'inherit',
+                mr: isDrawerOpen ? 2 : 'auto',
+                justifyContent: 'center'
+              }}
+            >
+              {item.icon}
+            </ListItemIcon>
+          </Tooltip>
+          {isDrawerOpen && <ListItemText primary={item.label} />}
+        </ListItem>
+      ))}
+    </List>
+  );
+
+  // Desktop Sidebar
+  if (!isMobile) {
+    return (
+      <Drawer
+        variant="permanent"
+        anchor="left"
         sx={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          backgroundColor: 'background.paper',
-          borderTop: '1px solid',
-          borderColor: 'divider',
-          zIndex: 1000,
+          width: isDrawerOpen ? DRAWER_WIDTH : COLLAPSED_DRAWER_WIDTH,
+          flexShrink: 0,
+          '& .MuiDrawer-paper': {
+            width: isDrawerOpen ? DRAWER_WIDTH : COLLAPSED_DRAWER_WIDTH,
+            boxSizing: 'border-box',
+            borderRight: `1px solid ${theme.palette.divider}`,
+            backgroundColor: theme.palette.background.paper,
+            boxShadow: '0px 2px 10px rgba(0, 0, 0, 0.1)',
+            mt: '64px', // Account for top navbar height
+            overflowX: 'hidden',
+            transition: theme.transitions.create('width', {
+              easing: theme.transitions.easing.sharp,
+              duration: theme.transitions.duration.enteringScreen,
+            }),
+          },
         }}
       >
-        <BottomNavigationAction
-          label="Discover"
-          value="/"
-          icon={<TrendingUpIcon />}
-        />
-        <BottomNavigationAction
-          label="Side Rooms"
-          value="/side-rooms"
-          icon={<MeetingRoomIcon />}
-        />
-        <BottomNavigationAction
-          label="Messages"
-          value="/messages"
-          icon={
-            <Badge color="error" badgeContent={unreadMessages} invisible={unreadMessages === 0}>
-              <MessageIcon />
-            </Badge>
-          }
-        />
-        <BottomNavigationAction
-          label="Sade AI"
-          value="/sade-ai"
-          icon={
-            <Avatar 
-              src="/images/sade-avatar.jpg" 
-              sx={{ width: 24, height: 24 }}
-            />
-          }
-        />
-        <BottomNavigationAction
-          label="Profile"
-          value={`/profile/${currentUser?.uid}`}
-          icon={<PersonIcon />}
-        />
+        <Box sx={{ 
+          overflow: 'auto', 
+          mt: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%'
+        }}>
+          {renderNavigationContent()}
+          <Divider sx={{ my: 1 }} />
+          <Box sx={{ 
+            display: 'flex', 
+            justifyContent: 'flex-end', 
+            p: 1,
+            position: 'sticky',
+            bottom: 0,
+            backgroundColor: theme.palette.background.paper,
+            borderTop: `1px solid ${theme.palette.divider}`
+          }}>
+            <IconButton onClick={toggleDrawer}>
+              {isDrawerOpen ? <ChevronLeftIcon /> : <ChevronRightIcon />}
+            </IconButton>
+          </Box>
+        </Box>
+      </Drawer>
+    );
+  }
+
+  // Mobile Bottom Navigation
+  return (
+    <Paper
+      elevation={3}
+      sx={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        zIndex: 1000,
+      }}
+    >
+      <BottomNavigation
+        value={location.pathname}
+        onChange={(event, newValue) => handleNavigation(newValue)}
+        sx={{
+          backgroundColor: theme.palette.background.paper,
+          borderTop: `1px solid ${theme.palette.divider}`,
+        }}
+      >
+        {navigationItems.map((item) => (
+          <BottomNavigationAction
+            key={item.label}
+            label={item.label}
+            value={item.path}
+            icon={item.icon}
+          />
+        ))}
       </BottomNavigation>
-    </>
+    </Paper>
   );
 };
 

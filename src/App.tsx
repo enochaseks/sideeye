@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Routes, 
   Route, 
@@ -6,7 +6,7 @@ import {
   BrowserRouter as Router,
   useLocation
 } from 'react-router-dom';
-import { CssBaseline, Box } from '@mui/material';
+import { CssBaseline, Box, useTheme, useMediaQuery } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { ThemeContextProvider } from './contexts/ThemeContext';
@@ -55,127 +55,148 @@ import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
 import ReportPage from './pages/ReportPage';
 import { HelmetProvider } from 'react-helmet-async';
 
+const DRAWER_WIDTH = 240;
+const COLLAPSED_DRAWER_WIDTH = 64;
 
 const BottomNavWrapper: React.FC = () => {
   const { currentUser } = useAuth();
   const location = useLocation();
+  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
   
   if (!currentUser || ['/login', '/register'].includes(location.pathname)) {
     return null;
   }
   
-  return <BottomNav />;
+  return <BottomNav isDrawerOpen={isDrawerOpen} setIsDrawerOpen={setIsDrawerOpen} />;
 };
 
 const AppContent: React.FC = () => {
   const location = useLocation();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isVibitsPage = location.pathname === '/vibits';
+  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       {!isVibitsPage && <Navbar />}
-      <Box component="main" sx={{ flexGrow: 1, pt: { xs: 2, sm: 3 } }}>
-        <Routes>
-          {/* Public routes */}
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/verify-email" element={<EmailVerification />} />
-          <Route path="/setup-source-code" element={<SetupSourceCode />} />
-          <Route path="/enter-source-code" element={<EnterSourceCode />} />
-          <Route path="/reset-source-code" element={<ResetSourceCode />} />
-          <Route path="/safety" element={<SafetyPage />} />
-          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/terms" element={<TermsOfService />} />
-          <Route path="/cookies" element={<CookiePolicy />} />
-          
-          {/* Protected routes */}
-          <Route path="/" element={
-            <ProtectedRoute>
-              <Discover />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile/:userId" element={
-            <ProtectedRoute>
-              <Profile />
-            </ProtectedRoute>
-          } />
-          <Route path="/settings" element={
-            <ProtectedRoute>
-              <Settings />
-            </ProtectedRoute>
-          } />
-          <Route path="/security" element={
-            <ProtectedRoute>
-              <SecurityPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/search" element={
-            <ProtectedRoute>
-              <SearchResults />
-            </ProtectedRoute>
-          } />
-          <Route path="/messages" element={
-            <ProtectedRoute>
-              <Messages />
-            </ProtectedRoute>
-          } />
-          <Route path="/side-rooms" element={
-            <ProtectedRoute>
-              <SideRoomList />
-            </ProtectedRoute>
-          } />
-          <Route path="/side-room/:roomId" element={
-            <ProtectedRoute>
-              <SideRoomComponent />
-            </ProtectedRoute>
-          } />
-          <Route path="/chat/:userId" element={
-            <ProtectedRoute>
-              <Chat />
-            </ProtectedRoute>
-          } />
-          <Route path="/chat/conversation/:conversationId" element={
-            <ProtectedRoute>
-              <Chat />
-            </ProtectedRoute>
-          } />
-          <Route path="/trash" element={
-            <ProtectedRoute>
-              <TrashPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile/:userId/followers" element={
-            <ProtectedRoute>
-              <FollowersList />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile/:userId/following" element={
-            <ProtectedRoute>
-              <FollowingList />
-            </ProtectedRoute>
-          } />
-          <Route path="/notifications" element={
-            <ProtectedRoute>
-              <NotificationPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/account-management" element={
-            <ProtectedRoute>
-              <DeletionDeactivatePage />
-            </ProtectedRoute>
-          } />
-          <Route path="/report" element={
-            <ProtectedRoute>
-              <ReportPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/sade-ai" element={<SadeAIPage />} />
-          
-          {/* Redirect all other routes to home */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+      <Box sx={{ 
+        display: 'flex', 
+        flexGrow: 1,
+        pt: { xs: 2, sm: 3 },
+        ml: { 
+          xs: 0, 
+          sm: isDrawerOpen ? '60px' : '60px' 
+        },
+        transition: theme.transitions.create('margin', {
+          easing: theme.transitions.easing.sharp,
+          duration: theme.transitions.duration.enteringScreen,
+        }),
+        pb: { xs: '56px', sm: 0 },
+      }}>
+        <Box component="main" sx={{ flexGrow: 1, width: '100%' }}>
+          <Routes>
+            {/* Public routes */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/verify-email" element={<EmailVerification />} />
+            <Route path="/setup-source-code" element={<SetupSourceCode />} />
+            <Route path="/enter-source-code" element={<EnterSourceCode />} />
+            <Route path="/reset-source-code" element={<ResetSourceCode />} />
+            <Route path="/safety" element={<SafetyPage />} />
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/about" element={<About />} />
+            <Route path="/terms" element={<TermsOfService />} />
+            <Route path="/cookies" element={<CookiePolicy />} />
+            
+            {/* Protected routes */}
+            <Route path="/" element={
+              <ProtectedRoute>
+                <Discover />
+              </ProtectedRoute>
+            } />
+            <Route path="/profile/:userId" element={
+              <ProtectedRoute>
+                <Profile />
+              </ProtectedRoute>
+            } />
+            <Route path="/settings" element={
+              <ProtectedRoute>
+                <Settings />
+              </ProtectedRoute>
+            } />
+            <Route path="/security" element={
+              <ProtectedRoute>
+                <SecurityPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/search" element={
+              <ProtectedRoute>
+                <SearchResults />
+              </ProtectedRoute>
+            } />
+            <Route path="/messages" element={
+              <ProtectedRoute>
+                <Messages />
+              </ProtectedRoute>
+            } />
+            <Route path="/side-rooms" element={
+              <ProtectedRoute>
+                <SideRoomList />
+              </ProtectedRoute>
+            } />
+            <Route path="/side-room/:roomId" element={
+              <ProtectedRoute>
+                <SideRoomComponent />
+              </ProtectedRoute>
+            } />
+            <Route path="/chat/:userId" element={
+              <ProtectedRoute>
+                <Chat />
+              </ProtectedRoute>
+            } />
+            <Route path="/chat/conversation/:conversationId" element={
+              <ProtectedRoute>
+                <Chat />
+              </ProtectedRoute>
+            } />
+            <Route path="/trash" element={
+              <ProtectedRoute>
+                <TrashPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/profile/:userId/followers" element={
+              <ProtectedRoute>
+                <FollowersList />
+              </ProtectedRoute>
+            } />
+            <Route path="/profile/:userId/following" element={
+              <ProtectedRoute>
+                <FollowingList />
+              </ProtectedRoute>
+            } />
+            <Route path="/notifications" element={
+              <ProtectedRoute>
+                <NotificationPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/account-management" element={
+              <ProtectedRoute>
+                <DeletionDeactivatePage />
+              </ProtectedRoute>
+            } />
+            <Route path="/report" element={
+              <ProtectedRoute>
+                <ReportPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/sade-ai" element={<SadeAIPage />} />
+            
+            {/* Redirect all other routes to home */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Box>
       </Box>
       <CookieConsent />
       <Toaster position="bottom-right" />
