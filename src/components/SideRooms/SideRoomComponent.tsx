@@ -134,6 +134,7 @@ import TypingIndicator from '../TypingIndicator';
 import { Helmet } from 'react-helmet-async';
 import { debounce } from 'lodash';
 import { io, Socket } from 'socket.io-client'; // Import socket.io-client
+import SearchSourceLinks, { SourceLink } from '../SearchSourceLinks';
 
 // --- YouTube Iframe Player API Types (Basic) ---
 declare global {
@@ -185,7 +186,11 @@ namespace YT {
 
 
 // Define type for Sade AI messages
-type SadeMessage = { sender: 'user' | 'ai', text: string };
+type SadeMessage = { 
+    sender: 'user' | 'ai', 
+    text: string,
+    sourceLinks?: SourceLink[] // Add source links for search results
+};
 
 // Handler function type for clearing chat
 type ClearChatHandler = () => void;
@@ -465,6 +470,11 @@ const SideRoomComponent: React.FC = () => {
     const [sadeInput, setSadeInput] = useState('');
     const [sadeLoading, setSadeLoading] = useState(false);
     const sadeMessagesEndRef = useRef<null | HTMLDivElement>(null);
+
+    // --- Sade AI Typing Effect ---
+    const [sadeTypingText, setSadeTypingText] = useState<string>('');
+    const [isDisplayingText, setIsDisplayingText] = useState(false);
+    const [typingSpeed, setTypingSpeed] = useState(30); // ms per character
 
     // --- Suggestions for Sade AI ---
     const sadeSuggestions = [
@@ -1805,7 +1815,72 @@ const SideRoomComponent: React.FC = () => {
         if (showSadeChat) { // Only scroll when chat is open
             scrollToSadeBottom();
         }
-    }, [sadeMessages, showSadeChat]); // Depend on showSadeChat as well
+    }, [sadeMessages, showSadeChat, sadeTypingText]); // Also depend on sadeTypingText
+
+    // --- Sade AI Typing Effect ---
+    useEffect(() => {
+        if (!isDisplayingText || !sadeTypingText) return;
+        
+        let index = 0;
+        const fullText = sadeTypingText;
+        
+        // Function to add one character at a time
+        const typeNextChar = () => {
+            if (index < fullText.length) {
+                // Get the current messages array
+                setSadeMessages(prev => {
+                    // Create a new array and update the last message
+                    const newMessages = [...prev];
+                    // We know the last message is from AI and needs to be updated
+                    if (newMessages.length > 0 && newMessages[newMessages.length - 1].sender === 'ai') {
+                        const lastMsg = newMessages[newMessages.length - 1];
+                        newMessages[newMessages.length - 1] = {
+                            ...lastMsg, // Preserve sourceLinks and other properties
+                            text: fullText.substring(0, index + 1)
+                        };
+                    }
+                    return newMessages;
+                });
+                
+                index++;
+                setTimeout(typeNextChar, typingSpeed);
+            } else {
+                // Done typing
+                setIsDisplayingText(false);
+                setSadeTypingText('');
+            }
+        };
+        
+        // Start the typing effect
+        typeNextChar();
+        
+        // Cleanup function
+        return () => {
+            // This is just in case the component unmounts during typing
+            setIsDisplayingText(false);
+        };
+    }, [isDisplayingText, sadeTypingText, typingSpeed]);
+    
+    // Function to start the typing effect for a new message
+    const displayWithTypingEffect = (text: string) => {
+        // Find the last message which should be the empty AI message with potential source links
+        setSadeMessages(prev => {
+            const lastMsg = prev[prev.length - 1];
+            // If the last message is from AI and is empty, use it for typing
+            if (lastMsg && lastMsg.sender === 'ai' && (lastMsg.text === '' || lastMsg.text === 'Thinking...')) {
+                // Keep the existing array and just update the last message
+                return prev.map((msg, idx) => 
+                    idx === prev.length - 1 ? { ...msg, text: '' } : msg
+                );
+            }
+            // Otherwise add a new empty AI message
+            return [...prev, { sender: 'ai', text: '' }];
+        });
+        
+        // Then start the typing effect
+        setSadeTypingText(text);
+        setIsDisplayingText(true);
+    };
 
     // --- Sade AI Chat: History Persistence ---
     useEffect(() => {
@@ -1852,7 +1927,7 @@ const SideRoomComponent: React.FC = () => {
             const backendBaseUrl = process.env.REACT_APP_API_URL;
             if (!backendBaseUrl) {
                 console.error("[SideRoomComponent - SadeAI] ERROR: REACT_APP_API_URL is not defined.");
-                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
+                displayWithTypingEffect("Configuration error: Backend URL not set.");
                 setSadeLoading(false);
                 return;
             }
@@ -1861,10 +1936,13 @@ const SideRoomComponent: React.FC = () => {
             // --- Ensure userId is included, remove client-side history --- 
             if (!currentUser?.uid) {
                 console.error("[SideRoomComponent - SadeAI] ERROR: User ID not available.");
-                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: "Error: Could not identify user." }]);
+                displayWithTypingEffect("Error: Could not identify user.");
                 setSadeLoading(false);
                 return;
             }
+
+            // Add a temporary "Thinking..." message
+            setSadeMessages(prev => [...prev, { sender: 'ai', text: 'Thinking...' }]);
 
             // Detect if this is a simple greeting or casual message to avoid instructions
             const isSimpleGreeting = /^(hi|hello|hey|sup|yo|wagwan|how are you|how's it going|what's up|good morning|good afternoon|good evening)[\s\W]*$/i.test(trimmedMessage);
@@ -1878,7 +1956,7 @@ const SideRoomComponent: React.FC = () => {
                     avoidAppInstructions: isSimpleGreeting && !isInstructionQuery,
                     isGreeting: isSimpleGreeting,
                     isInstructionQuery: isInstructionQuery,
-                    useContextFlags: false // Set to true to enable this feature once server.js is fixed
+                    useContextFlags: true // Enable contextFlags feature
                 }
                 // history: sadeMessages.slice(-10) // REMOVE client history - backend uses Firestore
             };
@@ -1889,6 +1967,10 @@ const SideRoomComponent: React.FC = () => {
                 body: JSON.stringify(requestBody),
             };
             const res = await fetch(apiUrl, fetchOptions);
+            
+            // Remove the temporary "Thinking..." message
+            setSadeMessages(prev => prev.filter((_, i) => i !== prev.length - 1));
+            
             if (!res.ok) {
                 let errorMsg = `HTTP error! status: ${res.status}`;
                 try {
@@ -1901,18 +1983,44 @@ const SideRoomComponent: React.FC = () => {
             console.log("[SideRoomComponent - SadeAI] HTTP Backend response data:", data);
 
             if (data.response) {
-                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+                // Check if we have source links from search results
+                if (data.sourceLinks && Array.isArray(data.sourceLinks) && data.sourceLinks.length > 0) {
+                    // Add an empty AI message with source links that will be filled by typing effect
+                    setSadeMessages(prevMessages => [
+                        ...prevMessages, 
+                        { 
+                            sender: 'ai', 
+                            text: '', 
+                            sourceLinks: data.sourceLinks 
+                        }
+                    ]);
+                    
+                    // Start the typing effect for the text portion
+                    displayWithTypingEffect(data.response);
+                } else {
+                    // Use normal typing effect without source links
+                    displayWithTypingEffect(data.response);
+                }
             } else if (data.error) {
                  console.error("[SideRoomComponent - SadeAI] Backend returned error:", data.error);
-                 setSadeMessages(msgs => [...msgs, { sender: 'ai', text: `Sorry, there was an error: ${data.error}` }]);
+                 displayWithTypingEffect(`Sorry, there was an error: ${data.error}`);
             } else {
                 console.error("[SideRoomComponent - SadeAI] Received unexpected HTTP response structure:", data);
-                setSadeMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I got a bit confused there." }]);
+                displayWithTypingEffect("Sorry, I got a bit confused there.");
             }
 
         } catch (err: any) {
             console.error("[SideRoomComponent - SadeAI] sendMessage Error:", err);
-            setSadeMessages(msgs => [...msgs, { sender: 'ai', text: `Sorry, there was an error: ${err.message || 'Unknown error'}` }]);
+            
+            // Remove any temporary "Thinking..." message
+            setSadeMessages(prev => {
+              if (prev.length > 0 && prev[prev.length - 1].sender === 'ai' && prev[prev.length - 1].text === 'Thinking...') {
+                return prev.slice(0, -1);
+              }
+              return prev;
+            });
+            
+            displayWithTypingEffect(`Sorry, there was an error: ${err.message || 'Unknown error'}`);
         } finally {
             setSadeLoading(false);
             // Ensure scrolling happens after state update and potential re-render
@@ -2564,7 +2672,7 @@ const SideRoomComponent: React.FC = () => {
                                 <ListItem key={index} sx={{ 
                                     display: 'flex', 
                                     flexDirection: msg.sender === 'user' ? 'row-reverse' : 'row',
-                                    alignItems: 'flex-end', // Align avatar and bubble nicely
+                                    alignItems: 'flex-start', // Change to flex-start to allow proper alignment with source links
                                     mb: 1,
                                     p:0 // Remove padding from list item itself
                                 }}>
@@ -2575,19 +2683,26 @@ const SideRoomComponent: React.FC = () => {
                                             sx={{ width: 32, height: 32, mr: 1, mb: 0.5 }} // Adjusted margin
                                         />
                                     )}
-                                    <Paper 
-                                        elevation={1} 
-                                        sx={{
-                                            p: '6px 12px',
-                                            borderRadius: msg.sender === 'user' ? '15px 15px 0 15px' : '15px 15px 15px 0',
-                                            bgcolor: msg.sender === 'user' ? 'primary.main' : 'background.paper',
-                                            color: msg.sender === 'user' ? 'primary.contrastText' : 'text.primary',
-                                            maxWidth: '75%',
-                                            wordBreak: 'break-word'
-                                        }}
-                                    >
-                                        {msg.text}
-                                    </Paper>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', maxWidth: '75%' }}>
+                                        <Paper 
+                                            elevation={1} 
+                                            sx={{
+                                                p: '6px 12px',
+                                                borderRadius: msg.sender === 'user' ? '15px 15px 0 15px' : '15px 15px 15px 0',
+                                                bgcolor: msg.sender === 'user' ? 'primary.main' : 'background.paper',
+                                                color: msg.sender === 'user' ? 'primary.contrastText' : 'text.primary',
+                                                maxWidth: '100%',
+                                                wordBreak: 'break-word'
+                                            }}
+                                        >
+                                            {msg.text}
+                                        </Paper>
+                                        
+                                        {/* Display source links if they exist */}
+                                        {msg.sender === 'ai' && msg.sourceLinks && (
+                                            <SearchSourceLinks links={msg.sourceLinks} />
+                                        )}
+                                    </Box>
                                 </ListItem>
                             ))}
                              {sadeLoading && (
