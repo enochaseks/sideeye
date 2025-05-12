@@ -102,7 +102,10 @@ import {
     PictureInPicture as PictureInPictureIcon, // ADDED for PiP toggle button
     Send as SendIcon,
     ZoomIn as ZoomInIcon,
-    ZoomOut as ZoomOutIcon
+    ZoomOut as ZoomOutIcon,
+    PictureInPictureAlt as PictureInPictureAltIcon,
+    Tune as TuneIcon,
+    VolumeDown as VolumeDownIcon
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -491,6 +494,7 @@ const SideRoomComponent: React.FC = () => {
     // --- State for Screen Sharing --- (NEW)
     const [isScreenSharing, setIsScreenSharing] = useState(false); // Local state to manage button appearance
     const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024); // Example breakpoint for desktop
+    const [activeScreenSharerId, setActiveScreenSharerId] = useState<string | null>(null);
 
     // --- State for YouTube Player ---
     const [youtubePlayer, setYoutubePlayer] = useState<YT.Player | null>(null);
@@ -1544,18 +1548,17 @@ const SideRoomComponent: React.FC = () => {
                             <ShareIcon />
                         </IconButton>
                     </Tooltip>
+                    {isRoomOwner && (
                      <Tooltip title="Share Video Link">
                          <IconButton 
                              onClick={handleOpenShareVideoDialog}
-                             // Only enable if connected OR if owner/guest wants to share before connecting?
-                             // Let's allow owner/guest anytime for simplicity now.
-                             disabled={!isRoomOwner && !isGuest}
                              size="small"
                              color="secondary"
                          >
                              <LinkIcon />
                         </IconButton>
                     </Tooltip>
+                    )}
                     <Tooltip title="Chat with Sade AI">
                         <Avatar 
                             src="/images/sade-avatar.jpg" 
@@ -2303,9 +2306,15 @@ const SideRoomComponent: React.FC = () => {
             const currentlySharing = activeStreamCallInstance.screenShare.enabled;
             setIsScreenSharing(currentlySharing);
             if (currentlySharing) {
-                toast.success("Screen sharing started. Choose what to share.");
+                toast.success("Screen sharing started. All participants will see your screen automatically.");
+                if (socket && room?.id && currentUser?.uid) {
+                    socket.emit('start-screen-share', { roomId: room.id, userId: currentUser.uid });
+                }
             } else {
                 toast.success("Screen sharing stopped.");
+                if (socket && room?.id && currentUser?.uid) {
+                    socket.emit('stop-screen-share', { roomId: room.id, userId: currentUser.uid });
+                }
             }
         } catch (error: any) {
             console.error("Error toggling screen share:", error);
@@ -2825,6 +2834,70 @@ const InsideStreamCallContent: React.FC<{
     const [chatInput, setChatInput] = useState('');
     const chatEndRef = useRef<null | HTMLDivElement>(null);
 
+    // Screen sharing detection - ensure ALL participants can see it
+    const screenSharingParticipant = participants.find(p => p.screenShareStream);
+    const isRoomOwnerSharing = screenSharingParticipant?.userId === room.ownerId;
+
+    // This effect ensures screen sharing is properly detected and displayed for ALL participants
+    useEffect(() => {
+        if (screenSharingParticipant) {
+            console.log(`Screen sharing detected from participant ${screenSharingParticipant.name || screenSharingParticipant.userId}`);
+            
+            // Force stream to attach to the DOM - this ensures it's visible to everyone
+            const screenShareStream = screenSharingParticipant.screenShareStream;
+            if (screenShareStream) {
+                console.log('Screen share stream is available and will be displayed to all participants');
+                
+                // Create a video element to ensure all participants receive the stream
+                const videoEl = document.createElement('video');
+                videoEl.autoplay = true;
+                videoEl.muted = true;
+                videoEl.style.display = 'none';
+                videoEl.style.position = 'absolute';
+                
+                // Attach the stream to the video element
+                if (videoEl.srcObject !== screenShareStream) {
+                    videoEl.srcObject = screenShareStream;
+                    videoEl.play().catch(err => console.error("Failed to play screen share:", err));
+                    
+                    // Append to body to ensure it stays active
+                    document.body.appendChild(videoEl);
+                }
+                
+                // Clean up function
+                return () => {
+                    if (document.body.contains(videoEl)) {
+                        document.body.removeChild(videoEl);
+                    }
+                };
+            }
+            
+            // Log if it's the room owner to help with debugging
+            if (isRoomOwnerSharing) {
+                console.log('Room owner is sharing their screen - should be visible to ALL participants');
+            }
+        }
+    }, [screenSharingParticipant, isRoomOwnerSharing]);
+    
+    // Determine if chat tab should be shown
+    const shouldShowChatTab = true; // Always show chat tab
+    
+    // Screen sharing detection effect
+    useEffect(() => {
+        // If the room owner is sharing their screen, make sure it's visible to all participants
+        if (isRoomOwnerSharing && screenSharingParticipant) {
+            // Log for debugging
+            console.log("Room owner is sharing screen - should be visible to all participants");
+        }
+    }, [isRoomOwnerSharing, screenSharingParticipant]);
+    
+    // Screen sharing effect for all participants
+    useEffect(() => {
+        if (screenSharingParticipant) {
+            console.log(`Screen sharing available from participant: ${screenSharingParticipant.name || screenSharingParticipant.userId}`);
+        }
+    }, [screenSharingParticipant]);
+
     // State to cache usernames from Firestore
     const [firestoreUserData, setFirestoreUserData] = useState<{[key: string]: {username: string, avatar?: string}}>({});
 
@@ -3006,30 +3079,6 @@ const InsideStreamCallContent: React.FC<{
         call?.leave().then(() => navigate('/side-rooms')); 
     }; 
 
-    useEffect(() => {
-        if (call && currentUser?.uid && room?.id && typeof localUserIsMute === 'boolean' && db) { 
-            const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
-            const userPresencePath = `sideRooms/${room.id}/presence/${currentUser.uid}`;
-            console.log('[DEBUG Mute Sync] Attempting updateDoc to path:', userPresencePath, 'with data:', JSON.stringify({ isMuted: localUserIsMute }, null, 2));
-            updateDoc(userPresenceRef, { isMuted: localUserIsMute })
-                .then(() => {
-                    console.log(`[InsideStreamCallContent] Synced local mute state (${localUserIsMute}) to Firestore for ${currentUser.uid}`);
-                })
-                .catch(error => {
-                    console.error(`[InsideStreamCallContent] Error syncing local mute state to Firestore for ${currentUser.uid}:`, error);
-                });
-        }
-    }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); 
-
-    if (!call) {
-        return (
-             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1, height: '100%' }}>
-                <CircularProgress />
-                 <Typography sx={{ ml: 1 }}>Loading call infrastructure...</Typography>
-            </Box>
-        );
-    }
-
     const renderCallStatusHeader = () => ( 
         <Box sx={{ 
             p: 1, 
@@ -3063,13 +3112,68 @@ const InsideStreamCallContent: React.FC<{
             </Box>
         );
 
-    const screenSharingParticipant = participants.find(p => p.screenShareStream);
-    const isRoomOwnerSharing = screenSharingParticipant?.userId === room.ownerId;
+    useEffect(() => {
+        if (call && currentUser?.uid && room?.id && typeof localUserIsMute === 'boolean' && db) { 
+            const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
+            const userPresencePath = `sideRooms/${room.id}/presence/${currentUser.uid}`;
+            console.log('[DEBUG Mute Sync] Attempting updateDoc to path:', userPresencePath, 'with data:', JSON.stringify({ isMuted: localUserIsMute }, null, 2));
+            updateDoc(userPresenceRef, { isMuted: localUserIsMute })
+                .then(() => {
+                    console.log(`[InsideStreamCallContent] Synced local mute state (${localUserIsMute}) to Firestore for ${currentUser.uid}`);
+                })
+                .catch(error => {
+                    console.error(`[InsideStreamCallContent] Error syncing local mute state to Firestore for ${currentUser.uid}:`, error);
+                });
+        }
+    }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); 
 
-    // Determine if chat tab should be shown
-    const shouldShowChatTab = isRoomOwnerSharing;
+    // This effect creates a direct connection to screen sharing for all participants
+    useEffect(() => {
+        if (!call || !participants || participants.length === 0) return;
+        
+        // Find any participant who is sharing their screen
+        const screensharer = participants.find(p => p.screenShareStream);
+        if (screensharer) {
+            console.log(`Screen sharing detected from: ${screensharer.name || screensharer.userId}`);
+            
+            // Create a video element to ensure all participants receive the stream
+            const videoEl = document.createElement('video');
+            videoEl.autoplay = true;
+            videoEl.muted = true;
+            videoEl.style.display = 'none';
+            videoEl.style.position = 'absolute';
+            
+            // Attach the stream to the video element
+            if (screensharer.screenShareStream && videoEl.srcObject !== screensharer.screenShareStream) {
+                videoEl.srcObject = screensharer.screenShareStream;
+                videoEl.play().catch(err => console.error("Failed to play screen share:", err));
+                
+                // Append to body to ensure it stays active
+                document.body.appendChild(videoEl);
+                
+                // Log for debugging
+                console.log("Screen share stream attached and should be visible to ALL participants");
+            }
+            
+            // Clean up function
+            return () => {
+                if (videoEl && document.body.contains(videoEl)) {
+                    document.body.removeChild(videoEl);
+                }
+            };
+        }
+    }, [call, participants]);
 
+    if (!call) {
         return (
+             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1, height: '100%' }}>
+                <CircularProgress />
+                 <Typography sx={{ ml: 1 }}>Loading call infrastructure...</Typography>
+            </Box>
+        );
+    }
+
+    return (
         <Box sx={{ 
             display: 'flex', 
             flexDirection: 'column', 
@@ -3090,95 +3194,64 @@ const InsideStreamCallContent: React.FC<{
                 // overflowY: 'auto', 
             }}>
                  {screenSharingParticipant && (
-                    <Box sx={{ 
-                        m: 0,
-                        p: 0,
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: '8px',
-                        backgroundColor: '#000',
-                        position: 'relative',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        height: 'auto',
-                        width: '90%', // Reduced from 100% to 90%
-                        maxWidth: '1200px', // Reduced from 1920px to 1200px 
-                        margin: '0 auto', // Center horizontally
-                        marginTop: 2, // Add top margin
-                        marginBottom: 2, // Add bottom margin
-                        overflow: 'hidden',
-                        boxShadow: '0 4px 8px rgba(0,0,0,0.1)' // Add subtle shadow
-                    }}>
-                        {/* Show screen share when PiP is not enlarged */}
-                        {!isPipEnlarged && (
-                        <Box sx={{
-                            width: '100%', 
-                            paddingTop: '56.25%', // 16:9 aspect ratio (9/16 = 0.5625)
-                            overflow: 'hidden', 
-                            position: 'relative', 
-                            border: 'none',
-                            '& .str-video__screen-share-info': {
-                                display: 'none !important',
-                                visibility: 'hidden !important',
-                                opacity: 0,
-                                height: 0,
-                                overflow: 'hidden',
-                                pointerEvents: 'none',
-                                position: 'absolute',
-                                zIndex: -9999
-                            },
-                            '& .str-video__participant-details, & .str-video__participant-bar, & .str-video__loading-indicator, & .str-video__screen-share-text, & .str-video__screen-share-status, & .str-video__participant__name, & .str-video__participant__info, & .str-video__participant-flag, & div[class*="screen-share"], & span[class*="presentation"]': {
-                                display: 'none !important',
-                                visibility: 'hidden !important',
-                                opacity: 0,
-                                height: 0,
-                                width: 0,
-                                overflow: 'hidden',
-                                pointerEvents: 'none'
-                            },
-                            '& .str-video__participant-view': { 
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: '100% !important',
-                                height: '100% !important',
-                                border: 'none',
-                                display: 'flex', 
-                                justifyContent: 'center', 
-                                alignItems: 'center', 
-                                '& video': { 
-                                    width: '100%', 
-                                    height: '100%', 
-                                    objectFit: 'contain',
-                                    background: '#000'
-                                },
-                                '& .str-video__participant-details': {
-                                    display: 'none !important'
-                                },
-                                '& .str-video__participant-status': {
-                                    display: 'none !important'
-                                },
-                                '& .str-video__participant-flag-container': {
-                                    display: 'none !important'
-                                }
-                            },
+                    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <Typography variant="h6" align="center" sx={{ 
+                            mt: 2, 
+                            mb: 1, 
+                            fontWeight: 500,
+                            color: room?.style?.accentColor || theme.palette.primary.main
                         }}>
-                            <ParticipantView 
-                                participant={screenSharingParticipant} 
-                                trackType="screenShareTrack" 
-                            />
-                        </Box>
-                        )}
-                        
-                        {/* Show enlarged camera when PiP is enlarged */}
-                        {isPipEnlarged && isPipVisible && localParticipant && (
+                            {screenSharingParticipant.userId === currentUser?.uid ? 
+                                "You are sharing your screen" : 
+                                `${screenSharingParticipant.name || 'Someone'} is sharing their screen`}
+                            {isRoomOwnerSharing && screenSharingParticipant.userId !== currentUser?.uid && " (Room Owner)"}
+                        </Typography>
+                        <Box sx={{ 
+                            m: 0,
+                            p: 0,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: '8px',
+                            backgroundColor: '#000',
+                            position: 'relative',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            height: 'auto',
+                            width: '90%',
+                            maxWidth: '1200px',
+                            margin: '0 auto',
+                            marginTop: 2,
+                            marginBottom: 2,
+                            overflow: 'hidden',
+                            boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
+                        }}>
+                            {/* Show screen share when PiP is not enlarged, ensuring all participants can see it */}
+                            {!isPipEnlarged && (
                             <Box sx={{
                                 width: '100%', 
-                                paddingTop: '56.25%', // Maintain 16:9 aspect ratio
+                                paddingTop: '56.25%', // 16:9 aspect ratio (9/16 = 0.5625)
                                 overflow: 'hidden', 
                                 position: 'relative', 
                                 border: 'none',
-                                backgroundColor: '#000',
+                                '& .str-video__screen-share-info': {
+                                    display: 'none !important',
+                                    visibility: 'hidden !important',
+                                    opacity: 0,
+                                    height: 0,
+                                    overflow: 'hidden',
+                                    pointerEvents: 'none',
+                                    position: 'absolute',
+                                    zIndex: -9999
+                                },
+                                '& .str-video__participant-details, & .str-video__participant-bar, & .str-video__loading-indicator, & .str-video__screen-share-text, & .str-video__screen-share-status, & .str-video__participant__name, & .str-video__participant__info, & .str-video__participant-flag, & div[class*="screen-share"], & span[class*="presentation"]': {
+                                    display: 'none !important',
+                                    visibility: 'hidden !important',
+                                    opacity: 0,
+                                    height: 0,
+                                    width: 0,
+                                    overflow: 'hidden',
+                                    pointerEvents: 'none'
+                                },
                                 '& .str-video__participant-view': { 
                                     position: 'absolute',
                                     top: 0,
@@ -3192,187 +3265,259 @@ const InsideStreamCallContent: React.FC<{
                                     '& video': { 
                                         width: '100%', 
                                         height: '100%', 
-                                        objectFit: 'cover',
+                                        objectFit: 'contain',
                                         background: '#000'
+                                    },
+                                    '& .str-video__participant-details': {
+                                        display: 'none !important'
+                                    },
+                                    '& .str-video__participant-status': {
+                                        display: 'none !important'
+                                    },
+                                    '& .str-video__participant-flag-container': {
+                                        display: 'none !important'
                                     }
-                                }
+                                },
                             }}>
-                                {isCameraEnabled ? (
-                                    <ParticipantView participant={localParticipant} trackType="videoTrack" />
-                                ) : (
-                                    <Box sx={{
+                                <ParticipantView 
+                                    participant={screenSharingParticipant} 
+                                    trackType="screenShareTrack" 
+                                />
+                            </Box>
+                            )}
+                            
+                            {/* Make sure everyone can see the screen share regardless of who is sharing */}
+                            {screenSharingParticipant && !isPipEnlarged && (
+                                <Box sx={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: '100%',
+                                    zIndex: -1, // Hidden but keeps the stream active for all participants
+                                    opacity: 0,
+                                    pointerEvents: 'none'
+                                }}>
+                                    {/* This ensures the screen share stream is active for all participants */}
+                                    <video 
+                                        autoPlay 
+                                        playsInline
+                                        ref={(el) => {
+                                            if (el && screenSharingParticipant?.screenShareStream) {
+                                                if (el.srcObject !== screenSharingParticipant.screenShareStream) {
+                                                    el.srcObject = screenSharingParticipant.screenShareStream;
+                                                    el.play().catch(err => console.error("Error playing screen share:", err));
+                                                }
+                                            }
+                                        }}
+                                    />
+                                </Box>
+                            )}
+                            
+                            {/* Show enlarged camera when PiP is enlarged */}
+                            {isPipEnlarged && isPipVisible && localParticipant && (
+                                <Box sx={{
+                                    width: '100%', 
+                                    paddingTop: '56.25%', // Maintain 16:9 aspect ratio
+                                    overflow: 'hidden', 
+                                    position: 'relative', 
+                                    border: 'none',
+                                    backgroundColor: '#000',
+                                    '& .str-video__participant-view': { 
                                         position: 'absolute',
                                         top: 0,
                                         left: 0,
-                                        width: '100%',
-                                        height: '100%',
-                                        display: 'flex',
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                        color: 'white',
-                                        backgroundColor: 'rgba(0,0,0,0.8)'
-                                    }}>
-                                        <VideocamOffIcon sx={{ fontSize: '5rem' }} />
-                                    </Box>
-                                )}
-                                
-                                <IconButton
-                                    size="medium"
-                                    onClick={toggleCamera}
-                                    sx={{
-                                        position: 'absolute',
-                                        top: 16,
-                                        right: 80,
-                                        padding: '8px',
-                                        color: 'white',
-                                        backgroundColor: 'rgba(0,0,0,0.5)',
-                                        '&:hover': {
-                                            backgroundColor: 'rgba(0,0,0,0.7)',
+                                        width: '100% !important',
+                                        height: '100% !important',
+                                        border: 'none',
+                                        display: 'flex', 
+                                        justifyContent: 'center', 
+                                        alignItems: 'center', 
+                                        '& video': { 
+                                            width: '100%', 
+                                            height: '100%', 
+                                            objectFit: 'cover',
+                                            background: '#000'
                                         }
-                                    }}
-                                >
-                                    {isCameraEnabled ? 
-                                        <VideocamIcon /> : 
-                                        <VideocamOffIcon />
                                     }
-                                </IconButton>
-                                
-                                <IconButton
-                                    size="medium"
-                                    onClick={() => setIsPipEnlarged(false)}
-                                    sx={{
-                                        position: 'absolute',
-                                        top: 16,
-                                        right: 16,
-                                        padding: '8px',
-                                        color: 'white',
-                                        backgroundColor: 'rgba(0,0,0,0.5)',
-                                        '&:hover': {
-                                            backgroundColor: 'rgba(0,0,0,0.7)',
-                                        }
-                                    }}
-                                >
-                                    <CloseIcon />
-                                </IconButton>
-                            </Box>
-                        )}
-                        
-                        <Box sx={{ 
-                            position: 'absolute',
-                            top: 10,
-                            right: 10,
-                            zIndex: 10
-                        }}>
-                            {isRoomOwner && (
-                                <Button
-                                    variant="contained"
-                                    color="error"
-                                    size="small"
-                                    startIcon={<StopScreenShareIcon />}
-                                    onClick={handleToggleScreenShare}
-                                    sx={{ 
-                                        borderRadius: '20px',
-                                        textTransform: 'none',
-                                        py: 0.5,
-                                        px: 1.5,
-                                        bgcolor: 'error.main',
-                                        fontWeight: 'bold',
-                                        minWidth: 0,
-                                        boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
-                                        fontFamily: room?.style?.font || 'inherit'
-                                    }}
-                                >
-                                    Stop
-                                </Button>
-                            )}
-                        </Box>
-
-                        {/* Only show small PiP when not enlarged */}
-                        {!isPipEnlarged && isPipVisible && localParticipant && (
-                            <Box
-                                sx={{
-                                    position: 'absolute',
-                                    bottom: 16,
-                                    right: 16,
-                                    width: '160px', // Reduced from original size
-                                    height: '90px', // Reduced from original size
-                                    borderRadius: '8px',
-                                    overflow: 'hidden',
-                                    border: '2px solid',
-                                    borderColor: 'primary.main',
-                                    backgroundColor: '#000',
-                                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                                    zIndex: 10,
-                                    '& .str-video__participant-view': {
-                                        width: '100%',
-                                        height: '100%',
-                                        '& video': {
+                                }}>
+                                    {isCameraEnabled ? (
+                                        <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                    ) : (
+                                        <Box sx={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            left: 0,
                                             width: '100%',
                                             height: '100%',
-                                            objectFit: 'cover'
+                                            display: 'flex',
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                            color: 'white',
+                                            backgroundColor: 'rgba(0,0,0,0.8)'
+                                        }}>
+                                            <VideocamOffIcon sx={{ fontSize: '5rem' }} />
+                                        </Box>
+                                    )}
+                                    
+                                    <IconButton
+                                        size="medium"
+                                        onClick={toggleCamera}
+                                        sx={{
+                                            position: 'absolute',
+                                            top: 16,
+                                            right: 80,
+                                            padding: '8px',
+                                            color: 'white',
+                                            backgroundColor: 'rgba(0,0,0,0.5)',
+                                            '&:hover': {
+                                                backgroundColor: 'rgba(0,0,0,0.7)',
+                                            }
+                                        }}
+                                    >
+                                        {isCameraEnabled ? 
+                                            <VideocamIcon /> : 
+                                            <VideocamOffIcon />
                                         }
-                                    }
-                                }}
-                            >
-                                {isCameraEnabled ? (
-                                    <ParticipantView participant={localParticipant} trackType="videoTrack" />
-                                ) : (
-                                    <Box sx={{
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        width: '100%',
-                                        height: '100%',
-                                        display: 'flex',
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                        color: 'white',
-                                        backgroundColor: 'rgba(0,0,0,0.8)'
-                                    }}>
-                                        <VideocamOffIcon sx={{ fontSize: '1.5rem' }} />
-                                    </Box>
+                                    </IconButton>
+                                    
+                                    <IconButton
+                                        size="medium"
+                                        onClick={() => setIsPipEnlarged(false)}
+                                        sx={{
+                                            position: 'absolute',
+                                            top: 16,
+                                            right: 16,
+                                            padding: '8px',
+                                            color: 'white',
+                                            backgroundColor: 'rgba(0,0,0,0.5)',
+                                            '&:hover': {
+                                                backgroundColor: 'rgba(0,0,0,0.7)',
+                                            }
+                                        }}
+                                    >
+                                        <CloseIcon />
+                                    </IconButton>
+                                </Box>
+                            )}
+                            
+                            <Box sx={{ 
+                                position: 'absolute',
+                                top: 10,
+                                right: 10,
+                                zIndex: 10
+                            }}>
+                                {isRoomOwner && (
+                                    <Button
+                                        variant="contained"
+                                        color="error"
+                                        size="small"
+                                        startIcon={<StopScreenShareIcon />}
+                                        onClick={handleToggleScreenShare}
+                                        sx={{ 
+                                            borderRadius: '20px',
+                                            textTransform: 'none',
+                                            py: 0.5,
+                                            px: 1.5,
+                                            bgcolor: 'error.main',
+                                            fontWeight: 'bold',
+                                            minWidth: 0,
+                                            boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
+                                            fontFamily: room?.style?.font || 'inherit'
+                                        }}
+                                    >
+                                        Stop
+                                    </Button>
                                 )}
-                                
-                                <IconButton
-                                    size="small"
-                                    onClick={toggleCamera}
-                                    sx={{
-                                        position: 'absolute',
-                                        top: 2,
-                                        right: 26,
-                                        padding: '2px',
-                                        color: 'white',
-                                        backgroundColor: 'rgba(0,0,0,0.5)',
-                                        '&:hover': {
-                                            backgroundColor: 'rgba(0,0,0,0.7)',
-                                        }
-                                    }}
-                                >
-                                    {isCameraEnabled ? 
-                                        <VideocamIcon sx={{ fontSize: '0.9rem' }} /> : 
-                                        <VideocamOffIcon sx={{ fontSize: '0.9rem' }} />
-                                    }
-                                </IconButton>
-                                
-                                <IconButton
-                                    size="small"
-                                    onClick={() => setIsPipEnlarged(true)}
-                                    sx={{
-                                        position: 'absolute',
-                                        top: 2,
-                                        right: 2,
-                                        padding: '2px',
-                                        color: 'white',
-                                        backgroundColor: 'rgba(0,0,0,0.5)',
-                                        '&:hover': {
-                                            backgroundColor: 'rgba(0,0,0,0.7)',
-                                        }
-                                    }}
-                                >
-                                    <ZoomInIcon sx={{ fontSize: '0.9rem' }} />
-                                </IconButton>
                             </Box>
-                        )}
+
+                            {/* Only show small PiP when not enlarged */}
+                            {!isPipEnlarged && isPipVisible && localParticipant && (
+                                <Box
+                                    sx={{
+                                        position: 'absolute',
+                                        bottom: 16,
+                                        right: 16,
+                                        width: '160px', // Reduced from original size
+                                        height: '90px', // Reduced from original size
+                                        borderRadius: '8px',
+                                        overflow: 'hidden',
+                                        border: '2px solid',
+                                        borderColor: 'primary.main',
+                                        backgroundColor: '#000',
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                                        zIndex: 10,
+                                        '& .str-video__participant-view': {
+                                            width: '100%',
+                                            height: '100%',
+                                            '& video': {
+                                                width: '100%',
+                                                height: '100%',
+                                                objectFit: 'cover'
+                                            }
+                                        }
+                                    }}
+                                >
+                                    {isCameraEnabled ? (
+                                        <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                    ) : (
+                                        <Box sx={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            left: 0,
+                                            width: '100%',
+                                            height: '100%',
+                                            display: 'flex',
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                            color: 'white',
+                                            backgroundColor: 'rgba(0,0,0,0.8)'
+                                        }}>
+                                            <VideocamOffIcon sx={{ fontSize: '1.5rem' }} />
+                                        </Box>
+                                    )}
+                                    
+                                    <IconButton
+                                        size="small"
+                                        onClick={toggleCamera}
+                                        sx={{
+                                            position: 'absolute',
+                                            top: 2,
+                                            right: 26,
+                                            padding: '2px',
+                                            color: 'white',
+                                            backgroundColor: 'rgba(0,0,0,0.5)',
+                                            '&:hover': {
+                                                backgroundColor: 'rgba(0,0,0,0.7)',
+                                            }
+                                        }}
+                                    >
+                                        {isCameraEnabled ? 
+                                            <VideocamIcon sx={{ fontSize: '0.9rem' }} /> : 
+                                            <VideocamOffIcon sx={{ fontSize: '0.9rem' }} />
+                                        }
+                                    </IconButton>
+                                    
+                                    <IconButton
+                                        size="small"
+                                        onClick={() => setIsPipEnlarged(true)}
+                                        sx={{
+                                            position: 'absolute',
+                                            top: 2,
+                                            right: 2,
+                                            padding: '2px',
+                                            color: 'white',
+                                            backgroundColor: 'rgba(0,0,0,0.5)',
+                                            '&:hover': {
+                                                backgroundColor: 'rgba(0,0,0,0.7)',
+                                            }
+                                        }}
+                                    >
+                                        <ZoomInIcon sx={{ fontSize: '0.9rem' }} />
+                                    </IconButton>
+                                </Box>
+                            )}
+                        </Box>
                     </Box>
                  )}
                  {/* End Screen Share Display Section */}
@@ -3755,73 +3900,73 @@ const InsideStreamCallContent: React.FC<{
                     Leave quietly
                 </Button>
 
-                <Tooltip title={localUserIsMute ? "Unmute Microphone" : "Mute Microphone"}>
-                    <IconButton 
-                        onClick={() => call?.microphone.toggle()} 
-                        color={localUserIsMute ? "default" : "primary"} 
-                        sx={{ 
-                            ml: 2,
-                            color: !localUserIsMute ? (room?.style?.accentColor || 'primary.main') : 'default'
-                        }} 
-                        disabled={!call} 
-                    >
-                        {localUserIsMute ? <MicOff /> : <Mic />}
-                    </IconButton>
-                </Tooltip>
+                {isRoomOwner && (
+                    <Tooltip title={localUserIsMute ? "Unmute Microphone" : "Mute Microphone"}>
+                        <IconButton 
+                            onClick={() => call?.microphone.toggle()} 
+                            color={localUserIsMute ? "default" : "primary"} 
+                            sx={{ 
+                                ml: 2,
+                                color: !localUserIsMute ? (room?.style?.accentColor || 'primary.main') : 'default'
+                            }} 
+                            disabled={!call} 
+                        >
+                            {localUserIsMute ? <MicOff /> : <Mic />}
+                        </IconButton>
+                    </Tooltip>
+                )}
 
                 {/* THIS IS THE MAIN CAMERA TOGGLE BUTTON */}
-                {/* It turns the camera ON/OFF but doesn't affect PiP visibility */}
-                <Tooltip title={isCameraEnabled ? "Turn Camera Off" : "Turn Camera On"}>
-                    <IconButton
-                        onClick={() => {
-                            // Toggle camera
-                            toggleCamera();
-                            // If PiP is not visible, make it visible again
-                            if (!isPipVisible) {
-                                handleShowPip();
-                            }
-                        }}
-                        color={isCameraEnabled ? "primary" : "default"}
-                        sx={{ 
-                            ml: 1,
-                            color: isCameraEnabled ? (room?.style?.accentColor || 'primary.main') : 'default'
-                        }} 
-                        disabled={!call || isTogglePending} 
-                    >
-                        {isCameraEnabled ? <VideocamIcon /> : <VideocamOffIcon />}
-                    </IconButton>
-                </Tooltip>
+                {isRoomOwner && (
+                    <Tooltip title={isCameraEnabled ? "Turn Camera Off" : "Turn Camera On"}>
+                        <IconButton
+                            onClick={toggleCamera}
+                            color={isCameraEnabled ? "primary" : "default"}
+                            sx={{
+                                ml: 1,
+                                color: isCameraEnabled ? (room?.style?.accentColor || 'primary.main') : 'default'
+                            }}
+                            disabled={!call}
+                        >
+                            {isCameraEnabled ? <VideocamIcon /> : <VideocamOffIcon />}
+                        </IconButton>
+                    </Tooltip>
+                )}
 
                 {/* Separate button to toggle PiP visibility */}
-                <Tooltip title={isPipVisible ? "Hide Camera Window" : "Show Camera Window"}>
-                    <IconButton
-                        onClick={() => setIsPipVisible(!isPipVisible)}
-                        color={isPipVisible ? "primary" : "default"}
-                        sx={{ 
-                            ml: 1,
-                            color: isPipVisible ? (room?.style?.accentColor || 'primary.main') : 'default'
-                        }}
-                        disabled={!screenSharingParticipant} // Only enable when screen sharing is active
-                    >
-                        <PictureInPictureIcon />
-                    </IconButton>
-                </Tooltip>
+                {isRoomOwner && (
+                    <Tooltip title={isPipVisible ? "Hide Camera Window" : "Show Camera Window"}>
+                        <IconButton
+                            onClick={() => setIsPipVisible(!isPipVisible)}
+                            color={isPipVisible ? "primary" : "default"}
+                            sx={{ 
+                                ml: 1,
+                                color: isPipVisible ? (room?.style?.accentColor || 'primary.main') : 'default'
+                            }}
+                            disabled={!call || !isCameraEnabled} 
+                        >
+                            <PictureInPictureAltIcon />
+                        </IconButton>
+                    </Tooltip>
+                )}
 
-                 <Tooltip title="Share Video Link">
-                     <span> 
-                     <IconButton 
-                         onClick={() => handleOpenShareVideoDialog()} 
-                         color={"secondary"} 
-                         sx={{ 
-                             ml: 2,
-                             color: room?.style?.accentColor || 'secondary.main'
-                         }} 
-                         disabled={!isRoomOwner && !isGuest} 
-                     >
-                         <LinkIcon />
-                     </IconButton>
-                     </span>
-                 </Tooltip>
+                {/* Share Video Link - Only visible to room owners */}
+                {isRoomOwner && (
+                    <Tooltip title="Share Video Link">
+                        <span> 
+                        <IconButton 
+                            onClick={() => handleOpenShareVideoDialog()} 
+                            color="secondary" 
+                            sx={{ 
+                                ml: 2,
+                                color: room?.style?.accentColor || theme.palette.secondary.main
+                            }} 
+                        >
+                            <LinkIcon />
+                        </IconButton>
+                        </span>
+                    </Tooltip>
+                )}
             </Box>
             {/* End Bottom Control Bar */}
         </Box>
