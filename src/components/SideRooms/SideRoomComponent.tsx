@@ -1866,10 +1866,20 @@ const SideRoomComponent: React.FC = () => {
                 return;
             }
 
+            // Detect if this is a simple greeting or casual message to avoid instructions
+            const isSimpleGreeting = /^(hi|hello|hey|sup|yo|wagwan|how are you|how's it going|what's up|good morning|good afternoon|good evening)[\s\W]*$/i.test(trimmedMessage);
+            const isInstructionQuery = /how (do|to|can) (I|you)|help me|guide|tutorial|instructions|steps|feature|profile|settings|add|create|change|modify|update|set up/i.test(trimmedMessage);
+
             const requestBody = {
                 message: trimmedMessage, // Send trimmed message
                 forceSearch: forceSearch, // Include forceSearch flag
-                userId: currentUser.uid // ADD USER ID
+                userId: currentUser.uid, // ADD USER ID
+                contextFlags: {
+                    avoidAppInstructions: isSimpleGreeting && !isInstructionQuery,
+                    isGreeting: isSimpleGreeting,
+                    isInstructionQuery: isInstructionQuery,
+                    useContextFlags: false // Set to true to enable this feature once server.js is fixed
+                }
                 // history: sadeMessages.slice(-10) // REMOVE client history - backend uses Firestore
             };
             console.log("[SideRoomComponent - SadeAI] Sending HTTP request body:", requestBody);
@@ -2581,10 +2591,39 @@ const SideRoomComponent: React.FC = () => {
                                 </ListItem>
                             ))}
                              {sadeLoading && (
-                                <ListItem sx={{ justifyContent: 'center' }}>
-                                    <CircularProgress size={20} />
+                                <ListItem sx={{ 
+                                    display: 'flex',
+                                    flexDirection: 'row',
+                                    alignItems: 'flex-end',
+                                    mb: 1,
+                                    p: 0
+                                }}>
+                                    <Avatar 
+                                        src="/images/sade-avatar.jpg" 
+                                        alt="Sade AI"
+                                        sx={{ width: 32, height: 32, mr: 1, mb: 0.5 }}
+                                    />
+                                    <Paper 
+                                        elevation={1} 
+                                        sx={{
+                                            p: '6px 12px',
+                                            borderRadius: '15px 15px 15px 0',
+                                            bgcolor: 'background.paper',
+                                            color: 'text.secondary',
+                                            maxWidth: '75%',
+                                            wordBreak: 'break-word',
+                                            animation: 'pulseFade 1.5s infinite',
+                                            '@keyframes pulseFade': {
+                                                '0%': { opacity: 0.7 },
+                                                '50%': { opacity: 1 },
+                                                '100%': { opacity: 0.7 }
+                                            }
+                                        }}
+                                    >
+                                        Thinking...
+                                    </Paper>
                                 </ListItem>
-                             )}
+                            )}
                             <div ref={sadeMessagesEndRef} />
                         </List>
                     </DialogContent>

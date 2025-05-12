@@ -113,6 +113,7 @@ const SadeAIPage: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [activeGame, setActiveGame] = useState<GameState>(null);
   const [breathingState, setBreathingState] = useState<BreathingState>(null);
   const [forceSearchNext, setForceSearchNext] = useState(false);
@@ -122,6 +123,11 @@ const SadeAIPage: React.FC = () => {
   // --- NEW Connect 4 State ---
   const [connect4Game, setConnect4Game] = useState<Connect4GameState>(null);
   // --- END NEW Connect 4 State ---
+
+  // For typing effect
+  const [typingText, setTypingText] = useState<string>('');
+  const [isDisplayingText, setIsDisplayingText] = useState(false);
+  const [typingSpeed, setTypingSpeed] = useState(30); // ms per character
 
   // Ref to scroll to bottom
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
@@ -134,7 +140,57 @@ const SadeAIPage: React.FC = () => {
   // Effect to scroll when messages change
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, typingText]);
+
+  // Typing effect logic
+  useEffect(() => {
+    if (!isDisplayingText || !typingText) return;
+    
+    let index = 0;
+    const fullText = typingText;
+    
+    // Function to add one character at a time
+    const typeNextChar = () => {
+      if (index < fullText.length) {
+        // Get the current messages array
+        setMessages(prev => {
+          // Create a new array and update the last message
+          const newMessages = [...prev];
+          // We know the last message is from AI and needs to be updated
+          if (newMessages.length > 0 && newMessages[newMessages.length - 1].sender === 'ai') {
+            newMessages[newMessages.length - 1].text = fullText.substring(0, index + 1);
+          }
+          return newMessages;
+        });
+        
+        index++;
+        setTimeout(typeNextChar, typingSpeed);
+      } else {
+        // Done typing
+        setIsDisplayingText(false);
+        setTypingText('');
+      }
+    };
+    
+    // Start the typing effect
+    typeNextChar();
+    
+    // Cleanup function
+    return () => {
+      // This is just in case the component unmounts during typing
+      setIsDisplayingText(false);
+    };
+  }, [isDisplayingText, typingText, typingSpeed]);
+
+  // Function to start the typing effect for a new message
+  const displayWithTypingEffect = (text: string) => {
+    // First add an empty AI message
+    setMessages(prev => [...prev, { sender: 'ai', text: '' }]);
+    
+    // Then start the typing effect
+    setTypingText(text);
+    setIsDisplayingText(true);
+  };
 
   // Define suggestions
   const suggestions = [
@@ -258,7 +314,7 @@ const SadeAIPage: React.FC = () => {
   const endBreathingExercise = () => {
      console.log("[Frontend] endBreathingExercise called."); // Log end
      clearBreathingInterval();
-     setMessages(msgs => [...msgs, { sender: 'ai', text: "Nicely done! Hope that helped you feel a bit calmer, mate. 😊" }]);
+     displayWithTypingEffect("Nicely done! Hope that helped you feel a bit calmer, mate. 😊");
      setBreathingState(null);
      setLoading(false);
   };
@@ -334,7 +390,7 @@ const SadeAIPage: React.FC = () => {
          if (currentState?.active) {
              console.log("[Frontend] Manually stopping breathing exercise.");
              clearBreathingInterval();
-             setMessages(msgs => [...msgs, { sender: 'ai', text: "Okay, no worries! Stopping the exercise now." }]);
+             displayWithTypingEffect("Okay, no worries! Stopping the exercise now.");
              setLoading(false);
              return null; // Set state to null
          }
@@ -354,7 +410,7 @@ const SadeAIPage: React.FC = () => {
     // --- Add check for currentUser ---
     if (!currentUser) {
         console.error("[SadeAIPage] Error: No user logged in. Cannot send message.");
-        setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I can't send messages if you're not logged in." }]);
+        displayWithTypingEffect("Sorry, I can't send messages if you're not logged in.");
         return; // Prevent sending if no user
     }
     // --- End check ---
@@ -376,7 +432,7 @@ const SadeAIPage: React.FC = () => {
 
       // Block regular messages during breathing exercise (unless it's 'stop')
       if (breathingState?.active) {
-          setMessages(msgs => [...msgs, { sender: 'ai', text: "Let's focus on breathing for now. You can type 'stop' if you need to." }]);
+          displayWithTypingEffect("Let's focus on breathing for now. You can type 'stop' if you need to.");
           return;
       }
 
@@ -414,11 +470,16 @@ const SadeAIPage: React.FC = () => {
               // We'll send this specific move to the backend.
               console.log(`[Frontend] Sending Connect 4 move (column ${columnChoice}) to backend.`);
 
+              // Add a temporary "Thinking..." message
+              setMessages(prev => [...prev, { sender: 'ai', text: 'Thinking...' }]);
+
               // --- Send Move to Backend ---
               const backendBaseUrl = process.env.REACT_APP_API_URL;
               if (!backendBaseUrl) {
                   console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
-                  throw new Error("Configuration error: Backend URL not set."); // Throw error to be caught
+                  displayWithTypingEffect("Configuration error: Backend URL not set.");
+                  // setLoading(false); // No need, finally block handles it
+                  return; // Exit on config error
               }
               const apiUrl = `${backendBaseUrl}/api/sade-ai`;
 
@@ -448,6 +509,14 @@ const SadeAIPage: React.FC = () => {
               const data = await res.json();
               console.log("[Frontend] Connect 4 move response data:", data);
 
+              // Remove any temporary "Thinking..." message
+              setMessages(prev => {
+                if (prev.length > 0 && prev[prev.length - 1].sender === 'ai' && prev[prev.length - 1].text === 'Thinking...') {
+                  return prev.slice(0, -1);
+                }
+                return prev;
+              });
+
               // --- Handle Backend Response (Update Game State) ---
               if (data.gameUpdate === 'connect_4' && data.board && data.response) {
                   console.log("[Frontend] Received Connect 4 game update from backend.");
@@ -461,8 +530,8 @@ const SadeAIPage: React.FC = () => {
                    };
                    setConnect4Game(updatedConnect4State);
 
-                   // Add Sade's response message (e.g., "Okay, I placed my piece...", "You win!", etc.)
-                   setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+                   // Use typing effect for Sade's response
+                   displayWithTypingEffect(data.response);
 
                    // If game is over, maybe clear state after a short delay or based on message?
                    if(data.gameOver) {
@@ -472,13 +541,13 @@ const SadeAIPage: React.FC = () => {
                    }
 
               } else if (data.error) { // Handle specific error from backend (e.g., invalid move)
-                 setMessages(msgs => [...msgs, { sender: 'ai', text: data.error }]);
+                 displayWithTypingEffect(data.error);
                  // Don't clear game state on invalid move error
               }
               else {
                    // Handle unexpected response after sending a move
                    console.error("[SadeAIPage] Received unexpected response structure after Connect 4 move:", data);
-                   setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, something went wrong with the game." }]);
+                   displayWithTypingEffect("Sorry, something went wrong with the game.");
                    setConnect4Game(null); // Clear game state on unexpected error
               }
               // --- End Handling Backend Response ---
@@ -486,7 +555,7 @@ const SadeAIPage: React.FC = () => {
           } else {
               // Input was not a valid column number
               console.log("[Frontend] Connect 4 active, but input is not a valid column number (1-7).");
-              setMessages(msgs => [...msgs, { sender: 'ai', text: "Please enter a column number from 1 to 7 to make your move, mate." }]);
+              displayWithTypingEffect("Please enter a column number from 1 to 7 to make your move, mate.");
               // Don't send to backend, just prompt user again.
           }
           return; // Exit early after handling game logic
@@ -499,15 +568,18 @@ const SadeAIPage: React.FC = () => {
       const backendBaseUrl = process.env.REACT_APP_API_URL;
       if (!backendBaseUrl) {
           console.error("[SadeAIPage] ERROR: REACT_APP_API_URL is not defined.");
-          setMessages(msgs => [...msgs, { sender: 'ai', text: "Configuration error: Backend URL not set." }]);
+          displayWithTypingEffect("Configuration error: Backend URL not set.");
           // setLoading(false); // No need, finally block handles it
           return; // Exit on config error
       }
       const apiUrl = `${backendBaseUrl}/api/sade-ai`;
 
+      // Add a temporary "Thinking..." message
+      setMessages(prev => [...prev, { sender: 'ai', text: 'Thinking...' }]);
+
       // --- MODIFICATION HERE ---
       // Get the last 10 messages from the state
-      const recentHistory = messages.slice(-10); 
+      const recentHistory = messages.slice(-10);
       
       const requestBody = {
           message: messageToSend,   // The new message from the user
@@ -534,13 +606,16 @@ const SadeAIPage: React.FC = () => {
       }
       const data = await res.json();
       console.log("[Frontend] HTTP Backend response data:", data);
-      // setLoading(false); // No need, finally block handles it
+      
+      // Remove the temporary "Thinking..." message before adding the real response
+      setMessages(prev => prev.filter((_, i) => i !== prev.length - 1));
 
       // --- Handle Backend Response ---
       if (data.startBreathingExercise && data.steps) {
          console.log("[Frontend] sendMessage: Received signal to start breathing exercise.");
-         // setLoading(false); // No need, finally block handles it
-         setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+         // Use typing effect for initial breathing response
+         displayWithTypingEffect(data.response);
+         
          const initialBreathingState = {
              active: true,
              steps: data.steps,
@@ -554,15 +629,18 @@ const SadeAIPage: React.FC = () => {
          setActiveGame(null);   // Ensure Guess the Number state is cleared
 
       } else if (data.startGame === 'guess_the_number' && data.response) {
-        // setLoading(false); // No need, finally block handles it
-        startGame('guess_the_number', data.response);
+        // Use typing effect for game start message
+        displayWithTypingEffect(data.response);
+        
+        // Start the game
+        startGame('guess_the_number');
         setConnect4Game(null);    // Ensure Connect 4 state is cleared
         setBreathingState(null); // Ensure breathing state is cleared
 
       } else if (data.startGame === 'connect_4' && data.board && data.response) { // --- NEW Connect 4 Check ---
          console.log("[Frontend] sendMessage: Received signal to start Connect 4 game.");
-         // Add the initial game message from Sade (which includes the text board)
-         setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+         // Use typing effect for Connect 4 start message
+         displayWithTypingEffect(data.response);
 
          // Set the Connect 4 game state
          const newConnect4State: Connect4GameState = {
@@ -577,17 +655,30 @@ const SadeAIPage: React.FC = () => {
          setBreathingState(null); // Clear other game states
 
       } else if (data.response) { // General AI response (no game/exercise started)
-         setMessages(msgs => [...msgs, { sender: 'ai', text: data.response }]);
+         // Use typing effect instead of directly adding message
+         displayWithTypingEffect(data.response);
+         
          // Potentially clear game states here too if a general message implies the game ended?
          // For now, only clear when another activity explicitly starts.
       } else {
          console.error("[SadeAIPage] Received unexpected HTTP response structure:", data);
-         setMessages(msgs => [...msgs, { sender: 'ai', text: "Sorry, I got a bit confused there." }]);
+         displayWithTypingEffect("Sorry, I got a bit confused there.");
       }
 
     } catch (err: any) { // Catch errors from fetch or other logic within try
       console.error("[SadeAIPage] sendMessage Error:", err);
-      setMessages(msgs => [...msgs, { sender: 'ai', text: `Sorry, there was an error: ${err.message || 'Unknown error'}` }]);
+      
+      // Remove any temporary "Thinking..." message
+      setMessages(prev => {
+        if (prev.length > 0 && prev[prev.length - 1].sender === 'ai' && prev[prev.length - 1].text === 'Thinking...') {
+          return prev.slice(0, -1);
+        }
+        return prev;
+      });
+      
+      // Display error with typing effect
+      displayWithTypingEffect(`Sorry, there was an error: ${err.message || 'Unknown error'}`);
+      
       // setLoading(false); // No need, finally block handles it
     } finally {
       // This block ALWAYS runs, ensuring loading is set to false
@@ -604,7 +695,7 @@ const SadeAIPage: React.FC = () => {
 
   // --- Game Logic ---
 
-  const startGame = (gameType: 'guess_the_number', initialMessage: string) => {
+  const startGame = (gameType: 'guess_the_number', initialMessage?: string) => {
     if (gameType === 'guess_the_number') {
       const target = Math.floor(Math.random() * 100) + 1;
       const newGameState = {
@@ -617,7 +708,7 @@ const SadeAIPage: React.FC = () => {
       console.log(`[Frontend] startGame called. Setting activeGame state to:`, newGameState);
       setActiveGame(newGameState);
       // Add Sade's starting message to the chat
-      setMessages(msgs => [...msgs, { sender: 'ai', text: initialMessage }]);
+      setMessages(msgs => [...msgs, { sender: 'ai', text: initialMessage || "Hi there! I'm Sade AI. How can I assist you today? Just type your question below. 😊" }]);
     }
     // Can add else if for other game types later
   };
@@ -648,7 +739,8 @@ const SadeAIPage: React.FC = () => {
         newUpperBound = Math.min(activeGame.upperBound, guess - 1);
     }
 
-    setMessages(msgs => [...msgs, { sender: 'ai', text: responseText }]);
+    // Use typing effect for the response
+    displayWithTypingEffect(responseText);
 
     if (gameFinished) {
         setActiveGame(null);
