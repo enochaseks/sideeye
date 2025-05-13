@@ -1,7 +1,7 @@
 {
   "name": "side-eye",
   "homepage": "https://www.sideeye.uk",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "proxy": "http://localhost:3001",
   "dependencies": {
@@ -66,7 +66,7 @@
   },
   "scripts": {
     "start": "cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts start",
-    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts build",
+    "build": "node scripts/update-version.js && cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
@@ -74,7 +74,8 @@
     "deploy:functions": "firebase deploy --only functions",
     "deploy:all": "npm run build && firebase deploy",
     "server": "ts-node server.ts",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "update-version": "node scripts/update-version.js"
   },
   "eslintConfig": {
     "extends": [
