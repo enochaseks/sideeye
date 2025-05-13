@@ -54,6 +54,7 @@ import './App.css';
 import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
 import ReportPage from './pages/ReportPage';
 import { HelmetProvider } from 'react-helmet-async';
+import SadeAIInfo from './pages/SadeAIInfo';
 
 const DRAWER_WIDTH = 240;
 const COLLAPSED_DRAWER_WIDTH = 64;
@@ -189,6 +190,11 @@ const AppContent: React.FC = () => {
             <Route path="/report" element={
               <ProtectedRoute>
                 <ReportPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/sade-ai-info" element={
+              <ProtectedRoute>
+                <SadeAIInfo />
               </ProtectedRoute>
             } />
             <Route path="/sade-ai" element={<SadeAIPage />} />

@@ -22,7 +22,10 @@ import {
   Alert,
   Avatar,
   TextField,
-  ListItemButton
+  ListItemButton,
+  ListItemAvatar,
+  ListItemAvatarProps,
+  CircularProgress
 } from '@mui/material';
 import {
   Security as SecurityIcon,
@@ -43,13 +46,14 @@ import {
   Code as CodeIcon,
   HelpOutline as HelpOutlineIcon,
   ReportProblem as ReportProblemIcon,
-  Chat as ChatIcon
+  Chat as ChatIcon,
+  SmartToy as SmartToyIcon
 } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAuth, usePrivacy } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { doc, updateDoc, arrayRemove, getDoc, setDoc, deleteDoc, collection, getDocs, orderBy, serverTimestamp, query, onSnapshot } from 'firebase/firestore';
+import { doc, updateDoc, arrayRemove, getDoc, setDoc, deleteDoc, collection, getDocs, orderBy, serverTimestamp, query, onSnapshot, addDoc } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import type { UserProfile } from '../types';
 import bcrypt from 'bcryptjs';
@@ -58,6 +62,15 @@ interface FollowRequest {
   id: string;
   userId: string;
   username: string;
+  timestamp: any;
+}
+
+interface UserProfileData {
+  id: string;
+  userId?: string;
+  username?: string;
+  name?: string;
+  profilePic?: string;
   timestamp: any;
 }
 
@@ -156,6 +169,9 @@ const Settings: React.FC = () => {
     messageNotifications: true, 
     followNotifications: true
   });
+  const [enhancedFollowRequests, setEnhancedFollowRequests] = useState<UserProfileData[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingRequestId, setLoadingRequestId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const handlePrivacyToggle = async () => {
@@ -191,31 +207,82 @@ const Settings: React.FC = () => {
   const handleFollowRequest = async (requestId: string, userId: string, accept: boolean) => {
     if (!currentUser) return;
     const currentUserUid = currentUser.uid;
+    
+    // Use requestId as fallback if userId is empty
+    const actualUserId = userId || requestId;
 
-    const requestRef = doc(db, `users/${currentUserUid}/followRequests`, requestId);
-    const followerRef = doc(db, `users/${currentUserUid}/followers`, userId);
-    const followingRef = doc(db, `users/${userId}/following`, currentUserUid);
-
+    // Set loading for this specific request
+    setLoadingRequestId(requestId);
+    
     try {
+      // 1. First delete the request regardless of accept/reject
+      const requestRef = doc(db, `users/${currentUserUid}/followRequests`, requestId);
       await deleteDoc(requestRef);
 
       if (accept) {
+        // 2. If accepting, add to followers collection
+        const followerRef = doc(db, `users/${currentUserUid}/followers`, actualUserId);
         await setDoc(followerRef, {
-          userId: userId,
+          userId: actualUserId,
           timestamp: serverTimestamp()
         });
+        
+        // 3. Add current user to the follower's following collection
+        const followingRef = doc(db, `users/${actualUserId}/following`, currentUserUid);
         await setDoc(followingRef, {
           userId: currentUserUid,
           timestamp: serverTimestamp()
         });
+        
+        // 4. Update counters in the UI
+        setPrivacyStats(prev => ({
+          ...prev,
+          followers: prev.followers + 1,
+          pendingRequests: prev.pendingRequests - 1
+        }));
+        
+        // 5. Create notification for the follower (optional)
+        try {
+          const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
+          if (currentUserDoc.exists()) {
+            const userData = currentUserDoc.data();
+            const notificationRef = collection(db, 'notifications');
+            await addDoc(notificationRef, {
+              type: 'follow_accepted',
+              userId: actualUserId,
+              fromUserId: currentUserUid,
+              fromUsername: userData.username || '',
+              fromProfilePic: userData.profilePic || '',
+              message: `${userData.username || 'User'} has accepted your follow request`,
+              timestamp: serverTimestamp(),
+              read: false
+            });
+          }
+        } catch (notifError) {
+          console.error('Error creating notification:', notifError);
+          // Continue even if notification fails
+        }
+        
         toast.success('Follow request accepted');
       } else {
+        // Just remove the request if declining
+        setPrivacyStats(prev => ({
+          ...prev,
+          pendingRequests: prev.pendingRequests - 1
+        }));
+        
         toast.success('Follow request declined');
       }
 
+      // 6. Remove the request from our local state to update UI immediately
+      setFollowRequests(prev => prev.filter(req => req.id !== requestId));
+      setEnhancedFollowRequests(prev => prev.filter(req => req.id !== requestId));
+      
     } catch (error) {
       console.error('Error handling follow request:', error);
       toast.error('Failed to process follow request');
+    } finally {
+      setLoadingRequestId(null);
     }
   };
 
@@ -407,6 +474,20 @@ const Settings: React.FC = () => {
       path: '/cookies',
       description: 'Learn about how we use cookies',
       isHelp: true
+    },
+    {
+      title: 'About Sade AI',
+      icon: <InfoIcon />,
+      path: '/sade-ai-info',
+      description: 'Learn about Sade AI, her features and capabilities',
+      isHelp: true
+    },
+    {
+      title: 'Chat with Sade AI',
+      icon: <SmartToyIcon />,
+      path: '/sade-ai',
+      description: 'Have a conversation with our AI assistant',
+      isHelp: true
     }
   ];
 
@@ -445,8 +526,8 @@ const Settings: React.FC = () => {
           const data = doc.data();
           return {
             id: doc.id,
-            userId: data.userId,
-            username: data.username || `User_${data.userId.substring(0, 5)}`,
+            userId: data.userId || doc.id,
+            username: data.username || (data.userId ? `User_${data.userId.substring(0, 5)}` : `User_${doc.id.substring(0, 5)}`),
             timestamp: data.timestamp
           } as FollowRequest;
         });
@@ -466,6 +547,59 @@ const Settings: React.FC = () => {
       };
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!followRequests.length) {
+      setEnhancedFollowRequests([]);
+      return;
+    }
+
+    const fetchUserProfiles = async () => {
+      const enhancedRequests = await Promise.all(
+        followRequests.map(async (request) => {
+          try {
+            // Use userId from request, fall back to request.id which could be the userId
+            const userId = request.userId || request.id;
+            const userRef = doc(db, 'users', userId);
+            const userDoc = await getDoc(userRef);
+            
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              return {
+                id: request.id,
+                userId: userId,
+                username: userData.username || request.username,
+                name: userData.name,
+                profilePic: userData.profilePic,
+                timestamp: request.timestamp
+              };
+            } else {
+              // User document not found, use existing data
+              return {
+                id: request.id,
+                userId: userId,
+                username: request.username,
+                timestamp: request.timestamp
+              };
+            }
+          } catch (error) {
+            console.error(`Error fetching user profile for ${request.userId}:`, error);
+            // Return the original request data on error
+            return {
+              id: request.id,
+              userId: request.userId || request.id,
+              username: request.username,
+              timestamp: request.timestamp
+            };
+          }
+        })
+      );
+      
+      setEnhancedFollowRequests(enhancedRequests);
+    };
+
+    fetchUserProfiles();
+  }, [followRequests, db]);
 
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
@@ -546,27 +680,30 @@ const Settings: React.FC = () => {
           </Box>
           {isPrivate && followRequests.length > 0 && (
             <Box sx={{ mt: 3 }}>
-              <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 500 }}>Follow Requests</Typography>
-              <List disablePadding>
-                {followRequests.map(request => (
-                  <ListItem
+              <Typography variant="h6" gutterBottom>
+                Follow Requests
+              </Typography>
+              <List>
+                {enhancedFollowRequests.map((request) => (
+                  <ListItem 
                     key={request.id}
-                    disablePadding
                     secondaryAction={
                       <Box sx={{ display: 'flex', gap: 0.5 }}>
-                        <IconButton
+                        <IconButton 
                           size="small"
                           color="success"
-                          onClick={() => handleFollowRequest(request.id, request.userId, true)}
+                          onClick={() => handleFollowRequest(request.id, request.userId || request.id, true)}
                           title="Accept"
+                          disabled={loadingRequestId === request.id}
                         >
                           <CheckIcon fontSize="small" />
                         </IconButton>
-                        <IconButton
+                        <IconButton 
                           size="small"
                           color="error"
-                          onClick={() => handleFollowRequest(request.id, request.userId, false)}
+                          onClick={() => handleFollowRequest(request.id, request.userId || request.id, false)}
                           title="Decline"
+                          disabled={loadingRequestId === request.id}
                         >
                           <CloseIcon fontSize="small" />
                         </IconButton>
@@ -574,19 +711,44 @@ const Settings: React.FC = () => {
                     }
                     sx={{ mb: 1 }}
                   >
-                    <ListItemButton sx={{ borderRadius: 1, py: 0.5 }}>
-                       <ListItemIcon sx={{ minWidth: 40 }}>
-                           <Avatar sx={{ width: 28, height: 28, fontSize: '0.8rem' }}>{request.username ? request.username[0].toUpperCase() : '?'}</Avatar>
-                       </ListItemIcon>
-                       <ListItemText
-                           primary={`@${request.username}`}
-                           secondary={request.timestamp ? `Requested on ${new Date(request.timestamp?.toDate()).toLocaleDateString()}` : 'Requested recently'}
-                           primaryTypographyProps={{ variant: 'body2', fontWeight: 500 }}
-                           secondaryTypographyProps={{ variant: 'caption' }}
-                       />
-                    </ListItemButton>
+                    <ListItemAvatar>
+                      {loadingRequestId === request.id ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: 40, height: 40 }}>
+                          <CircularProgress size={24} />
+                        </Box>
+                      ) : (
+                        <Avatar 
+                          src={request.profilePic} 
+                          sx={{ width: 40, height: 40 }}
+                        >
+                          {(request.username || request.name) ? 
+                            (request.username || request.name || '')[0]?.toUpperCase() : 
+                            (request.id || '')[0]?.toUpperCase() || '?'}
+                        </Avatar>
+                      )}
+                    </ListItemAvatar>
+                    <ListItemText 
+                      primary={
+                        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                          {request.name && (
+                            <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                              {request.name}
+                            </Typography>
+                          )}
+                          <Typography variant="body2" color={request.name ? "text.secondary" : "text.primary"}>
+                            {request.username ? `@${request.username}` : `User ${request.id.substring(0, 5)}`}
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={request.timestamp ? `Requested on ${new Date(request.timestamp?.toDate()).toLocaleDateString()}` : 'Recently'}
+                    />
                   </ListItem>
                 ))}
+                {enhancedFollowRequests.length === 0 && followRequests.length > 0 && (
+                  <Box sx={{ py: 2, display: 'flex', justifyContent: 'center' }}>
+                    <CircularProgress size={30} />
+                  </Box>
+                )}
               </List>
             </Box>
           )}
@@ -641,6 +803,48 @@ const Settings: React.FC = () => {
                 onChange={() => handleEmailNotificationToggle('followNotifications')}
                 color="primary"
               />
+            </Box>
+          </Box>
+        </Paper>
+      </Box>
+
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>Sade AI Assistant</Typography>
+        <Paper elevation={0} sx={{ p: 3, borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 3, alignItems: 'center' }}>
+            <Avatar 
+              src="/images/sade-avatar.jpg" 
+              alt="Sade AI"
+              sx={{ width: 80, height: 80 }}
+            />
+            <Box sx={{ flex: 1 }}>
+              <Typography variant="h6" gutterBottom>
+                Systematic AI for Detection and Engagement
+              </Typography>
+              <Typography variant="body2" color="text.secondary" paragraph>
+                Sade (pronounced "SHA-DEY") is your AI companion with a British-Nigerian personality. 
+                She can answer questions, search the web, play games, and help you navigate the SideEye app.
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+                <Button 
+                  variant="contained" 
+                  size="small" 
+                  component={Link} 
+                  to="/sade-ai"
+                  startIcon={<SmartToyIcon />}
+                >
+                  Chat with Sade
+                </Button>
+                <Button 
+                  variant="outlined" 
+                  size="small" 
+                  component={Link} 
+                  to="/sade-ai-info"
+                  startIcon={<InfoIcon />}
+                >
+                  Learn More
+                </Button>
+              </Box>
             </Box>
           </Box>
         </Paper>

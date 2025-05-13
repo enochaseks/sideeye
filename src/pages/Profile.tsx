@@ -279,6 +279,8 @@ const Profile: React.FC = () => {
         // Send follow request
         const requestRef = doc(db, 'users', userId, 'followRequests', currentUser.uid);
         await setDoc(requestRef, {
+          userId: currentUser.uid,
+          username: userProfile?.username || user?.displayName || `User_${currentUser.uid.substring(0, 5)}`,
           timestamp: serverTimestamp()
         });
         setFollowRequested(true);
