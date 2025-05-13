@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "buildTimestamp": 1716568480000,
+  "requiredUpdate": false,
+  "releaseNotes": "Initial release of SideEye with the following features:\n- SadeAI chat assistant\n- Side Rooms for group discussions\n- User profiles and messaging\n- Breathing exercises in SadeAI\n- Connect 4 game in SadeAI"
+} 

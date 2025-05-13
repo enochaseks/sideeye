@@ -55,6 +55,7 @@ import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
 import ReportPage from './pages/ReportPage';
 import { HelmetProvider } from 'react-helmet-async';
 import SadeAIInfo from './pages/SadeAIInfo';
+import UpdateNotification from './components/UpdateNotification';
 
 const DRAWER_WIDTH = 240;
 const COLLAPSED_DRAWER_WIDTH = 64;
@@ -207,6 +208,7 @@ const AppContent: React.FC = () => {
       <CookieConsent />
       <Toaster position="bottom-right" />
       <BottomNavWrapper />
+      <UpdateNotification />
     </Box>
   );
 };
