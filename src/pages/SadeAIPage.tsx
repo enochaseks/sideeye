@@ -461,18 +461,21 @@ const SadeAIPage: React.FC = () => {
         return [...msgs, { sender: "ai", text: nextStep.text }];
       });
 
-      // Start new timer
-      timerIntervalRef.current = setInterval(handleTimerTick, 1000);
-      console.log(
-        "[Frontend] startNextBreathingStep: Interval started:",
-        timerIntervalRef.current,
-      ); // Log interval start
+      // Only start the timer interval if it's not the first step
+      // First step (index 0) will wait for button click
+      if (nextStepIndex !== 0) {
+        timerIntervalRef.current = setInterval(handleTimerTick, 1000);
+        console.log(
+          "[Frontend] startNextBreathingStep: Interval started:",
+          timerIntervalRef.current,
+        ); // Log interval start
+      }
 
       // Define the new state explicitly before returning
       const newState = {
         ...prevState,
         currentStepIndex: nextStepIndex,
-        timer: nextStep.duration,
+        timer: nextStep.duration * 1.5 +2,
         intervalId: timerIntervalRef.current,
       };
       console.log(
@@ -802,7 +805,11 @@ const SadeAIPage: React.FC = () => {
           intervalId: null,
         };
         setBreathingState(initialBreathingState);
+        
+        // Call startNextBreathingStep after a short delay to show the first step
+        // The button will appear for this step instead of an automatic timer
         setTimeout(startNextBreathingStep, 100);
+        
         setConnect4Game(null); // Ensure Connect 4 state is cleared
         setActiveGame(null); // Ensure Guess the Number state is cleared
       } else if (data.startGame === "guess_the_number" && data.response) {
@@ -1000,6 +1007,37 @@ const SadeAIPage: React.FC = () => {
 
   // Log values used for rendering timer UI
   // console.log(`[Frontend Render] breathingState Active: ${isBreathingActive}, Step Index: ${currentStepIndex}, Current Step Duration: ${currentStepDuration}, Current Timer: ${currentTimer}, Progress: ${timerProgress}`);
+
+  // Let's create a wrapper function for starting the exercise from the ready button
+  const startBreathingAfterReady = () => {
+    console.log("[Frontend] User clicked 'Ready to Begin' button");
+    // First clear any existing intervals to be safe
+    clearBreathingInterval();
+    
+    // Directly start the next breathing step (step index 1, bypassing step 0)
+    setBreathingState((prevState) => {
+      if (!prevState || !prevState.active) return null;
+      
+      // Get the second step (index 1) which is the first actual breathing instruction
+      const firstBreathingStep = prevState.steps[1];
+      
+      // Add the instruction message
+      setMessages((msgs) => {
+        return [...msgs, { sender: "ai", text: firstBreathingStep.text }];
+      });
+      
+      // Start the timer for this step
+      timerIntervalRef.current = setInterval(handleTimerTick, 1000);
+      
+      // Return the updated state
+      return {
+        ...prevState,
+        currentStepIndex: 1, // Skip directly to step 1
+        timer: firstBreathingStep.duration * 1.5 + 2,
+        intervalId: timerIntervalRef.current,
+      };
+    });
+  };
 
   return (
     <Box
@@ -1248,21 +1286,43 @@ const SadeAIPage: React.FC = () => {
             >
               {currentStep?.text}
             </Typography>
-            <LinearProgress
-              variant="determinate"
-              value={timerProgress}
-              sx={{
-                height: 8,
-                borderRadius: 4,
-                mb: 0.5,
-                "& .MuiLinearProgress-bar": {
-                  transition: "transform .2s linear",
-                },
-              }}
-            />
-            <Typography variant="caption" display="block">
-              {currentTimer}s remaining... (type 'stop' to end)
-            </Typography>
+            {currentStepIndex === 0 ? (
+              // Enhanced Ready button for the first step
+              <Box sx={{ my: 2 }}>
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  Take a moment to get comfortable, then click when you're ready to begin.
+                </Typography>
+                <Button 
+                  variant="contained" 
+                  color="primary"
+                  size="large"
+                  onClick={startBreathingAfterReady}
+                  startIcon={<span role="img" aria-label="breath">🧘</span>}
+                  sx={{ px: 3, fontWeight: "bold" }}
+                >
+                  I'm Ready to Begin
+                </Button>
+              </Box>
+            ) : (
+              // Show timer progress for all other steps
+              <>
+                <LinearProgress
+                  variant="determinate"
+                  value={timerProgress}
+                  sx={{
+                    height: 8,
+                    borderRadius: 4,
+                    mb: 0.5,
+                    "& .MuiLinearProgress-bar": {
+                      transition: "transform .2s linear",
+                    },
+                  }}
+                />
+                <Typography variant="caption" display="block">
+                  {currentTimer}s remaining... (type 'stop' to end)
+                </Typography>
+              </>
+            )}
           </Box>
         )}
 
