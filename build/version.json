@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "buildTimestamp": 1716568480000,
+  "version": "1.1.0",
+  "buildTimestamp": 1747145309225,
   "requiredUpdate": false,
-  "releaseNotes": "Initial release of SideEye with the following features:\n- SadeAI chat assistant\n- Side Rooms for group discussions\n- User profiles and messaging\n- Breathing exercises in SadeAI\n- Connect 4 game in SadeAI"
-} 
+  "releaseNotes": "New message requests system: Messages from users you don't follow appear in a separate requests tab\r\nEnhanced breathing exercises with a ready button\r\nConnect 4 game improvements\r\nUI and performance improvements\r\nNew upload media added to the chat. \r\nYou can now press and hold on your messages to delete your message."
+}

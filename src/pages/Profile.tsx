@@ -24,6 +24,7 @@ import {
   MenuItem,
   CardActions,
   CardMedia,
+  InputAdornment
 } from '@mui/material';
 import { 
   Edit as EditIcon,
@@ -266,6 +267,14 @@ const Profile: React.FC = () => {
     return () => unsubscribe();
   }, [db, currentUser, userId]);
 
+  useEffect(() => {
+    if (isEditing) {
+      setEditedName(name);
+      setEditedUsername(username);
+      setEditedBio(bio);
+    }
+  }, [isEditing, name, username, bio]);
+
   const handleFollow = async () => {
     if (!currentUser || !userId || !db) {
       setError('Database not initialized');
@@ -407,11 +416,27 @@ const Profile: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}>
+    <Container maxWidth="sm" sx={{ mt: 2, mb: 8, px: { xs: 1, sm: 2 } }}>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {/* Profile Header */}
         <Paper elevation={0} sx={{ p: 3, borderRadius: 2, backgroundColor: 'background.paper' }}>
-          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3, alignItems: 'center' }}>
+          {/* User name at the top (no edit pen) */}
+          <Typography 
+            variant="h5" 
+            sx={{ 
+              fontWeight: 'bold', 
+              mb: 2, 
+              pl: 1,
+              textAlign: 'left'
+            }}
+          >
+            {username || 'username'}
+            {isPrivate && <LockIcon sx={{ ml: 1, fontSize: 20, verticalAlign: 'middle' }} />}
+          </Typography>
+
+          {/* Reordered profile content - stats on left, profile pic on right */}
+          <Box sx={{ display: 'flex', flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 4 }}>
+            {/* Profile Picture - moved to right */}
             <Box sx={{ position: 'relative' }}>
               <Badge
                 overlap="circular"
@@ -423,7 +448,8 @@ const Profile: React.FC = () => {
                       size="small"
                       sx={{
                         bgcolor: 'background.paper',
-                        '&:hover': { bgcolor: 'background.default' }
+                        border: '2px solid',
+                        borderColor: 'background.paper',
                       }}
                     >
                       <input
@@ -431,7 +457,6 @@ const Profile: React.FC = () => {
                         hidden
                         accept="image/*"
                         onChange={handleProfilePicChange}
-                        onClick={(event) => { (event.target as HTMLInputElement).value = ''; }}
                       />
                       <PhotoCamera fontSize="small" />
                     </IconButton>
@@ -440,146 +465,169 @@ const Profile: React.FC = () => {
               >
                 <Avatar
                   src={profilePic || undefined}
-                  alt={username}
-                  sx={{ width: 120, height: 120 }}
-                />
+                  sx={{
+                    width: 100,
+                    height: 100,
+                    border: '3px solid',
+                    borderColor: 'background.paper',
+                  }}
+                >
+                  {!profilePic && username ? username.charAt(0).toUpperCase() : '?'}
+                </Avatar>
               </Badge>
             </Box>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
-                <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
-                  {name || 'No name set'}
+            
+            {/* Profile Info - now on left */}
+            <Box sx={{ flexGrow: 1, pl: 1 }}>
+              {/* Name and Bio */}
+              <Box sx={{ mb: 2 }}>
+                <Typography 
+                  variant="h6" 
+                  component="h1" 
+                  sx={{ 
+                    fontWeight: 'bold',
+                    textAlign: 'left'
+                  }}
+                >
+                  {name || username}
                 </Typography>
-                {isPrivate && (
-                  <LockIcon color="action" />
-                )}
-                {currentUser?.uid === userId && (
-                  <IconButton onClick={() => setIsEditing(true)} size="small">
-                    <EditIcon fontSize="small" />
-                  </IconButton>
+                {bio && (
+                  <Typography 
+                    variant="body1" 
+                    color="text.secondary" 
+                    sx={{ 
+                      mt: 1, 
+                      whiteSpace: 'pre-wrap',
+                      textAlign: 'left'
+                    }}
+                  >
+                    {bio}
+                  </Typography>
                 )}
               </Box>
-              <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                @{username || 'No username set'}
-              </Typography>
-              {isPrivate && !canViewFullProfile && currentUser?.uid !== userId ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Alert severity="info" sx={{ mb: 2 }}>
-                    This account is private. Follow to see their side rooms.
-                  </Alert>
+              
+              {/* Stats */}
+              <Box sx={{ display: 'flex', gap: 3, mt: 2 }}>
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Rooms
+                  </Typography>
+                  <Typography variant="h6">
+                    {createdRooms.length}
+                  </Typography>
+                </Box>
+                <Box 
+                  sx={{ textAlign: 'center', cursor: 'pointer' }}
+                  component={Link}
+                  to={`/profile/${userId}/followers`}
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    Followers
+                  </Typography>
+                  <Typography variant="h6">
+                    {followers.length}
+                  </Typography>
+                </Box>
+                <Box 
+                  sx={{ textAlign: 'center', cursor: 'pointer' }}
+                  component={Link}
+                  to={`/profile/${userId}/following`}
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    Following
+                  </Typography>
+                  <Typography variant="h6">
+                    {connections.length}
+                  </Typography>
+                </Box>
+              </Box>
+              
+              {/* Add curved Edit Profile / Follow buttons */}
+              <Box sx={{ mt: 3 }}>
+                {currentUser?.uid === targetUserId ? (
+                  <Button
+                    variant="outlined"
+                    onClick={() => setIsEditing(true)}
+                    fullWidth 
+                    sx={{ borderRadius: 8 }}
+                  >
+                    Edit Profile
+                  </Button>
+                ) : currentUser ? (
                   <Box sx={{ display: 'flex', gap: 2 }}>
-                    {!isFollowing ? (
-                      <Button
-                        variant="contained"
-                        onClick={handleFollow}
-                        disabled={isLoading}
-                        startIcon={<PersonAddIcon />}
-                      >
-                        {followRequested ? 'Request Sent' : 'Follow'}
-                      </Button>
-                    ) : (
+                    {isFollowing ? (
                       <Button
                         variant="outlined"
                         onClick={handleUnfollow}
-                        disabled={isLoading}
                         startIcon={<PersonRemoveIcon />}
+                        size="small"
+                        sx={{ 
+                          borderRadius: 8, 
+                          minWidth: '120px',
+                          flex: '0 0 auto'
+                        }}
                       >
                         Unfollow
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="contained"
+                        onClick={handleFollow}
+                        startIcon={<PersonAddIcon />}
+                        sx={{ 
+                          borderRadius: 8,
+                          flex: '0 0 auto',
+                          minWidth: '120px'
+                        }}
+                        disabled={followRequested}
+                      >
+                        {followRequested ? 'Requested' : 'Follow'}
                       </Button>
                     )}
                     <Button
                       variant="outlined"
+                      component={Link}
+                      to={`/chat/user/${userId}`}
                       startIcon={<MessageIcon />}
-                      onClick={() => navigate(`/chat/${userId}`)}
+                      sx={{ 
+                        borderRadius: 8,
+                        flex: '0 0 auto'
+                      }}
                     >
                       Message
                     </Button>
                   </Box>
-                </Box>
-              ) : (
-                <>
-                  <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                    {bio || 'No bio set'}
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                    {currentUser?.uid !== userId && (
-                      <>
-                        {!isFollowing ? (
-                          <Button
-                            variant="contained"
-                            onClick={handleFollow}
-                            disabled={isLoading}
-                            startIcon={<PersonAddIcon />}
-                          >
-                            {followRequested ? 'Request Sent' : 'Follow'}
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outlined"
-                            onClick={handleUnfollow}
-                            disabled={isLoading}
-                            startIcon={<PersonRemoveIcon />}
-                          >
-                            Unfollow
-                          </Button>
-                        )}
-                        <Button
-                          variant="outlined"
-                          startIcon={<MessageIcon />}
-                          onClick={() => navigate(`/chat/${userId}`)}
-                        >
-                          Message
-                        </Button>
-                      </>
-                    )}
-                  </Box>
-                </>
-              )}
+                ) : null}
+              </Box>
             </Box>
           </Box>
         </Paper>
-
-        {/* Stats */}
-        {(!isPrivate || canViewFullProfile || currentUser?.uid === userId) && (
-          <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: 'background.paper' }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2 }}>
-              <Box sx={{ textAlign: 'center' }}>
-                <Typography variant="h6">{createdRooms.length}</Typography>
-                <Typography variant="body2" color="text.secondary">Rooms</Typography>
-              </Box>
-              <Box 
-                sx={{ 
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    textDecoration: 'underline'
-                  }
-                }}
-                component={Link}
-                to={`/profile/${userId}/followers`}
-              >
-                <Typography variant="h6">{followers.length}</Typography>
-                <Typography variant="body2" color="text.secondary">Followers</Typography>
-              </Box>
-              <Box 
-                sx={{ 
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    textDecoration: 'underline'
-                  }
-                }}
-                component={Link}
-                to={`/profile/${userId}/following`}
-              >
-                <Typography variant="h6">{connections.length}</Typography>
-                <Typography variant="body2" color="text.secondary">Following</Typography>
-              </Box>
+        
+        {/* Tabs for content - keep only the profile icon */}
+        <Box sx={{ 
+          display: 'flex',
+          borderTop: 1,
+          borderColor: 'divider',
+          justifyContent: 'center', 
+          pt: 1,
+          mb: 2
+        }}>
+          <IconButton component={Link} to={`/profile/${userId}`}>
+            <Box sx={{ 
+              width: 24, 
+              height: 24, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center'
+            }}>
+              <svg height="12" viewBox="0 0 24 24" width="12">
+                <path d="M12 1a11 11 0 1 0 11 11A11.013 11.013 0 0 0 12 1zm0 20a9 9 0 1 1 9-9 9.01 9.01 0 0 1-9 9zm3-11a3 3 0 1 1-3-3 3 3 0 0 1 3 3zm-3 5a8.949 8.949 0 0 0-4.951 1.488A3.987 3.987 0 0 1 6 13.1a6 6 0 1 1 12 0 3.987 3.987 0 0 1-1.049 2.688A8.954 8.954 0 0 0 12 15z" fill="currentColor"></path>
+              </svg>
             </Box>
-          </Paper>
-        )}
-
-        {/* Side Rooms */}
+          </IconButton>
+        </Box>
+        
+        {/* Original Side Rooms Display */}
         {(!isPrivate || canViewFullProfile || currentUser?.uid === userId) && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             {createdRooms.length > 0 && (
@@ -753,7 +801,7 @@ const Profile: React.FC = () => {
                     color="primary"
                     component={Link}
                     to="/side-rooms"
-                    sx={{ mt: 2 }}
+                    sx={{ marginTop: 2 }}
                   >
                     Create Side Rooms
                   </Button>
@@ -775,6 +823,7 @@ const Profile: React.FC = () => {
               onChange={(e) => setEditedName(e.target.value)}
               fullWidth
               variant="outlined"
+              placeholder="Name"
             />
             <TextField
               label="Username"
@@ -782,6 +831,10 @@ const Profile: React.FC = () => {
               onChange={(e) => setEditedUsername(e.target.value)}
               fullWidth
               variant="outlined"
+              placeholder="Username"
+              InputProps={{
+                startAdornment: <InputAdornment position="start">@</InputAdornment>,
+              }}
             />
             <TextField
               label="Bio"
@@ -791,7 +844,9 @@ const Profile: React.FC = () => {
               rows={4}
               fullWidth
               variant="outlined"
-              helperText="Tell others about yourself (You can use emojis!)"
+              placeholder="Bio"
+              helperText={`${editedBio.length}/150 characters`}
+              inputProps={{ maxLength: 150 }}
             />
           </Box>
         </DialogContent>
@@ -800,13 +855,8 @@ const Profile: React.FC = () => {
             variant="outlined"
             onClick={() => setIsEditing(false)}
             sx={{ 
-              minWidth: '120px',
-              borderColor: 'text.secondary',
-              color: 'text.secondary',
-              '&:hover': {
-                borderColor: 'text.primary',
-                color: 'text.primary'
-              }
+              textTransform: 'none',
+              minWidth: '100px'
             }}
           >
             Cancel
@@ -816,14 +866,11 @@ const Profile: React.FC = () => {
             onClick={handleSaveProfile}
             disabled={isLoading}
             sx={{ 
-              minWidth: '120px',
-              bgcolor: 'primary.main',
-              '&:hover': {
-                bgcolor: 'primary.dark'
-              }
+              textTransform: 'none',
+              minWidth: '100px'
             }}
           >
-            {isLoading ? 'Saving...' : 'Save Changes'}
+            {isLoading ? 'Saving...' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>
