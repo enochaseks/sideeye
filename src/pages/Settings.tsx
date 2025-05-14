@@ -299,7 +299,7 @@ const Settings: React.FC = () => {
     followers: 0,
     following: 0,
     pendingRequests: 0,
-    audioRooms: 0
+    sideRooms: 0
   });
   const [showVerificationDialog, setShowVerificationDialog] = useState(false);
   const [showCreateCodeDialog, setShowCreateCodeDialog] = useState(false);
@@ -309,7 +309,7 @@ const Settings: React.FC = () => {
   const [showSourceCodeDialog, setShowSourceCodeDialog] = useState(false);
   const [sourceCode, setSourceCode] = useState('');
   const [emailNotifications, setEmailNotifications] = useState({
-    liveNotifications: true,
+    sideRoomNotifications: true,
     messageNotifications: true, 
     followNotifications: true
   });
@@ -509,7 +509,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleEmailNotificationToggle = async (type: 'liveNotifications' | 'messageNotifications' | 'followNotifications') => {
+  const handleEmailNotificationToggle = async (type: 'sideRoomNotifications' | 'messageNotifications' | 'followNotifications') => {
     if (!currentUser?.uid) return;
     
     try {
@@ -525,7 +525,7 @@ const Settings: React.FC = () => {
         updatedAt: serverTimestamp()
       });
       
-      toast.success(`${type === 'liveNotifications' ? 'Live stream' : 
+      toast.success(`${type === 'sideRoomNotifications' ? 'Side Room' : 
                     type === 'messageNotifications' ? 'Message' : 
                     'Follow'} email notifications ${newValue ? 'enabled' : 'disabled'}`);
     } catch (error) {
@@ -558,7 +558,7 @@ const Settings: React.FC = () => {
       title: 'Account Management',
       icon: <ManageAccountsIcon />,
       path: '/account-management',
-      description: 'Manage your account settings and preferences',
+      description: 'Manage your account settings, profile, and messaging preferences',
       isSetting: true
     },
     {
@@ -588,7 +588,7 @@ const Settings: React.FC = () => {
       title: 'Safety & Community Guidelines',
       icon: <ShieldIcon />,
       path: '/safety',
-      description: 'Review our audio chat guidelines and community standards',
+      description: 'Review our Side Room guidelines and community standards for chat and messaging',
       isHelp: true
     },
     {
@@ -646,7 +646,7 @@ const Settings: React.FC = () => {
           // Load email notification preferences
           if (userData.emailPreferences) {
             setEmailNotifications({
-              liveNotifications: userData.emailPreferences.liveNotifications !== false, // Default to true
+              sideRoomNotifications: userData.emailPreferences.sideRoomNotifications !== false, // Default to true
               messageNotifications: userData.emailPreferences.messageNotifications !== false, // Default to true
               followNotifications: userData.emailPreferences.followNotifications !== false // Default to true
             });
@@ -656,7 +656,7 @@ const Settings: React.FC = () => {
             ...prev,
             followers: userData.followers?.length || 0,
             following: userData.following?.length || 0,
-            audioRooms: userData.audioRooms?.length || 0
+            sideRooms: userData.sideRooms?.length || 0
           }));
         }
       });
@@ -794,8 +794,8 @@ const Settings: React.FC = () => {
                 <Typography variant="body1" sx={{ fontWeight: 500 }}>Private Account</Typography>
                 <Typography variant="caption" color="text.secondary">
                   {isPrivate
-                    ? 'Only approved followers can join your audio rooms.'
-                    : 'Anyone can join your audio rooms.'}
+                    ? 'Only approved followers can join your Side Rooms.'
+                    : 'Anyone can join your Side Rooms.'}
                 </Typography>
               </Box>
             </Box>
@@ -914,14 +914,14 @@ const Settings: React.FC = () => {
           <Box sx={{ mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
               <Box>
-                <Typography variant="body1" sx={{ fontWeight: 500 }}>Live Stream Notifications</Typography>
+                <Typography variant="body1" sx={{ fontWeight: 500 }}>Side Room Notifications</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Receive emails when users you follow go live
+                  Receive emails when users you follow create or join Side Rooms
                 </Typography>
               </Box>
               <Switch
-                checked={emailNotifications.liveNotifications}
-                onChange={() => handleEmailNotificationToggle('liveNotifications')}
+                checked={emailNotifications.sideRoomNotifications}
+                onChange={() => handleEmailNotificationToggle('sideRoomNotifications')}
                 color="primary"
               />
             </Box>

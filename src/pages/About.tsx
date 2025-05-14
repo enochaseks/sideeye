@@ -136,7 +136,7 @@ const About: React.FC = () => {
                   fontSize: { xs: '1.25rem', md: '1.5rem' }
                 }}
               >
-                Our advanced AI moderation system automatically scans all content against our community guidelines,
+                Our AI moderation system automatically scans all content against our community guidelines,
                 detecting potential violations across multiple categories including harmful content, misinformation,
                 fraud, cybercrime, adult content, and violence. This system helps maintain a safe environment by
                 issuing appropriate warnings or restrictions when needed, while protecting users from harmful interactions.
@@ -152,20 +152,6 @@ const About: React.FC = () => {
                   color: 'primary.main'
                 }}
               >
-                User Expression
-              </Typography>
-              <Typography 
-                variant="h4" 
-                sx={{ 
-                  lineHeight: 1.8,
-                  color: 'text.secondary',
-                  fontSize: { xs: '1.25rem', md: '1.5rem' }
-                }}
-              >
-                Express yourself through various reaction types including sideEye, tea, shade, and petty. Our platform
-                encourages authentic communication with features designed for meaningful social interaction. Whether you're
-                sharing thoughts, connecting with others, or participating in discussions, SideEye provides the tools
-                for genuine self-expression within a respectful framework.
               </Typography>
             </Box>
             <Box>
@@ -178,7 +164,7 @@ const About: React.FC = () => {
                   color: 'primary.main'
                 }}
               >
-                Audio Spaces
+                Sade AI
               </Typography>
               <Typography 
                 variant="h4" 
@@ -188,11 +174,10 @@ const About: React.FC = () => {
                   fontSize: { xs: '1.25rem', md: '1.5rem' }
                 }}
               >
-                Join or host live audio conversations in our Spaces feature. Similar to popular audio chat platforms,
-                Spaces allow you to have real-time voice discussions with other users. Hosts can invite speakers,
-                manage participants, and create an engaging audio experience. Listeners can join to hear the conversation
-                and request to speak when appropriate. Perfect for discussions, Q&A sessions, or casual hangouts with
-                your community.
+                Sade AI is our AI assistant that you can use to help you with your issues on the platform. You can play games with her like connect 4, 
+                guess the number, and more. She is your friendly AI assistant where you can conversate with her, ask her to search the web for you, 
+                and more. She also moderates the platform and checks for any violations of our community guidelines. To improve service quality and ensure safety,
+                we monitor Sade AI chat history and interactions to maintain platform standards and enhance the AI's capabilities.
               </Typography>
             </Box>
           </Box>

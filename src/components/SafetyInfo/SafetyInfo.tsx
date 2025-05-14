@@ -165,7 +165,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Copyright Infringement"
-                secondary="Content that violates copyright laws, including unauthorized use of intellectual property, especially in Vibits videos"
+                secondary="Content that violates copyright laws, including unauthorized use of intellectual property, especially in Side Rooms or voice content"
               />
             </ListItem>
           </List>
@@ -174,11 +174,11 @@ const SafetyInfo: React.FC = () => {
 
       <Accordion>
         <AccordionSummary expandIcon={<GavelIcon />}>
-          <Typography>Vibits Community Guidelines</Typography>
+          <Typography>Side Room Community Guidelines</Typography>
         </AccordionSummary>
         <AccordionDetails>
           <Typography paragraph>
-            Our Vibits video sharing feature has specific guidelines to ensure a safe and enjoyable experience for all users:
+            Our Side Room audio feature has specific guidelines to ensure a safe and enjoyable experience for all users:
           </Typography>
           <List>
             <ListItem>
@@ -187,7 +187,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Content Ownership"
-                secondary="Only upload videos that you've created or have permission to use. Respect copyright and intellectual property rights"
+                secondary="Only share audio content that you've created or have permission to use. Respect copyright and intellectual property rights"
               />
             </ListItem>
             <ListItem>
@@ -196,7 +196,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Appropriate Content"
-                secondary="Videos must not contain nudity, pornography, violence, hate speech, dangerous activities, or illegal substances"
+                secondary="Audio content must not contain hate speech, violent language, dangerous activities promotion, or references to illegal substances"
               />
             </ListItem>
             <ListItem>
@@ -205,7 +205,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Privacy & Consent"
-                secondary="Get consent before featuring identifiable individuals in your videos, especially in private settings"
+                secondary="Get consent before recording or sharing conversations with other individuals, especially in private settings"
               />
             </ListItem>
             <ListItem>
@@ -228,7 +228,7 @@ const SafetyInfo: React.FC = () => {
             </ListItem>
           </List>
           <Typography paragraph>
-            Vibits content is subject to both human and AI-powered moderation. Videos that violate these guidelines may be removed,
+            Side Room content is subject to both human and AI-powered moderation. Audio that violates these guidelines may be removed,
             and repeated violations may result in account restrictions or termination.
           </Typography>
         </AccordionDetails>
@@ -362,8 +362,8 @@ const SafetyInfo: React.FC = () => {
                 <ReportIcon />
               </ListItemIcon>
               <ListItemText
-                primary="How to Report"
-                secondary="Click the three dots menu on any post, comment, or profile and select 'Report' to flag content that violates our guidelines"
+                primary="Reporting Content"
+                secondary="Click the three dots menu on any Side Room, message, or profile and select 'Report' to flag content that violates our guidelines"
               />
             </ListItem>
             <ListItem>
@@ -452,11 +452,11 @@ const SafetyInfo: React.FC = () => {
 
       <Accordion>
         <AccordionSummary expandIcon={<SecurityIcon />}>
-          <Typography>Vibits Security & Privacy</Typography>
+          <Typography>Side Room Security & Privacy</Typography>
         </AccordionSummary>
         <AccordionDetails>
           <Typography paragraph>
-            We take the security and privacy of your Vibits videos seriously. Here's how we protect your content:
+            We take the security and privacy of your Side Room audio seriously. Here's how we protect your content:
           </Typography>
           <List>
             <ListItem>
@@ -464,8 +464,8 @@ const SafetyInfo: React.FC = () => {
                 <ShieldIcon />
               </ListItemIcon>
               <ListItemText
-                primary="Secure Storage"
-                secondary="All videos are stored using industry-standard encryption and secure cloud storage protocols"
+                primary="Control Over Your Content"
+                secondary="You can delete your audio content at any time, and you control who can listen, join, and engage with your content"
               />
             </ListItem>
             <ListItem>
@@ -474,7 +474,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Privacy Controls"
-                secondary="You can delete your videos at any time, and you control who can view, comment on, and share your content"
+                secondary="You can set privacy settings for your audio content to control who can access it"
               />
             </ListItem>
             <ListItem>
@@ -483,7 +483,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Content Protection"
-                secondary="We implement measures to prevent unauthorized downloading and redistribution of your videos"
+                secondary="We implement measures to prevent unauthorized downloading and redistribution of your audio content"
               />
             </ListItem>
             <ListItem>
@@ -492,7 +492,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Metadata Stripping"
-                secondary="We remove sensitive metadata from videos that could reveal your location or device information"
+                secondary="We remove sensitive metadata from audio content that could reveal your location or device information"
               />
             </ListItem>
             <ListItem>
@@ -501,19 +501,20 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Report & Remove"
-                secondary="We provide tools to report videos that violate our guidelines, and we respond quickly to removal requests"
+                secondary="We provide tools to report audio content that violates our guidelines, and we respond quickly to removal requests"
               />
             </ListItem>
           </List>
           <Typography paragraph>
-            To enhance your privacy when using Vibits:
+            To enhance your privacy when using Side Rooms:
           </Typography>
-          <ul>
-            <li>Be mindful of what's visible in your videos (addresses, personal documents, etc.)</li>
-            <li>Consider the environment you're filming in and who might be visible in the background</li>
-            <li>Review your videos before posting to ensure you're comfortable with all content</li>
-            <li>Use the reporting tools if you see content that violates our guidelines</li>
-          </ul>
+          <Box component="ul" sx={{ pl: 2 }}>
+            <li>Use private Side Rooms for sensitive discussions</li>
+            <li>Review your audio settings before starting a room to ensure you're comfortable with all content</li>
+            <li>Be cautious about sharing personal information in public Side Rooms</li>
+            <li>Familiarize yourself with room moderation controls to manage who can speak</li>
+            <li>Report any concerns about privacy violations to our support team</li>
+          </Box>
         </AccordionDetails>
       </Accordion>
     </Box>

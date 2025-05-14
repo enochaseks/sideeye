@@ -160,7 +160,7 @@ const DeletionDeactivatePage: React.FC = () => {
           <Divider sx={{ mb: 3 }} />
           
           <Typography variant="body1" paragraph>
-            Deactivating your account will temporarily hide your profile, posts, and comments from other users. Your account will remain in our systems, and you can reactivate it at any time by simply logging in again.
+            Deactivating your account will temporarily hide your profile, Side Rooms, and messages from other users. Your account will remain in our systems, and you can reactivate it at any time by simply logging in again.
           </Typography>
           
           <Typography variant="body1" paragraph>
@@ -168,7 +168,7 @@ const DeletionDeactivatePage: React.FC = () => {
           </Typography>
           <ul>
             <li>Your profile becomes hidden from other users</li>
-            <li>Your posts and comments are hidden but not deleted</li>
+            <li>Your Side Rooms and messages are hidden but not deleted</li>
             <li>You won't receive notifications</li>
             <li>You can reactivate by logging in at any time</li>
           </ul>
@@ -199,7 +199,7 @@ const DeletionDeactivatePage: React.FC = () => {
             <strong>What happens when you delete your account:</strong>
           </Typography>
           <ul>
-            <li>Your profile, posts, comments, and all other data are permanently deleted</li>
+            <li>Your profile, Side Rooms, messages, Sade AI chat history, and all other data are permanently deleted</li>
             <li>You will lose access to your account history and connections</li>
             <li>This action cannot be undone</li>
             <li>If you want to use SideEye again, you'll need to create a new account</li>

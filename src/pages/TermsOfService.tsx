@@ -131,7 +131,25 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            9. Intellectual Property
+            9. Sade AI and Chat Monitoring
+          </Typography>
+          <Typography variant="body1" paragraph>
+            SideEye provides Sade AI as an assistant for platform navigation, entertainment, and support. By using Sade AI, you acknowledge and agree that:
+          </Typography>
+          <ul>
+            <li>We monitor Sade AI chat history to ensure quality, safety, and compliance with our guidelines</li>
+            <li>Chat logs may be reviewed by our team for quality assurance and to improve AI performance</li>
+            <li>Interactions with Sade AI are subject to the same community guidelines as other platform communications</li>
+            <li>Chat content may be used to train and improve our AI systems and moderation capabilities</li>
+          </ul>
+          <Typography variant="body1" paragraph>
+            While we strive to respect your privacy, this monitoring is necessary to maintain platform integrity and ensure Sade AI functions appropriately.
+          </Typography>
+        </Box>
+
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            10. Intellectual Property
           </Typography>
           <Typography variant="body1" paragraph>
             The SideEye service and its original content, features, and functionality are and will remain the exclusive property of 
@@ -142,7 +160,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            10. Termination
+            11. Termination
           </Typography>
           <Typography variant="body1" paragraph>
             We reserve the right to terminate or suspend your account and access to the service at our sole discretion, 
@@ -153,7 +171,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            11. Content Removal and Recovery
+            12. Content Removal and Recovery
           </Typography>
           <Typography variant="body1" paragraph>
             When you delete content, including audio content from Side Rooms and Spaces, it will be moved to a trash area for 24 hours before permanent deletion, allowing for 
@@ -164,7 +182,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            12. Disclaimer
+            13. Disclaimer
           </Typography>
           <Typography variant="body1" paragraph>
             The service is provided "as is" without any warranties, express or implied. We do not guarantee that the service 
@@ -175,7 +193,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            13. Limitation of Liability
+            14. Limitation of Liability
           </Typography>
           <Typography variant="body1" paragraph>
             In no event shall SideEye be liable for any indirect, incidental, special, consequential, or punitive damages 
@@ -186,7 +204,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            14. Indemnification
+            15. Indemnification
           </Typography>
           <Typography variant="body1" paragraph>
             You agree to indemnify and hold harmless SideEye and its officers, directors, employees, and agents from any claims, 
@@ -197,7 +215,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            15. DMCA Compliance
+            16. DMCA Compliance
           </Typography>
           <Typography variant="body1" paragraph>
             SideEye respects the intellectual property rights of others. If you believe that your work has been copied in a way 
@@ -218,7 +236,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            16. Changes to Terms
+            17. Changes to Terms
           </Typography>
           <Typography variant="body1" paragraph>
             We reserve the right to modify these Terms at any time. We will notify users of any material changes by posting 
@@ -229,7 +247,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            17. Governing Law
+            18. Governing Law
           </Typography>
           <Typography variant="body1" paragraph>
             These Terms shall be governed by and construed in accordance with the laws of the jurisdiction in which we operate, 
@@ -239,7 +257,7 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            18. Contact Information
+            19. Contact Information
           </Typography>
           <Typography variant="body1" paragraph>
             If you have any questions about these Terms, please contact us at:

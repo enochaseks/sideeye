@@ -21,7 +21,7 @@ import { db } from '../../services/firebase';
 
 interface ReportContentProps {
   contentId: string;
-  contentType: 'post' | 'comment' | 'user';
+  contentType: 'sideRoom' | 'message' | 'chatRoom' | 'sadeAI' | 'user';
   onClose: () => void;
   open: boolean;
 }
@@ -66,24 +66,44 @@ const ReportContent: React.FC<ReportContentProps> = ({
 
   const fetchContent = async () => {
     try {
-      const contentRef = collection(db, contentType + 's');
-      const contentDoc = await addDoc(contentRef, { id: contentId });
-      const contentData = await addDoc(collection(contentRef, contentDoc.id, 'reports'), {
-        type: reportType,
-        description,
-        reporterId: currentUser?.uid,
-        timestamp: serverTimestamp()
-      });
-      const contentPreviewRef = doc(db, contentType + 's', contentId);
+      // Determine the correct collection name based on contentType
+      let collectionName = '';
+      switch (contentType) {
+        case 'sideRoom':
+          collectionName = 'sideRooms';
+          break;
+        case 'message':
+          collectionName = 'messages';
+          break;
+        case 'chatRoom':
+          collectionName = 'chatRooms';
+          break;
+        case 'sadeAI':
+          collectionName = 'sadeAIChats';
+          break;
+        case 'user':
+          collectionName = 'users';
+          break;
+        default:
+          collectionName = 'unknown';
+      }
+
+      if (collectionName === 'unknown') {
+        console.error('Unknown content type:', contentType);
+        setError('Failed to determine content type');
+        return;
+      }
+
+      const contentPreviewRef = doc(db, collectionName, contentId);
       const contentPreviewSnap = await getDoc(contentPreviewRef);
 
       if (contentPreviewSnap.exists()) {
         const previewData = contentPreviewSnap.data();
         setPreview({
-          title: previewData?.title,
-          content: previewData?.content,
-          author: previewData?.author,
-          timestamp: previewData?.timestamp?.toDate().toISOString()
+          title: previewData?.title || previewData?.name || previewData?.username,
+          content: previewData?.content || previewData?.text || previewData?.description,
+          author: previewData?.authorName || previewData?.username || 'Unknown',
+          timestamp: previewData?.timestamp?.toDate().toISOString() || previewData?.createdAt?.toDate().toISOString() || new Date().toISOString()
         });
       } else {
         console.log("Preview document does not exist!");
@@ -102,11 +122,36 @@ const ReportContent: React.FC<ReportContentProps> = ({
       setLoading(true);
       setError('');
 
+      // Determine the correct collection name based on contentType
+      let collectionName = '';
+      switch (contentType) {
+        case 'sideRoom':
+          collectionName = 'sideRooms';
+          break;
+        case 'message':
+          collectionName = 'messages';
+          break;
+        case 'chatRoom':
+          collectionName = 'chatRooms';
+          break;
+        case 'sadeAI':
+          collectionName = 'sadeAIChats';
+          break;
+        case 'user':
+          collectionName = 'users';
+          break;
+        default:
+          collectionName = 'unknown';
+      }
+
       const reportRef = collection(db, 'reports');
       await addDoc(reportRef, {
         type: reportType,
         description,
         reporterId: currentUser.uid,
+        contentId,
+        contentType,
+        collectionName,
         timestamp: serverTimestamp()
       });
 
@@ -115,6 +160,7 @@ const ReportContent: React.FC<ReportContentProps> = ({
       await addDoc(notificationRef, {
         contentId,
         contentType,
+        collectionName,
         reporterId: currentUser.uid,
         timestamp: serverTimestamp()
       });
@@ -132,10 +178,27 @@ const ReportContent: React.FC<ReportContentProps> = ({
     }
   };
 
+  const getContentTypeName = () => {
+    switch (contentType) {
+      case 'sideRoom':
+        return 'Side Room';
+      case 'message':
+        return 'Message';
+      case 'chatRoom':
+        return 'Chat Room';
+      case 'sadeAI':
+        return 'Sade AI Chat';
+      case 'user':
+        return 'User';
+      default:
+        return 'Content';
+    }
+  };
+
   return (
     <>
       <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-        <DialogTitle>Report Content</DialogTitle>
+        <DialogTitle>Report {getContentTypeName()}</DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pt: 2 }}>
             {preview && (

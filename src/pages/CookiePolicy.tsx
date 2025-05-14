@@ -19,7 +19,7 @@ const CookiePolicy: React.FC = () => {
           <Typography variant="body1" paragraph>
             We use cookies and similar technologies to provide, improve, and secure our services. This Cookie Policy explains 
             how we use cookies, what types we use, their purposes, and how you can control them. These technologies help us 
-            deliver our audio-based features, including Side Rooms and Spaces, and ensure a smooth user experience.
+            deliver our audio-based features, including Side Rooms, and ensure a smooth user experience.
           </Typography>
         </Box>
 
@@ -66,6 +66,8 @@ const CookiePolicy: React.FC = () => {
             <li>Error monitoring cookies to identify and fix platform issues</li>
             <li>Load balancing cookies to distribute traffic to our servers</li>
             <li>Audio quality monitoring cookies to ensure optimal performance</li>
+            <li>Audio processing cookies to process audio content</li>
+            <li>Sade AI cookies to process chat history and allow our team to monitor AI interactions for safety, quality assurance, and improvement purposes</li>
           </ul>
           
           <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
@@ -178,7 +180,7 @@ const CookiePolicy: React.FC = () => {
           <Typography variant="body1" paragraph>
             If you have any questions about our use of cookies, please contact us at:
             <br />
-            Email: privacy@sideeye.com
+            Email: support@sideeye.uk
           </Typography>
         </Box>
       </Paper>

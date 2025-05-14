@@ -1,6 +1,6 @@
 {
   "version": "1.2.0",
-  "buildTimestamp": 1747240241230,
+  "buildTimestamp": 1747240683506,
   "requiredUpdate": false,
-  "releaseNotes": "New message requests system: Messages from users you don't follow appear in a separate requests tab\r\nEnhanced breathing exercises with a ready button\r\nConnect 4 game improvements\r\nUI and performance improvements\r\nNew upload media added to the chat.\r\nYou can now press and hold on your messages to delete your message.\r\nProfile UI Updated.\r\nFollowers/Following list UI updated.\r\nNew blocking/reporting on users profiles.\r\nNew Following features, reporting and blocking in the side rooms\r\nNew blocking section added to the settings page"
+  "releaseNotes": "New message requests system: Messages from users you don't follow appear in a separate requests tab\r\nEnhanced breathing exercises with a ready button\r\nConnect 4 game improvements\r\nUI and performance improvements\r\nNew upload media added to the chat.\r\nYou can now press and hold on your messages to delete your message.\r\nProfile UI Updated.\r\nFollowers/Following list UI updated.\r\nNew blocking/reporting on users profiles.\r\nNew Following features, reporting and blocking in the side rooms\r\nNew blocking section added to the settings page\r\nPrivacy chnages"
 }

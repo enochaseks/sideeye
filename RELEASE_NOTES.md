@@ -13,6 +13,8 @@
 - New Following features, reporting and blocking in the side rooms
 - New blocking section added to the settings page
 - Privacy chnages
+- Privacy Policy, CookiesPolicy, Community Guidlines and Safety, Account management, Terms of Service and About Updated.
+- Policies Checkbox added on the Register page.
 
 ## Version 1.0.0
 - Initial release of SideEye 

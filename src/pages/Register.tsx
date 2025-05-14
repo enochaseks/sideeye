@@ -12,6 +12,9 @@ import {
   InputAdornment,
   IconButton,
   Paper,
+  Checkbox,
+  FormControlLabel,
+  FormHelperText,
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
@@ -25,6 +28,7 @@ interface FormErrors {
   confirmPassword?: string;
   dateOfBirth?: string;
   name?: string;
+  termsAccepted?: string;
 }
 
 const Register: React.FC = () => {
@@ -37,6 +41,7 @@ const Register: React.FC = () => {
     name: '',
   });
   const [dateOfBirth, setDateOfBirth] = useState<Date | null>(null);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -114,6 +119,11 @@ const Register: React.FC = () => {
       }
     }
 
+    // Terms and policies acceptance validation
+    if (!termsAccepted) {
+      newErrors.termsAccepted = 'You must accept the Terms of Service, Privacy Policy, and Cookie Policy';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -147,6 +157,16 @@ const Register: React.FC = () => {
     }
     if (errors.dateOfBirth) {
       setErrors(prev => ({...prev, dateOfBirth: undefined}));
+    }
+  };
+
+  const handleTermsChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setTermsAccepted(event.target.checked);
+    if (errors.termsAccepted) {
+      setErrors(prev => ({
+        ...prev,
+        termsAccepted: undefined
+      }));
     }
   };
 
@@ -302,6 +322,37 @@ const Register: React.FC = () => {
               disableFuture
               maxDate={new Date()}
             />
+
+            <Box sx={{ mt: 2 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox 
+                    checked={termsAccepted} 
+                    onChange={handleTermsChange}
+                    color="primary"
+                  />
+                }
+                label={
+                  <Typography variant="body2">
+                    I agree to the{' '}
+                    <Link to="/terms" target="_blank" rel="noopener">
+                      Terms of Service
+                    </Link>
+                    ,{' '}
+                    <Link to="/privacy-policy" target="_blank" rel="noopener">
+                      Privacy Policy
+                    </Link>
+                    , and{' '}
+                    <Link to="/cookies" target="_blank" rel="noopener">
+                      Cookie Policy
+                    </Link>
+                  </Typography>
+                }
+              />
+              {errors.termsAccepted && (
+                <FormHelperText error>{errors.termsAccepted}</FormHelperText>
+              )}
+            </Box>
             
             <Button
               type="submit"
