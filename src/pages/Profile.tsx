@@ -24,7 +24,11 @@ import {
   MenuItem,
   CardActions,
   CardMedia,
-  InputAdornment
+  InputAdornment,
+  ListItemIcon,
+  ListItemText,
+  List,
+  ListItem
 } from '@mui/material';
 import { 
   Edit as EditIcon,
@@ -34,7 +38,10 @@ import {
   Message as MessageIcon,
   Lock as LockIcon,
   Group,
-  Lock
+  Lock,
+  MoreVert as MoreVertIcon,
+  Block as BlockIcon,
+  Report as ReportIcon
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, writeBatch, Timestamp } from 'firebase/firestore';
@@ -44,6 +51,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
 import { toast } from 'react-hot-toast';
+import { Firestore } from 'firebase/firestore';
 
 interface ProfileProps {
   userId?: string;
@@ -67,7 +75,7 @@ const DeactivatedProfileMessage: React.FC = () => (
 const Profile: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const { currentUser, user, userProfile, loading: authLoading, setUserProfile } = useAuth();
+  const { currentUser, user, userProfile, loading: authLoading, setUserProfile, blockUser } = useAuth();
   const { db } = useFirestore();
   const { userId: urlParam } = useParams<{ userId: string }>();
   const [targetUserId, setTargetUserId] = useState<string | null>(null);
@@ -94,6 +102,9 @@ const Profile: React.FC = () => {
   const [createdRooms, setCreatedRooms] = useState<SideRoom[]>([]);
   const [isDeactivated, setIsDeactivated] = useState(false);
   const navigate = useNavigate();
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [showBlockDialog, setShowBlockDialog] = useState(false);
+  const [showReportDialog, setShowReportDialog] = useState(false);
 
   const userId = targetUserId || currentUser?.uid || '';
 
@@ -104,6 +115,47 @@ const Profile: React.FC = () => {
       setTargetUserId(urlParam);
     }
   }, [urlParam, currentUser?.uid]);
+
+  useEffect(() => {
+    if (!currentUser || !targetUserId || currentUser.uid === targetUserId) {
+      // Own profile is always visible
+      return;
+    }
+
+    // Check if current user is blocked by the target
+    const checkIfBlockedByTarget = async () => {
+      if (!db) return;
+      
+      try {
+        const targetUserRef = doc(db, 'users', targetUserId);
+        const targetUserDoc = await getDoc(targetUserRef);
+        
+        if (targetUserDoc.exists()) {
+          const targetUserData = targetUserDoc.data();
+          const blockedUsers = targetUserData.blockedUsers || [];
+          
+          // If the current user is blocked by the target user, redirect to discover page
+          if (blockedUsers.includes(currentUser.uid)) {
+            // Redirect to discover page - profile not found
+            navigate('/discover');
+          }
+        }
+      } catch (error) {
+        console.error('Error checking if blocked by target:', error);
+        navigate('/discover');
+      }
+    };
+    
+    // Check if we are blocked
+    checkIfBlockedByTarget();
+    
+    // Check if we have blocked the target
+    const hasBlockedTarget = currentUser.blockedUsers?.includes(targetUserId);
+    if (hasBlockedTarget) {
+      // Redirect to discover page - profile not found
+      navigate('/discover');
+    }
+  }, [currentUser, targetUserId, db, navigate]);
 
   const fetchUserData = useCallback(async () => {
     if (!db || !targetUserId) {
@@ -401,6 +453,66 @@ const Profile: React.FC = () => {
     }
   };
 
+  // Add a function to handle menu open
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setMenuAnchorEl(event.currentTarget);
+  };
+
+  // Add a function to handle menu close
+  const handleMenuClose = () => {
+    setMenuAnchorEl(null);
+  };
+
+  // Add a function to handle block user
+  const handleBlockUser = async () => {
+    if (!currentUser) return;
+    setMenuAnchorEl(null);
+    setShowBlockDialog(true);
+  };
+
+  // Add a function to confirm block user
+  const confirmBlockUser = async () => {
+    if (!currentUser || !userId) return;
+    
+    try {
+      await blockUser(userId);
+      setShowBlockDialog(false);
+      navigate('/discover');
+      toast.success(`You have blocked @${username}`);
+    } catch (error) {
+      console.error('Error blocking user:', error);
+      toast.error('Failed to block user');
+    }
+  };
+
+  // Add a function to handle report user
+  const handleReportUser = () => {
+    setMenuAnchorEl(null);
+    setShowReportDialog(true);
+  };
+
+  // Add a function to submit report
+  const submitReport = async (reason: string) => {
+    if (!currentUser || !userId || !db) return;
+    
+    try {
+      const reportRef = collection(db as Firestore, 'reports');
+      await addDoc(reportRef, {
+        reporterId: currentUser.uid,
+        reportedUserId: userId,
+        reason,
+        timestamp: serverTimestamp(),
+        status: 'pending'
+      });
+      
+      setShowReportDialog(false);
+      toast.success('Report submitted');
+    } catch (error) {
+      console.error('Error reporting user:', error);
+      toast.error('Failed to submit report');
+    }
+  };
+
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -420,19 +532,55 @@ const Profile: React.FC = () => {
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {/* Profile Header */}
         <Paper elevation={0} sx={{ p: 3, borderRadius: 2, backgroundColor: 'background.paper' }}>
-          {/* User name at the top (no edit pen) */}
-          <Typography 
-            variant="h5" 
-            sx={{ 
-              fontWeight: 'bold', 
-              mb: 2, 
-              pl: 1,
-              textAlign: 'left'
+          {/* User name at the top with 3-dot menu for other users' profiles */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography 
+              variant="h5" 
+              sx={{ 
+                fontWeight: 'bold',
+                pl: 1,
+                textAlign: 'left'
+              }}
+            >
+              {username || 'username'}
+              {isPrivate && <LockIcon sx={{ ml: 1, fontSize: 20, verticalAlign: 'middle' }} />}
+            </Typography>
+            
+            {/* 3-dot menu only shown when viewing other users' profiles */}
+            {currentUser?.uid !== targetUserId && (
+              <IconButton onClick={handleMenuOpen} size="small">
+                <MoreVertIcon />
+              </IconButton>
+            )}
+          </Box>
+
+          {/* Menu for block and report options */}
+          <Menu
+            anchorEl={menuAnchorEl}
+            open={Boolean(menuAnchorEl)}
+            onClose={handleMenuClose}
+            anchorOrigin={{
+              vertical: 'bottom',
+              horizontal: 'right',
+            }}
+            transformOrigin={{
+              vertical: 'top',
+              horizontal: 'right',
             }}
           >
-            {username || 'username'}
-            {isPrivate && <LockIcon sx={{ ml: 1, fontSize: 20, verticalAlign: 'middle' }} />}
-          </Typography>
+            <MenuItem onClick={handleBlockUser}>
+              <ListItemIcon>
+                <BlockIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>Block User</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={handleReportUser}>
+              <ListItemIcon>
+                <ReportIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>Report User</ListItemText>
+            </MenuItem>
+          </Menu>
 
           {/* Reordered profile content - stats on left, profile pic on right */}
           <Box sx={{ display: 'flex', flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 4 }}>
@@ -601,31 +749,71 @@ const Profile: React.FC = () => {
               </Box>
             </Box>
           </Box>
+          
+          {/* Add private account indicator below Follow/Message buttons */}
+          {isPrivate && currentUser?.uid !== targetUserId && !canViewFullProfile && (
+            <Box 
+              sx={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                alignItems: 'center',
+                justifyContent: 'center',
+                mt: 4,
+                p: 3,
+                textAlign: 'center',
+                borderRadius: 2,
+                bgcolor: 'background.paper'
+              }}
+            >
+              <Box
+                sx={{
+                  width: 60,
+                  height: 60,
+                  borderRadius: '50%',
+                  bgcolor: 'action.hover',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  mb: 2
+                }}
+              >
+                <LockIcon sx={{ fontSize: 32, color: 'text.secondary' }} />
+              </Box>
+              <Typography variant="h6" gutterBottom>
+                This account is private
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Follow this account to see their photos and videos.
+              </Typography>
+            </Box>
+          )}
         </Paper>
         
         {/* Tabs for content - keep only the profile icon */}
-        <Box sx={{ 
-          display: 'flex',
-          borderTop: 1,
-          borderColor: 'divider',
-          justifyContent: 'center', 
-          pt: 1,
-          mb: 2
-        }}>
-          <IconButton component={Link} to={`/profile/${userId}`}>
-            <Box sx={{ 
-              width: 24, 
-              height: 24, 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center'
-            }}>
-              <svg height="12" viewBox="0 0 24 24" width="12">
-                <path d="M12 1a11 11 0 1 0 11 11A11.013 11.013 0 0 0 12 1zm0 20a9 9 0 1 1 9-9 9.01 9.01 0 0 1-9 9zm3-11a3 3 0 1 1-3-3 3 3 0 0 1 3 3zm-3 5a8.949 8.949 0 0 0-4.951 1.488A3.987 3.987 0 0 1 6 13.1a6 6 0 1 1 12 0 3.987 3.987 0 0 1-1.049 2.688A8.954 8.954 0 0 0 12 15z" fill="currentColor"></path>
-              </svg>
-            </Box>
-          </IconButton>
-        </Box>
+        {(!isPrivate || canViewFullProfile || currentUser?.uid === targetUserId) && (
+          <Box sx={{ 
+            display: 'flex',
+            borderTop: 1,
+            borderColor: 'divider',
+            justifyContent: 'center', 
+            pt: 1,
+            mb: 2
+          }}>
+            <IconButton component={Link} to={`/profile/${userId}`}>
+              <Box sx={{ 
+                width: 24, 
+                height: 24, 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center'
+              }}>
+                <svg height="12" viewBox="0 0 24 24" width="12">
+                  <path d="M12 1a11 11 0 1 0 11 11A11.013 11.013 0 0 0 12 1zm0 20a9 9 0 1 1 9-9 9.01 9.01 0 0 1-9 9zm3-11a3 3 0 1 1-3-3 3 3 0 0 1 3 3zm-3 5a8.949 8.949 0 0 0-4.951 1.488A3.987 3.987 0 0 1 6 13.1a6 6 0 1 1 12 0 3.987 3.987 0 0 1-1.049 2.688A8.954 8.954 0 0 0 12 15z" fill="currentColor"></path>
+                </svg>
+              </Box>
+            </IconButton>
+          </Box>
+        )}
         
         {/* Original Side Rooms Display */}
         {(!isPrivate || canViewFullProfile || currentUser?.uid === userId) && (
@@ -872,6 +1060,67 @@ const Profile: React.FC = () => {
           >
             {isLoading ? 'Saving...' : 'Save'}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Block User Confirmation Dialog */}
+      <Dialog open={showBlockDialog} onClose={() => setShowBlockDialog(false)}>
+        <DialogTitle>Block User</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1">
+            Are you sure you want to block @{username}?
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            When you block someone:
+            <ul>
+              <li>They won't be able to see your profile</li>
+              <li>They will be removed from your followers</li>
+              <li>Their rooms won't appear in your discover and side room pages</li>
+              <li>You won't see their messages</li>
+            </ul>
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowBlockDialog(false)}>Cancel</Button>
+          <Button 
+            onClick={confirmBlockUser} 
+            color="error" 
+            variant="contained"
+          >
+            Block
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Report User Dialog */}
+      <Dialog open={showReportDialog} onClose={() => setShowReportDialog(false)}>
+        <DialogTitle>Report User</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" gutterBottom>
+            Why are you reporting @{username}?
+          </Typography>
+          <List>
+            {[
+              'Spam or misleading content',
+              'Harassment or bullying',
+              'Hate speech or symbols',
+              'Violent or dangerous content',
+              'Misinformation',
+              'Impersonation',
+              'Other'
+            ].map((reason) => (
+              <ListItem 
+                key={reason} 
+                onClick={() => submitReport(reason)}
+                sx={{ borderRadius: 1, cursor: 'pointer' }}
+              >
+                <ListItemText primary={reason} />
+              </ListItem>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowReportDialog(false)}>Cancel</Button>
         </DialogActions>
       </Dialog>
     </Container>

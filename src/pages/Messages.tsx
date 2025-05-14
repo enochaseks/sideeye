@@ -74,6 +74,7 @@ interface UserData {
   profilePic?: string;
   following?: string[];
   followers?: string[];
+  blockedUsers?: string[];
   [key: string]: any;
 }
 
@@ -130,136 +131,108 @@ const Messages: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!currentUser?.uid) return;
-
-    // Fetch current user's following/followers list
-    const fetchUserNetwork = async () => {
-      try {
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userDoc = await getDoc(userRef);
-        
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as UserData;
-          setUserFollowing(userData.following || []);
-          setUserFollowers(userData.followers || []);
-        }
-      } catch (error) {
-        console.error('Error fetching user network:', error);
-      }
-    };
-
-    fetchUserNetwork();
-
-    // Listen to user's conversations
+    if (!currentUser || !db) return;
+    
+    setLoading(true);
+    
+    // Get all conversations where current user is a participant
     const conversationsRef = collection(db, 'conversations');
     const q = query(
       conversationsRef,
-      where('participants', 'array-contains', currentUser.uid),
-      orderBy('lastUpdated', 'desc')
+      where('participants', 'array-contains', currentUser.uid)
     );
-
+    
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const acceptedConversations: Conversation[] = [];
-      const pendingConversations: Conversation[] = [];
-      
-      // If there are no conversations, update state and exit early
-      if (snapshot.empty) {
-        console.log('[Messages] No conversations found for user');
-        setConversations([]);
-        setPendingRequests([]);
-        setLoading(false);
-        return;
-      }
-
       try {
-        console.log(`[Messages] Processing ${snapshot.docs.length} conversations`);
+        // First, collect all users who have blocked the current user
+        const usersRef = collection(db, 'users');
+        const usersSnapshot = await getDocs(usersRef);
+        const blockedByUsers: string[] = [];
         
-        // Process each conversation document
-        for (const docSnapshot of snapshot.docs) {
-          const data = docSnapshot.data();
-          const otherParticipantId = data.participants.find((id: string) => id !== currentUser.uid);
-          
-          if (!otherParticipantId) {
-            console.log('[Messages] No other participant found in conversation:', docSnapshot.id);
-            continue; // Skip this conversation
+        usersSnapshot.forEach(userDoc => {
+          const userData = userDoc.data();
+          if (userData.blockedUsers && 
+              Array.isArray(userData.blockedUsers) && 
+              userData.blockedUsers.includes(currentUser.uid)) {
+            blockedByUsers.push(userDoc.id);
           }
-          
-          // Determine if this is a message request based on the status field
-          const status = data.status || 'accepted';
-          console.log(`[Messages] Conversation ${docSnapshot.id} status: ${status}`);
-          
-          // Fetch complete user data for the conversation partner
-          try {
-            const userDocRef = doc(db, 'users', otherParticipantId);
-            const userDoc = await getDoc(userDocRef);
-            const userData = userDoc.data() as UserData || {};
-            
-            // Try multiple profile pic fields in case different fields are used
-            const profilePic = userData?.profilePic || userData?.photoURL || userData?.avatarUrl || undefined;
-            
-            const conversationData = {
-              id: docSnapshot.id,
-              participants: data.participants,
-              lastMessage: data.lastMessage,
-              unreadCount: data.unreadCount?.[currentUser.uid] || 0,
-              displayName: userData?.name || userData?.username || 'Unknown User',
-              photoURL: profilePic,
-              status: status
-            };
-            
-            // SIMPLE RULE: If status is pending, it goes to requests, otherwise inbox
-            if (status === 'pending') {
-              pendingConversations.push(conversationData);
-              console.log(`[Messages] Added to REQUESTS: conversation with ${conversationData.displayName}`);
-            } else {
-              acceptedConversations.push(conversationData);
-              console.log(`[Messages] Added to INBOX: conversation with ${conversationData.displayName}`);
-            }
-          } catch (error) {
-            console.error('[Messages] Error fetching user data for conversation:', error);
-            // Still create a basic conversation object with available data
-            const conversationData = {
-              id: docSnapshot.id,
-              participants: data.participants,
-              lastMessage: data.lastMessage,
-              unreadCount: data.unreadCount?.[currentUser.uid] || 0,
-              displayName: 'Unknown User',
-              status: status
-            };
-            
-            // Same simple rule for error fallback
-            if (status === 'pending') {
-              pendingConversations.push(conversationData);
-            } else {
-              acceptedConversations.push(conversationData);
-            }
-          }
-        }
-        
-        console.log('[Messages] Processed conversations:', { 
-          accepted: acceptedConversations.length, 
-          pending: pendingConversations.length 
         });
         
-        // Update state with processed conversations
-        setConversations(acceptedConversations);
-        setPendingRequests(pendingConversations);
+        // Get current user's blocked users
+        const blockedUsers = currentUser.blockedUsers || [];
+        
+        // Combined list of users to hide
+        const usersToHide = [...blockedUsers, ...blockedByUsers];
+        
+        // Process each conversation
+        const conversationsData = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data
+          } as Conversation;
+        });
+        
+        // Filter out conversations with blocked users
+        const filteredConversations = conversationsData.filter(conversation => {
+          const otherParticipantId = conversation.participants.find(
+            id => id !== currentUser.uid
+          );
+          
+          // If there's no other participant or they are in the hide list, filter out
+          return otherParticipantId && !usersToHide.includes(otherParticipantId);
+        });
+        
+        // Fetch user data for remaining conversations
+        const enhancedConversations = await Promise.all(
+          filteredConversations.map(async conversation => {
+            const otherParticipantId = conversation.participants.find(
+              id => id !== currentUser.uid
+            );
+            
+            if (!otherParticipantId) {
+              return conversation;
+            }
+            
+            try {
+              const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
+              if (userDoc.exists()) {
+                const userData = userDoc.data() as UserData;
+                return {
+                  ...conversation,
+                  displayName: userData.name || userData.username,
+                  photoURL: userData.profilePic || userData.photoURL,
+                  status: conversation.status || 'accepted'
+                };
+              }
+            } catch (err) {
+              console.error('Error fetching user data:', err);
+            }
+            
+            return conversation;
+          })
+        );
+        
+        // Split conversations
+        const accepted = enhancedConversations.filter(
+          conv => conv.status !== 'pending'
+        );
+        
+        const pending = enhancedConversations.filter(
+          conv => conv.status === 'pending'
+        );
+        
+        setConversations(accepted);
+        setPendingRequests(pending);
+        setLoading(false);
       } catch (error) {
-        console.error('[Messages] Error processing conversations:', error);
-        // Set empty arrays in case of error
-        setConversations([]);
-        setPendingRequests([]);
-      } finally {
-        // Always set loading to false
+        console.error('Error loading conversations:', error);
         setLoading(false);
       }
-    }, (error) => {
-      console.error('[Messages] Error in conversations listener:', error);
-      setLoading(false);
     });
-
+    
     return () => unsubscribe();
-  }, [currentUser?.uid]);
+  }, [currentUser, db]);
   
   const handleSearch = async () => {
     if (!searchQuery.trim()) {

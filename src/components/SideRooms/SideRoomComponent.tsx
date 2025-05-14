@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useContext } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth, User as AuthContextUser } from '../../contexts/AuthContext'; // Import and alias AuthContext.User
 import { db } from '../../services/firebase';
@@ -18,7 +18,8 @@ import {
     orderBy,
     limit,
     Timestamp, // Ensure Timestamp is imported if used
-    deleteField // Import deleteField
+    deleteField, // Import deleteField
+    addDoc // Import addDoc
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -57,9 +58,12 @@ import {
     Card,
     CardContent,
     Tabs,
-    Tab
+    Tab,
+    CardMedia,
+    useTheme,
+    useMediaQuery,
 } from '@mui/material';
-import { useTheme, alpha } from '@mui/material/styles';
+import { alpha } from '@mui/material/styles';
 import {
     ExitToApp,
     Lock,
@@ -80,7 +84,7 @@ import {
     UploadFile,
     MoreVert as MoreVertIcon,
     PersonRemove as PersonRemoveIcon,
-    Block as BanIcon,
+    Block,
     Chat as ChatIcon,
     Search as SearchIcon,
     ContentCopy as ContentCopyIcon,
@@ -105,7 +109,9 @@ import {
     ZoomOut as ZoomOutIcon,
     PictureInPictureAlt as PictureInPictureAltIcon,
     Tune as TuneIcon,
-    VolumeDown as VolumeDownIcon
+    VolumeDown as VolumeDownIcon,
+    PersonAdd as PersonAddIcon,
+    Report as ReportIcon // Added ReportIcon
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -415,8 +421,8 @@ const AVAILABLE_TEXT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32]; // in pixels
 
 const SideRoomComponent: React.FC = () => {
     const { roomId } = useParams<{ roomId: string }>();
-    const { currentUser } = useAuth();
     const navigate = useNavigate();
+    const { currentUser, blockUser } = useAuth();
     const theme = useTheme(); 
 
     // --- State ---
@@ -1530,8 +1536,73 @@ const SideRoomComponent: React.FC = () => {
                 </Box>
                 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    {/* {isAudioConnected && <AudioDeviceSelector />} // REMOVED AudioDeviceSelector for now */}
-                    {/* Placeholder for Stream device controls if needed - Could go inside InsideStreamCallContent */}
+                    {/* Follow Host button - only shown to participants/viewers, not to the host */}
+                    {currentUser?.uid && room?.ownerId && currentUser.uid !== room.ownerId && ownerData && (
+                        <Tooltip title={`Follow ${ownerData.username}`}>
+                            <IconButton 
+                                onClick={async () => {
+                                    if (!currentUser?.uid || !room?.ownerId || !db) {
+                                        toast.error("Cannot follow host: missing data");
+                                        return;
+                                    }
+                                    
+                                    try {
+                                        // First check if the user has already sent a request or is following
+                                        const userFollowingRef = doc(db, "users", currentUser.uid, "following", room.ownerId);
+                                        const userFollowingDoc = await getDoc(userFollowingRef);
+
+                                        // Also check if there's already a pending request
+                                        const followRequestRef = doc(db, "users", room.ownerId, "followRequests", currentUser.uid);
+                                        const followRequestDoc = await getDoc(followRequestRef);
+                                        
+                                        // Get the host's data to check if account is private
+                                        const hostRef = doc(db, "users", room.ownerId);
+                                        const hostDoc = await getDoc(hostRef);
+                                        const isHostPrivate = hostDoc.exists() && hostDoc.data().isPrivate === true;
+                                        
+                                        if (userFollowingDoc.exists()) {
+                                            // Already following, unfollow
+                                            await deleteDoc(userFollowingRef);
+                                            // Also remove from the host's followers
+                                            const hostFollowerRef = doc(db, "users", room.ownerId, "followers", currentUser.uid);
+                                            await deleteDoc(hostFollowerRef);
+                                            toast.success(`Unfollowed ${ownerData.username}`);
+                                        } else if (followRequestDoc.exists()) {
+                                            // Already requested, cancel request
+                                            await deleteDoc(followRequestRef);
+                                            toast.success(`Canceled follow request to ${ownerData.username}`);
+                                        } else if (isHostPrivate) {
+                                            // Host has a private account, send a follow request
+                                            await setDoc(followRequestRef, {
+                                                userId: currentUser.uid,
+                                                username: currentUser.displayName || currentUser.email || "Unknown user",
+                                                timestamp: serverTimestamp()
+                                            });
+                                            toast.success(`Follow request sent to ${ownerData.username}`);
+                                        } else {
+                                            // Not following and host is public, add follow directly
+                                            await setDoc(userFollowingRef, { 
+                                                timestamp: serverTimestamp() 
+                                            });
+                                            // Also add to the host's followers
+                                            const hostFollowerRef = doc(db, "users", room.ownerId, "followers", currentUser.uid);
+                                            await setDoc(hostFollowerRef, { 
+                                                timestamp: serverTimestamp() 
+                                            });
+                                            toast.success(`Following ${ownerData.username}`);
+                                        }
+                                    } catch (error) {
+                                        console.error("Error toggling follow:", error);
+                                        toast.error("Failed to follow/unfollow host");
+                                    }
+                                }}
+                                sx={{ color: room?.style?.accentColor || 'inherit' }}
+                            >
+                                <PersonAddIcon />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                    {/* Existing buttons */}
                     <Tooltip title={currentUserHearted ? "Unheart Room" : "Heart Room"}>
                         <IconButton 
                             onClick={handleHeartRoom} 
@@ -1793,16 +1864,27 @@ const SideRoomComponent: React.FC = () => {
     const handleForceBan = useCallback((targetUserId: string, targetUsername?: string) => {
         if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid) return;
         
+        // Function is maintained for backwards compatibility with existing code,
+        // but now it should use blockUser instead of banning
         const name = targetUsername || 'this user';
-        if (window.confirm(`Are you sure you want to BAN ${name} from the room? They will be removed and unable to rejoin.`)) {
-             console.log(`Owner banning user ${targetUserId} from room ${roomId}`);
-             // audioService.sendForceBan(roomId, targetUserId); // REMOVED
-             // Use general socket emit:
-             // socket?.emit('force-ban', { roomId, targetUserId });
-            console.warn("[SideRoomComponent] handleForceBan needs to be connected to the correct signaling (e.g., general Socket.IO emit)")
-             toast.success(`Banning ${name}...`);
+
+        if (window.confirm(`Are you sure you want to block ${name}? They will be removed from the room.`)) {
+            try {
+                blockUser(targetUserId)
+                    .then(() => {
+                        toast.success(`Blocked ${name}`);
+                        console.log(`User ${targetUserId} has been blocked`);
+                    })
+                    .catch((error) => {
+                        console.error('Error blocking user:', error);
+                        toast.error('Failed to block user');
+                    });
+            } catch (error) {
+                console.error('Error initiating block:', error);
+                toast.error('Failed to block user');
+            }
         }
-    }, [isRoomOwner, roomId, currentUser?.uid]);
+    }, [isRoomOwner, roomId, currentUser?.uid, blockUser]);
 
     // --- Sade AI Chat: Scrolling ---
     const scrollToSadeBottom = () => {
@@ -2542,6 +2624,7 @@ const SideRoomComponent: React.FC = () => {
                                      onForceRemove={handleForceRemove}
                                      onForceBan={handleForceBan}
                                      theme={theme}
+                                     navigate={navigate}
                                  />
                              </StreamCall>
                          </StreamVideo>
@@ -2961,15 +3044,15 @@ const InsideStreamCallContent: React.FC<{
     onForceMuteToggle: Function, 
     onForceRemove: Function, 
     onForceBan: Function, 
-    theme: any
-}> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme }) => {
+    theme: any,
+    navigate: Function
+}> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme, navigate }) => {
     const call = useCall(); 
     const { useParticipants, useCallState, useMicrophoneState, useCameraState } = useCallStateHooks(); 
     const participants = useParticipants(); 
     const { localParticipant } = useCallState(); 
     const { isMute: localUserIsMute } = useMicrophoneState(); 
     const { isEnabled: isCameraEnabled, isTogglePending } = useCameraState(); 
-    const navigate = useNavigate(); 
 
     const { currentUser } = useAuth();
 
@@ -3796,6 +3879,7 @@ const InsideStreamCallContent: React.FC<{
                                     onPinToggle={handleTogglePinParticipant} 
                                     isPinned={pinnedUserIds.includes(p.userId)} 
                                              roomStyle={room?.style}
+                                    navigate={navigate}
                                 />
                             </Grid>
                         ); 
@@ -4143,6 +4227,7 @@ interface StreamParticipantCardProps {
     onPinToggle: (userId: string) => void; 
     isPinned?: boolean; 
     roomStyle?: RoomStyle;
+    navigate: Function; // Add this line
 }
 
 const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({ 
@@ -4158,10 +4243,12 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
     isDesignatedHost, 
     onPinToggle,      
     isPinned,
-    roomStyle
+    roomStyle,
+    navigate
 }) => {
-    const theme = useTheme(); 
+    const theme = useTheme();
     const { isSpeaking, publishedTracks } = participant;
+    const { blockUser, currentUser } = useAuth();
 
     const isAudioTrackPublished = publishedTracks.includes('audio' as any);
     const showRemoteMuteIcon = !isAudioTrackPublished && !isSpeaking; 
@@ -4190,16 +4277,23 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
             onForceMuteToggle(participant.userId, !participant.publishedTracks.includes('audio' as any));
         }
     };
-    const handleKickUser = () => {
+
+    const handleBlockUser = async () => {
         handleMenuClose();
-        if (onForceRemove) {
-            onForceRemove(participant.userId, participant.name || participant.userId);
-        }
-    };
-    const handleBanUserFromCall = () => {
-        handleMenuClose();
-        if (onForceBan) {
-            onForceBan(participant.userId, participant.name || participant.userId);
+        
+        if (window.confirm(`Are you sure you want to block ${participant.name || participant.userId}?`)) {
+            try {
+                await blockUser(participant.userId);
+                toast.success(`Blocked ${participant.name || participant.userId}`);
+                
+                // Then remove them from the room
+                if (onForceRemove) {
+                    onForceRemove(participant.userId, participant.name || participant.userId);
+                }
+            } catch (error) {
+                console.error('Error blocking user:', error);
+                toast.error('Failed to block user');
+            }
         }
     };
 
@@ -4239,6 +4333,68 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
         console.log('[StreamParticipantCard - LOCAL Focus] localUserAuthData:', localUserAuthData, 'Stream participant.userId:', participant.userId);
     }
 
+    // Add these state variables within the StreamParticipantCard component
+    const [showReportDialog, setShowReportDialog] = useState(false);
+
+    // Add this function to handle report submission
+    const submitReport = async (reason: string) => {
+        try {
+            const reportData = {
+                reportedUserId: participant.userId,
+                reportedBy: currentUser?.uid,
+                reason: reason,
+                timestamp: serverTimestamp()
+            };
+            
+            await addDoc(collection(db, "reports"), reportData);
+            toast.success(`Report submitted for ${participant.name || participant.userId}`);
+            setShowReportDialog(false);
+        } catch (error) {
+            console.error("Error submitting report:", error);
+            toast.error("Failed to submit report. Please try again.");
+        }
+    };
+
+    // Add a function to handle avatar click
+    const handleAvatarClick = () => {
+        if (isLocalParticipant) {
+            // If it's the local user, toggle microphone as before
+            handleLocalMicToggle();
+        } else {
+            // If it's another user, navigate to their profile
+            navigate(`/profile/${participant.userId}`);
+        }
+    };
+
+    // Render either a clickable avatar or a link to profile based on if it's local user
+    const renderAvatar = () => {
+        const avatarContent = (
+            <Avatar 
+                src={avatarUrl}
+                alt={displayName}
+                sx={{
+                    width: 64,
+                    height: 64, 
+                    mb: 0.5,
+                    border: isSpeaking ? `3px solid ${theme.palette.success.main}` : `2px solid ${alpha(theme.palette.divider, 0.5)}`,
+                    boxShadow: isSpeaking ? `0 0 8px ${theme.palette.success.light}` : 'none',
+                    transition: 'border 0.2s ease-in-out, boxShadow 0.2s ease-in-out',
+                    cursor: 'pointer',
+                }}
+            />
+        );
+
+        return isLocalParticipant ? (
+            <Box onClick={handleLocalMicToggle} sx={{ cursor: 'pointer' }}>
+                {avatarContent}
+            </Box>
+        ) : (
+            <Link to={`/profile/${participant.userId}`} style={{ textDecoration: 'none' }}>
+                {avatarContent}
+            </Link>
+        );
+    };
+
     return (
         <Box sx={{ 
             display: 'flex',
@@ -4247,20 +4403,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
             position: 'relative',
             textAlign: 'center',
         }}>
-            <Avatar 
-                src={avatarUrl}
-                alt={displayName}
-                onClick={handleLocalMicToggle} 
-                sx={{
-                    width: 64,
-                    height: 64, 
-                    mb: 0.5,
-                    border: isSpeaking ? `3px solid ${theme.palette.success.main}` : `2px solid ${alpha(theme.palette.divider, 0.5)}`,
-                    boxShadow: isSpeaking ? `0 0 8px ${theme.palette.success.light}` : 'none',
-                    transition: 'border 0.2s ease-in-out, boxShadow 0.2s ease-in-out',
-                    cursor: isLocalParticipant ? 'pointer' : 'default', 
-                }}
-            />
+            {renderAvatar()}
             {isDesignatedHost && (
                 <Chip 
                     label="Host"
@@ -4308,6 +4451,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                 {displayName}
             </Typography>
             
+            {/* Menu for room owners - gives control options */}
             {isRoomOwner && !isLocalParticipant && (
                 <Box sx={{ position: 'absolute', top: -5, right: -5, zIndex: 1 }}>
                     <Tooltip title="Manage User">
@@ -4331,17 +4475,46 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                             </ListItemIcon>
                             {isPinned ? 'Unpin from top' : 'Pin to top'}
                         </MenuItem>
-                        <MenuItem onClick={handleKickUser} sx={{ color: 'warning.dark', fontSize: '0.8rem' }}>
-                            <ListItemIcon sx={{minWidth: '30px'}}><PersonRemoveIcon fontSize="small" color="warning"/></ListItemIcon>
-                            Remove
-                        </MenuItem>
-                        <MenuItem onClick={handleBanUserFromCall} sx={{ color: 'error.main', fontSize: '0.8rem' }}>
-                            <ListItemIcon sx={{minWidth: '30px'}}><BanIcon fontSize="small" color="error"/></ListItemIcon>
-                            Ban
+                        <MenuItem onClick={handleBlockUser} sx={{ color: 'error.main', fontSize: '0.8rem' }}>
+                            <ListItemIcon sx={{minWidth: '30px'}}><Block fontSize="small" color="error"/></ListItemIcon>
+                            Block
                         </MenuItem>
                     </Menu>
                 </Box>
             )}
+            
+            {/* Menu for participants/viewers - only shows report option */}
+            {!isRoomOwner && !isLocalParticipant && (
+                <Box sx={{ position: 'absolute', top: -5, right: -5, zIndex: 1 }}>
+                    <Tooltip title="Options">
+                        <IconButton 
+                            onClick={handleMenuClick} 
+                            size="small" 
+                            sx={{ backgroundColor: alpha(theme.palette.background.default, 0.7), p: 0.2, borderRadius: '50%' }}
+                        >
+                            <MoreVertIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <Menu
+                        anchorEl={anchorEl}
+                        open={menuOpen}
+                        onClose={handleMenuClose}
+                        MenuListProps={{ dense: true }}
+                    >
+                        <MenuItem 
+                            onClick={() => {
+                                handleMenuClose();
+                                setShowReportDialog(true);
+                            }} 
+                            sx={{ color: 'warning.main', fontSize: '0.8rem' }}
+                        >
+                            <ListItemIcon sx={{minWidth: '30px'}}><ReportIcon fontSize="small" color="warning"/></ListItemIcon>
+                            Report User
+                        </MenuItem>
+                    </Menu>
+                </Box>
+            )}
+            
             {isPinned && !isDesignatedHost && ( 
                 <Tooltip title="Pinned">
                     <PushPinIcon 
@@ -4359,6 +4532,38 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
                     />
                 </Tooltip>
             )}
+
+            {/* Report User Dialog */}
+            <Dialog open={showReportDialog} onClose={() => setShowReportDialog(false)}>
+                <DialogTitle>Report User</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body1" gutterBottom>
+                        Why are you reporting {participant.name || participant.userId}?
+                    </Typography>
+                    <List>
+                        {[
+                            'Spam or misleading content',
+                            'Harassment or bullying',
+                            'Hate speech or symbols',
+                            'Violent or dangerous content',
+                            'Inappropriate behavior',
+                            'Impersonation',
+                            'Other'
+                        ].map((reason) => (
+                            <ListItem 
+                                key={reason} 
+                                onClick={() => submitReport(reason)}
+                                sx={{ borderRadius: 1, cursor: 'pointer', '&:hover': { backgroundColor: alpha(theme.palette.primary.main, 0.1) } }}
+                            >
+                                <ListItemText primary={reason} />
+                            </ListItem>
+                        ))}
+                    </List>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setShowReportDialog(false)}>Cancel</Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 };

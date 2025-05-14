@@ -188,116 +188,101 @@ const Discover: React.FC = () => {
     }
   };
 
+  const getBlockedAndBlockingUsers = async (): Promise<string[]> => {
+    // Get the current user from the auth context
+    if (!currentUser || !db) return [];
+    
+    try {
+      // Get users who have blocked the current user
+      const usersRef = collection(db, 'users');
+      const usersSnapshot = await getDocs(usersRef);
+      const blockedByUsers: string[] = [];
+      
+      usersSnapshot.forEach(userDoc => {
+        const userData = userDoc.data();
+        if (userData.blockedUsers && 
+            Array.isArray(userData.blockedUsers) && 
+            userData.blockedUsers.includes(currentUser.uid)) {
+          blockedByUsers.push(userDoc.id);
+        }
+      });
+      
+      // Get current user's blocked users
+      const blockedUsers = currentUser.blockedUsers || [];
+      
+      // Return combined list
+      return [...blockedUsers, ...blockedByUsers];
+    } catch (error) {
+      console.error('Error fetching blocked users:', error);
+      return [];
+    }
+  };
+
   const fetchRooms = async () => {
     try {
       setLoading(true);
-      // Clean up existing listeners
-      roomListeners.forEach(unsubscribe => unsubscribe());
-      setRoomListeners([]);
+      if (!db) return;
+      
+      // Get list of users to hide content from
+      const usersToHide = await getBlockedAndBlockingUsers();
 
       const roomsRef = collection(db, 'sideRooms');
       const q = firestoreQuery(
         roomsRef,
-        where("deleted", "==", false),
-        orderBy('lastActive', 'desc'),
-        limit(20)
+        where('deleted', '!=', true)
+      );
+      const querySnapshot = await getDocs(q);
+
+      const roomsData = querySnapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data
+          } as FirestoreRoom;
+        });
+      
+      // Filter out rooms from blocked users
+      const filteredRooms = roomsData.filter(room => 
+        !usersToHide.includes(room.ownerId)
       );
 
-      // Initial fetch of rooms
-      const querySnapshot = await getDocs(q);
-      const roomsData = await Promise.all(querySnapshot.docs.map(async (docSnapshot) => {
-        const data = docSnapshot.data();
-        let creatorData = null;
+      // Process the filtered rooms
+      const roomsWithOwnerData = await Promise.all(
+        filteredRooms.map(async room => {
+          try {
+            const ownerDoc = await getDoc(doc(db, 'users', room.ownerId));
+            const ownerData = ownerDoc.exists() ? ownerDoc.data() : null;
 
-        if (data.ownerId) {
-          const creatorDocRef = doc(db, 'users', data.ownerId);
-          const creatorDocSnapshot = await getDoc(creatorDocRef);
-          if (creatorDocSnapshot.exists()) {
-            creatorData = creatorDocSnapshot.data();
+            return {
+              id: room.id,
+              name: room.name || '',
+              description: room.description || '',
+              memberCount: room.memberCount || 0,
+              shareCount: 0,
+              isPrivate: room.isPrivate || false,
+              createdAt: room.createdAt?.toDate() || new Date(),
+              creatorName: ownerData?.username || 'Unknown',
+              creatorId: room.ownerId,
+              creatorAvatar: ownerData?.profilePic || '',
+              tags: room.tags || [],
+              lastActive: room.lastActive?.toDate() || new Date(),
+              maxMembers: room.maxMembers || 100,
+              activeUsers: room.activeUsers || 0,
+              isLive: room.isLive || false,
+              thumbnailUrl: room.thumbnailUrl || ''
+            } as Room;
+          } catch (error) {
+            console.error(`Error fetching owner data for room ${room.id}:`, error);
+            return null;
           }
-        }
+        })
+      );
 
-        return {
-          id: docSnapshot.id,
-          name: data.name || '',
-          description: data.description || '',
-          memberCount: data.memberCount || 0,
-          shareCount: data.shareCount || 0,
-          isPrivate: data.isPrivate || false,
-          createdAt: data.createdAt?.toDate() || new Date(),
-          creatorName: creatorData?.username || data.creatorName || '',
-          creatorId: data.ownerId || '',
-          creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
-          tags: data.tags || [],
-          lastActive: data.lastActive?.toDate() || new Date(),
-          maxMembers: data.maxMembers || 50,
-          activeUsers: data.activeUsers || 0,
-          isLive: data.isLive || false,
-          thumbnailUrl: data.thumbnailUrl || null // Fetch thumbnailUrl
-        };
-      }));
-
-      setRooms(roomsData);
-
-      // Set up real-time listeners for each room
-      roomsData.forEach(room => {
-        setupRoomListener(room.id);
-      });
-
-      // Set up a listener for new rooms (also filter deleted)
-      const roomsListener = onSnapshot(firestoreQuery(roomsRef, where("deleted", "==", false), orderBy('lastActive', 'desc'), limit(20)), (snapshot) => {
-        snapshot.docChanges().forEach(async (change) => {
-          if (change.type === 'added') {
-            const data = change.doc.data();
-            let creatorData = null;
-
-            if (data.ownerId) {
-              const creatorDocRef = doc(db, 'users', data.ownerId);
-              const creatorDocSnapshot = await getDoc(creatorDocRef);
-              if (creatorDocSnapshot.exists()) {
-                creatorData = creatorDocSnapshot.data();
-              }
-            }
-
-            const newRoom = {
-              id: change.doc.id,
-              name: data.name || '',
-              description: data.description || '',
-              memberCount: data.memberCount || 0,
-              shareCount: data.shareCount || 0,
-              isPrivate: data.isPrivate || false,
-              createdAt: data.createdAt?.toDate() || new Date(),
-              creatorName: creatorData?.username || data.creatorName || '',
-              creatorId: data.ownerId || '',
-              creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
-              tags: data.tags || [],
-              lastActive: data.lastActive?.toDate() || new Date(),
-              maxMembers: data.maxMembers || 50,
-              activeUsers: data.activeUsers || 0,
-              isLive: data.isLive || false,
-              thumbnailUrl: data.thumbnailUrl || null // Fetch thumbnailUrl for new rooms
-            };
-
-            setRooms(prevRooms => {
-              if (!prevRooms.find(r => r.id === newRoom.id)) {
-                setupRoomListener(newRoom.id);
-                return [newRoom, ...prevRooms];
-              }
-              return prevRooms;
-            });
-          }
-          if (change.type === 'removed') {
-            setRooms(prevRooms => prevRooms.filter(room => room.id !== change.doc.id));
-          }
-        });
-      });
-
-      // Add the rooms listener to the cleanup list
-      setRoomListeners(prev => [...prev, roomsListener]);
-
+      // Filter out any null rooms from failed owner fetches
+      setRooms(roomsWithOwnerData.filter(room => room !== null) as Room[]);
     } catch (error) {
       console.error('Error fetching rooms:', error);
-      toast.error('Failed to load rooms');
     } finally {
       setLoading(false);
     }
@@ -388,45 +373,49 @@ const Discover: React.FC = () => {
   const handleSearch = async (query: string, isSubmit: boolean = false) => {
     setSearchQuery(query);
     
-    if (query.length < 2 && !isSubmit) {
+    if (query.trim() === '') {
+      setUsers([]);
+      setRooms([]);
       setIsSearchView(false);
-      fetchRooms();
       return;
     }
 
-    if (isSubmit) {
-      setIsSearchView(true);
+    try {
       setLoading(true);
-      try {
-        const searchTerm = query.toLowerCase();
-        
-        // Modified user search query
-        const usersRef = collection(db, 'users');
-        const usersQuery = firestoreQuery(
-          usersRef,
-          orderBy('username'),
-          startAt(searchTerm),
-          endAt(searchTerm + '\uf8ff'),
-          limit(20)
-        );
+      setIsSearchView(true);
 
-        // Search for rooms (also filter deleted)
-        const roomsRef = collection(db, 'sideRooms');
-        const roomsQuery = firestoreQuery(
-          roomsRef,
-          where("deleted", "==", false),
-          where('name_lower', '>=', searchTerm),
-          where('name_lower', '<=', searchTerm + '\uf8ff'),
-          limit(20)
-        );
+      // Get a list of blocked users and users who have blocked the current user
+      const blockedUsers = currentUser?.blockedUsers || [];
+      const blockedByUsers: string[] = [];
+      
+      if (currentUser && db) {
+        const usersSnapshot = await getDocs(collection(db, 'users'));
+        usersSnapshot.forEach(doc => {
+          const userData = doc.data();
+          if (userData.blockedUsers && 
+              Array.isArray(userData.blockedUsers) && 
+              userData.blockedUsers.includes(currentUser.uid)) {
+            blockedByUsers.push(doc.id);
+          }
+        });
+      }
+      
+      // Combine both lists of users to exclude
+      const excludeUserIds = [...blockedUsers, ...blockedByUsers];
 
-        const [usersSnapshot, roomsSnapshot] = await Promise.all([
-          getDocs(usersQuery),
-          getDocs(roomsQuery)
-        ]);
-
-        // Process users with additional name search if needed
-        let usersData = usersSnapshot.docs.map(doc => ({
+      // Search users
+      const usersRef = collection(db, 'users');
+      const usersQuery = firestoreQuery(
+        usersRef,
+        where('username', '>=', query.toLowerCase()),
+        where('username', '<=', query.toLowerCase() + '\uf8ff'),
+        limit(10)
+      );
+      const usersSnapshot = await getDocs(usersQuery);
+      
+      // Filter out blocked users and users who have blocked the current user
+      const usersData = usersSnapshot.docs
+        .map(doc => ({
           id: doc.id,
           username: doc.data().username || '',
           name: doc.data().name || '',
@@ -436,85 +425,82 @@ const Discover: React.FC = () => {
           isAuthenticated: doc.data().isAuthenticated,
           createdAt: doc.data().createdAt,
           isActive: doc.data().isActive
-        }));
+        }))
+        .filter(user => !excludeUserIds.includes(user.id));
 
-        // If no results by username, try searching by name
-        if (usersData.length === 0 && searchTerm) {
-          const nameQuery = firestoreQuery(
-            usersRef,
-            orderBy('name_lower'),
-            startAt(searchTerm),
-            endAt(searchTerm + '\uf8ff'),
-            limit(20)
-          );
-          const nameSnapshot = await getDocs(nameQuery);
-          usersData = nameSnapshot.docs.map(doc => ({
+      // Search rooms similarly filtering out rooms from blocked users
+      const roomsRef = collection(db, 'sideRooms');
+      const roomsQuery = firestoreQuery(
+        roomsRef,
+        where('name', '>=', query),
+        where('name', '<=', query + '\uf8ff'),
+        limit(10)
+      );
+      const roomsSnapshot = await getDocs(roomsQuery);
+      
+      // Filter out rooms owned by blocked users or users who have blocked the current user
+      const roomsData = await Promise.all(
+        roomsSnapshot.docs
+          .map(doc => ({
             id: doc.id,
-            username: doc.data().username || '',
-            name: doc.data().name || '',
-            bio: doc.data().bio || '',
-            profilePic: doc.data().profilePic || '',
-            isPublic: doc.data().isPublic ?? true,
-            isAuthenticated: doc.data().isAuthenticated,
-            createdAt: doc.data().createdAt,
-            isActive: doc.data().isActive
-          }));
-        }
+            ...doc.data()
+          } as FirestoreRoom))
+          .filter(room => room.ownerId && !excludeUserIds.includes(room.ownerId))
+          .map(async (room) => {
+            // Fetch room owner data
+            try {
+              const ownerDoc = await getDoc(doc(db, 'users', room.ownerId));
+              const ownerData = ownerDoc.exists() ? ownerDoc.data() : null;
 
-        // Process rooms (keep existing room processing logic)
-        const roomsData = await Promise.all(roomsSnapshot.docs.map(async (docSnapshot) => {
-          const data = docSnapshot.data();
-          const roomData: FirestoreRoom = {
-            id: docSnapshot.id,
-            name: data.name || '',
-            description: data.description || '',
-            ownerId: data.ownerId || '',
-            createdAt: data.createdAt,
-            lastActive: data.lastActive,
-            tags: data.tags || [],
-            isPrivate: data.isPrivate || false,
-            activeUsers: data.activeUsers || 0,
-            isLive: data.isLive || false,
-            thumbnailUrl: data.thumbnailUrl || undefined // Map null to undefined
-          };
-
-          let creatorData: FirestoreUser | null = null;
-          if (roomData.ownerId) {
-            const creatorDocRef = doc(db, 'users', roomData.ownerId);
-            const creatorDocSnapshot = await getDoc(creatorDocRef);
-            if (creatorDocSnapshot.exists()) {
-              creatorData = creatorDocSnapshot.data() as FirestoreUser;
+              return {
+                id: room.id,
+                name: room.name,
+                description: room.description,
+                memberCount: room.memberCount || 0,
+                shareCount: 0,
+                isPrivate: room.isPrivate || false,
+                createdAt: room.createdAt?.toDate() || new Date(),
+                creatorName: ownerData?.username || 'Unknown',
+                creatorId: room.ownerId,
+                creatorAvatar: ownerData?.profilePic || '',
+                tags: room.tags || [],
+                lastActive: room.lastActive?.toDate() || new Date(),
+                maxMembers: room.maxMembers || 100,
+                activeUsers: room.activeUsers || 0,
+                isLive: room.isLive || false,
+                thumbnailUrl: room.thumbnailUrl || ''
+              } as Room;
+            } catch (error) {
+              console.error(`Error fetching owner data for room ${room.id}:`, error);
+              // Return a default Room object if we can't fetch owner data
+              return {
+                id: room.id,
+                name: room.name,
+                description: room.description,
+                memberCount: room.memberCount || 0,
+                shareCount: 0,
+                isPrivate: room.isPrivate || false,
+                createdAt: room.createdAt?.toDate() || new Date(),
+                creatorName: 'Unknown',
+                creatorId: room.ownerId,
+                creatorAvatar: '',
+                tags: room.tags || [],
+                lastActive: room.lastActive?.toDate() || new Date(),
+                maxMembers: room.maxMembers || 100,
+                activeUsers: room.activeUsers || 0,
+                isLive: room.isLive || false,
+                thumbnailUrl: room.thumbnailUrl || ''
+              } as Room;
             }
-          }
+          })
+      );
 
-          return {
-            id: docSnapshot.id,
-            name: roomData.name,
-            description: roomData.description,
-            memberCount: data.memberCount || 0,
-            shareCount: data.shareCount || 0,
-            isPrivate: roomData.isPrivate,
-            createdAt: roomData.createdAt?.toDate() || new Date(),
-            creatorName: creatorData?.username || data.creatorName || '',
-            creatorId: roomData.ownerId,
-            creatorAvatar: creatorData?.profilePic || creatorData?.avatar || '',
-            tags: roomData.tags || [],
-            lastActive: roomData.lastActive?.toDate() || new Date(),
-            maxMembers: data.maxMembers || 50,
-            activeUsers: roomData.activeUsers,
-            isLive: roomData.isLive,
-            thumbnailUrl: roomData.thumbnailUrl || undefined // Map null to undefined
-          };
-        }));
-
-        setUsers(usersData);
-        setRooms(roomsData);
-      } catch (error: any) {
-        console.error('Search error:', error);
-        toast.error(`Search failed: ${error.code || error.message}`);
-      } finally {
-        setLoading(false);
-      }
+      setUsers(usersData);
+      setRooms(roomsData);
+    } catch (error) {
+      console.error('Error searching:', error);
+    } finally {
+      setLoading(false);
     }
   };
 

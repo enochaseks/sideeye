@@ -67,6 +67,7 @@ interface SideRoomData {
   tags?: string[];
   category?: string;
   thumbnailUrl?: string;
+  ownerId: string;
 }
 
 const GENRES = [
@@ -91,6 +92,7 @@ const SideRoomList: React.FC = () => {
   const [selectedRoom, setSelectedRoom] = useState<SideRoomData | null>(null);
   const [password, setPassword] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
   
   // Search and filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -99,6 +101,48 @@ const SideRoomList: React.FC = () => {
   
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+
+  // Function to get both blocked users and users who blocked the current user
+  const getBlockedAndBlockingUsers = async (): Promise<string[]> => {
+    if (!currentUser || !db) return [];
+    
+    try {
+      // Get users who have blocked the current user
+      const usersRef = collection(db, 'users');
+      const usersSnapshot = await getDocs(usersRef);
+      const blockedByUsers: string[] = [];
+      
+      usersSnapshot.forEach(userDoc => {
+        const userData = userDoc.data();
+        if (userData.blockedUsers && 
+            Array.isArray(userData.blockedUsers) && 
+            userData.blockedUsers.includes(currentUser.uid)) {
+          blockedByUsers.push(userDoc.id);
+        }
+      });
+      
+      // Get current user's blocked users
+      const blockedUsers = currentUser.blockedUsers || [];
+      
+      // Return combined list
+      return [...blockedUsers, ...blockedByUsers];
+    } catch (error) {
+      console.error('Error fetching blocked users:', error);
+      return [];
+    }
+  };
+
+  // Fetch blocked users when component mounts or current user changes
+  useEffect(() => {
+    if (currentUser) {
+      const fetchBlockedUsers = async () => {
+        const blockedList = await getBlockedAndBlockingUsers();
+        setBlockedUsers(blockedList);
+      };
+      
+      fetchBlockedUsers();
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     if (!db) {
@@ -117,7 +161,7 @@ const SideRoomList: React.FC = () => {
       );
       
       const unsubscribe = onSnapshot(q, 
-        (snapshot) => {
+        async (snapshot) => {
           const roomsData = snapshot.docs.map(doc => {
             const data = doc.data();
             return {
@@ -134,11 +178,15 @@ const SideRoomList: React.FC = () => {
               genre: data.genre,
               tags: data.tags as string[] | undefined,
               category: data.category,
-              thumbnailUrl: data.thumbnailUrl
+              thumbnailUrl: data.thumbnailUrl,
+              ownerId: data.ownerId
             } as SideRoomData;
           });
           
-          setRooms(roomsData);
+          // Filter out rooms from blocked users
+          const filteredRooms = roomsData.filter(room => !blockedUsers.includes(room.ownerId));
+          
+          setRooms(filteredRooms);
           setLoading(false);
           setError(null);
         },
@@ -155,7 +203,7 @@ const SideRoomList: React.FC = () => {
       setError(`Error setting up query: ${err.message}`);
       setLoading(false);
     }
-  }, [db]);
+  }, [db, blockedUsers]); // Add blockedUsers as dependency to re-run when blockedUsers changes
 
   // Separate useEffect for filtering/sorting based on user interaction
   useEffect(() => {

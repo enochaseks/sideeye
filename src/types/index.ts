@@ -237,7 +237,7 @@ export interface UserProfile {
     privacy: string;
   };
   preferences: UserPreferences;
-  blockedUsers?: string[];
+  blockedUsers: string[];
   updatedAt?: Date;
   isPrivate: boolean;
   isActive: boolean;

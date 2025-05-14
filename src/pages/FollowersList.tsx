@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
-import { collection, getDocs, doc, getDoc, setDoc, deleteDoc, arrayUnion, arrayRemove, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc, deleteDoc, arrayUnion, arrayRemove, updateDoc, onSnapshot } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import {
   Box,
@@ -28,74 +28,129 @@ const FollowersList: React.FC = () => {
   const { db } = useFirestore();
   const [followers, setFollowers] = useState<(UserProfile & { isFollowing?: boolean })[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { currentUser } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchFollowers = async () => {
-      if (!db || !userId) {
-        console.error('Firestore database or userId is not initialized');
-        return;
-      }
-      console.log('Firestore database initialized:', db);
-      console.log('User ID:', userId);
+    if (!db || !userId) {
+      console.error('Firestore database or userId is not initialized');
+      return;
+    }
 
+    // Check if the user can view the followers
+    const fetchUserData = async () => {
       try {
-        // Check if the user can view the followers
         const userDoc = await getDoc(doc(db, 'users', userId));
         if (!userDoc.exists()) {
           setError('User not found');
-          return;
+          setLoading(false);
+          return false;
         }
 
         const userData = userDoc.data();
         const isPrivate = userData.isPrivate || false;
-        const canView = !isPrivate || (currentUser && currentUser.uid === userId);
-
-        if (!canView) {
-          setError('This account is private. Follow to see their followers.');
-          return;
+        
+        // If account is not private or current user is the account owner, they can view
+        if (!isPrivate || (currentUser && currentUser.uid === userId)) {
+          return true;
         }
-
-        // Get the followers subcollection
-        const followersRef = collection(db, 'users', userId, 'followers');
-        const followersSnapshot = await getDocs(followersRef);
-        console.log('Followers snapshot size:', followersSnapshot.size);
-
-        // Get current user's following list to check follow status for each user
-        let currentUserFollowing: string[] = [];
+        
+        // For private accounts, check if current user is a follower
         if (currentUser) {
-          const followingSnapshot = await getDocs(collection(db, 'users', currentUser.uid, 'following'));
-          currentUserFollowing = followingSnapshot.docs.map(doc => doc.id);
-        }
-
-        // Fetch follower details
-        const followerPromises = followersSnapshot.docs.map(async (followerDoc) => {
-          const followerId = followerDoc.id;
-          const userDoc = await getDoc(doc(db, 'users', followerId));
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as UserProfile;
-            return {
-              ...userData,
-              id: followerId,
-              isFollowing: currentUserFollowing.includes(followerId)
-            };
+          // Check if current user is in followers collection of the target user
+          const followerDocRef = doc(db, 'users', userId, 'followers', currentUser.uid);
+          const followerDoc = await getDoc(followerDocRef);
+          
+          if (followerDoc.exists()) {
+            // Current user is a follower, can view
+            return true;
           }
-          return null;
-        });
-
-        const followersData = await Promise.all(followerPromises);
-        setFollowers(followersData.filter(Boolean) as (UserProfile & { isFollowing?: boolean })[]);
-      } catch (err) {
-        setError('Failed to fetch followers');
-        console.error('Error fetching followers:', err);
-      } finally {
+        }
+        
+        // Current user is not a follower of the private account
+        setError('This account is private. Follow to see their followers.');
         setLoading(false);
+        return false;
+      } catch (err) {
+        console.error('Error fetching user data:', err);
+        setError('Failed to fetch user data');
+        setLoading(false);
+        return false;
       }
     };
 
-    fetchFollowers();
+    const setupRealTimeUpdates = async () => {
+      const canProceed = await fetchUserData();
+      if (!canProceed) return null;
+
+      // Get the followers subcollection with real-time updates
+      const followersRef = collection(db, 'users', userId, 'followers');
+      return onSnapshot(followersRef, async (followersSnapshot) => {
+        console.log('Real-time update - Followers snapshot size:', followersSnapshot.size);
+        
+        // If already loaded once, show refreshing indicator instead of full loading
+        if (!loading) {
+          setRefreshing(true);
+        }
+        
+        try {
+          // Get current user's following list to check follow status for each user
+          let currentUserFollowing: string[] = [];
+          if (currentUser) {
+            const followingSnapshot = await getDocs(collection(db, 'users', currentUser.uid, 'following'));
+            currentUserFollowing = followingSnapshot.docs.map(doc => doc.id);
+          }
+
+          // Fetch follower details
+          const followerPromises = followersSnapshot.docs.map(async (followerDoc) => {
+            const followerId = followerDoc.id;
+            const userDoc = await getDoc(doc(db, 'users', followerId));
+            if (userDoc.exists()) {
+              const userData = userDoc.data() as UserProfile;
+              return {
+                ...userData,
+                id: followerId,
+                isFollowing: currentUserFollowing.includes(followerId)
+              };
+            }
+            return null;
+          });
+
+          const followersData = await Promise.all(followerPromises);
+          setFollowers(followersData.filter(Boolean) as (UserProfile & { isFollowing?: boolean })[]);
+          setLoading(false);
+          setRefreshing(false);
+        } catch (err) {
+          setError('Failed to fetch followers');
+          console.error('Error fetching followers:', err);
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }, (err) => {
+        console.error('Error in followers snapshot listener:', err);
+        setError('Failed to listen for followers updates');
+        setLoading(false);
+        setRefreshing(false);
+      });
+    };
+
+    let unsubscribe: (() => void) | null = null;
+    
+    // Initialize the listener
+    setupRealTimeUpdates().then(unsub => {
+      unsubscribe = unsub;
+    }).catch(err => {
+      console.error('Error setting up followers updates:', err);
+    });
+    
+    // Return cleanup function
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [db, userId, currentUser]);
 
   const handleFollow = async (targetUserId: string) => {
@@ -111,6 +166,8 @@ const FollowersList: React.FC = () => {
         )
       );
 
+      setRefreshing(true);
+      
       // Add to current user's following collection
       await setDoc(doc(db, 'users', currentUser.uid, 'following', targetUserId), {
         createdAt: new Date()
@@ -132,6 +189,7 @@ const FollowersList: React.FC = () => {
       });
       
       toast.success('Followed successfully');
+      setRefreshing(false);
     } catch (error) {
       console.error('Error following user:', error);
       toast.error('Failed to follow user');
@@ -144,6 +202,7 @@ const FollowersList: React.FC = () => {
             : user
         )
       );
+      setRefreshing(false);
     }
   };
 
@@ -160,6 +219,8 @@ const FollowersList: React.FC = () => {
         )
       );
 
+      setRefreshing(true);
+      
       // Remove from current user's following collection
       await deleteDoc(doc(db, 'users', currentUser.uid, 'following', targetUserId));
       
@@ -177,6 +238,7 @@ const FollowersList: React.FC = () => {
       });
       
       toast.success('Unfollowed successfully');
+      setRefreshing(false);
     } catch (error) {
       console.error('Error unfollowing user:', error);
       toast.error('Failed to unfollow user');
@@ -189,6 +251,7 @@ const FollowersList: React.FC = () => {
             : user
         )
       );
+      setRefreshing(false);
     }
   };
 
@@ -218,6 +281,7 @@ const FollowersList: React.FC = () => {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             Followers
           </Typography>
+          {refreshing && <CircularProgress size={24} sx={{ mr: 2 }} />}
         </Toolbar>
       </AppBar>
       

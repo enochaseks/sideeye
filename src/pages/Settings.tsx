@@ -47,7 +47,8 @@ import {
   HelpOutline as HelpOutlineIcon,
   ReportProblem as ReportProblemIcon,
   Chat as ChatIcon,
-  SmartToy as SmartToyIcon
+  SmartToy as SmartToyIcon,
+  Block as BlockIcon,
 } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -141,11 +142,154 @@ const DeviceSelector = () => {
   );
 };
 
+const BlockedUsersList: React.FC = () => {
+  const { currentUser, unblockUser } = useAuth();
+  const [blockedUsers, setBlockedUsers] = useState<UserProfileData[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingUserId, setLoadingUserId] = useState<string | null>(null);
+  
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+    
+    const fetchBlockedUsers = async () => {
+      try {
+        setIsLoading(true);
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userDoc = await getDoc(userRef);
+        
+        if (!userDoc.exists()) {
+          setIsLoading(false);
+          return;
+        }
+        
+        const userData = userDoc.data();
+        const blockedUserIds = userData.blockedUsers || [];
+        
+        if (blockedUserIds.length === 0) {
+          setBlockedUsers([]);
+          setIsLoading(false);
+          return;
+        }
+        
+        const fetchedBlockedUsers = await Promise.all(
+          blockedUserIds.map(async (userId: string) => {
+            try {
+              const blockedUserRef = doc(db, 'users', userId);
+              const blockedUserDoc = await getDoc(blockedUserRef);
+              
+              if (blockedUserDoc.exists()) {
+                const blockedUserData = blockedUserDoc.data();
+                return {
+                  id: userId,
+                  userId: userId,
+                  username: blockedUserData.username || 'Unknown User',
+                  name: blockedUserData.name,
+                  profilePic: blockedUserData.profilePic,
+                  timestamp: new Date()
+                };
+              } else {
+                return {
+                  id: userId,
+                  userId: userId,
+                  username: 'Unknown User',
+                  timestamp: new Date()
+                };
+              }
+            } catch (error) {
+              console.error(`Error fetching blocked user ${userId}:`, error);
+              return {
+                id: userId,
+                userId: userId,
+                username: 'Unknown User',
+                timestamp: new Date()
+              };
+            }
+          })
+        );
+        
+        setBlockedUsers(fetchedBlockedUsers);
+      } catch (error) {
+        console.error('Error fetching blocked users:', error);
+        toast.error('Failed to load blocked users');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchBlockedUsers();
+  }, [currentUser?.uid, db]);
+  
+  const handleUnblockUser = async (userId: string) => {
+    if (!currentUser) return;
+    
+    try {
+      setLoadingUserId(userId);
+      await unblockUser(userId);
+      setBlockedUsers(prev => prev.filter(user => user.userId !== userId));
+      toast.success('User unblocked successfully');
+    } catch (error) {
+      console.error('Error unblocking user:', error);
+      toast.error('Failed to unblock user');
+    } finally {
+      setLoadingUserId(null);
+    }
+  };
+  
+  if (isLoading) {
+    return (
+      <Box sx={{ py: 2, display: 'flex', justifyContent: 'center' }}>
+        <CircularProgress size={20} />
+      </Box>
+    );
+  }
+  
+  if (blockedUsers.length === 0) {
+    return (
+      <Typography color="text.secondary" sx={{ py: 1 }}>
+        You haven't blocked any users.
+      </Typography>
+    );
+  }
+  
+  return (
+    <List sx={{ py: 0 }}>
+      {blockedUsers.map(user => (
+        <ListItem
+          key={user.userId || user.id}
+          secondaryAction={
+            <Button
+              variant="outlined"
+              size="small"
+              color="primary"
+              startIcon={loadingUserId === user.userId ? <CircularProgress size={16} /> : <BlockIcon />}
+              onClick={() => user.userId && handleUnblockUser(user.userId)}
+              disabled={loadingUserId === user.userId || !user.userId}
+            >
+              Unblock
+            </Button>
+          }
+          sx={{ px: 0, py: 1 }}
+        >
+          <ListItemAvatar>
+            <Avatar src={user.profilePic} sx={{ width: 40, height: 40 }}>
+              {user.username ? user.username[0]?.toUpperCase() : '?'}
+            </Avatar>
+          </ListItemAvatar>
+          <ListItemText
+            primary={user.name || user.username}
+            secondary={user.username ? `@${user.username}` : `User ${(user.userId || user.id || '').substring(0, 5)}`}
+          />
+        </ListItem>
+      ))}
+    </List>
+  );
+};
+
 const Settings: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { isDarkMode, toggleDarkMode } = useThemeContext();
-  const { currentUser, userProfile } = useAuth();
+  const { currentUser, userProfile, unblockUser } = useAuth();
   const { canViewProfile, canViewContent } = usePrivacy();
   const [showDeviceDialog, setShowDeviceDialog] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -678,6 +822,15 @@ const Settings: React.FC = () => {
               </Box>
             )}
           </Box>
+          
+          {/* Blocked Users Section */}
+          <Box sx={{ mt: 3 }}>
+            <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 500 }}>
+              Blocked Users
+            </Typography>
+            <BlockedUsersList />
+          </Box>
+          
           {isPrivate && followRequests.length > 0 && (
             <Box sx={{ mt: 3 }}>
               <Typography variant="h6" gutterBottom>

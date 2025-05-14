@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { auth } from '../services/firebase';
 import { User as FirebaseUser, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification, setPersistence, browserLocalPersistence, onAuthStateChanged } from 'firebase/auth';
 import { UserProfile, UserPreferences } from '../types/index';
-import { getDoc, doc, setDoc, Firestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, increment, Timestamp, getDocs } from 'firebase/firestore';
+import { getDoc, doc, setDoc, Firestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, increment, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 import bcrypt from 'bcryptjs';
@@ -15,6 +15,7 @@ export interface User extends FirebaseUser {
   isPrivate?: boolean;
   followers?: string[];
   following?: string[];
+  blockedUsers?: string[];
 }
 
 interface AuthContextType {
@@ -33,6 +34,9 @@ interface AuthContextType {
   setUserProfile: (profile: UserProfile) => void;
   verifySourceCodeAndCompleteLogin: (code: string) => Promise<void>;
   tempUserForSourceCode: User | null;
+  blockUser: (userId: string) => Promise<void>;
+  unblockUser: (userId: string) => Promise<void>;
+  isUserBlocked: (userId: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -50,7 +54,10 @@ const AuthContext = createContext<AuthContextType>({
   userProfile: null,
   setUserProfile: () => {},
   verifySourceCodeAndCompleteLogin: async () => {},
-  tempUserForSourceCode: null
+  tempUserForSourceCode: null,
+  blockUser: async () => {},
+  unblockUser: async () => {},
+  isUserBlocked: () => false
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -58,6 +65,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tempUserForSourceCode, setTempUserForSourceCode] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const navigate = useNavigate();
 
   const logError = (error: any, context: string) => {
@@ -116,6 +125,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubscribe();
     };
   }, []);
+
+  // Add effect to update userProfile and currentUser state when user changes
+  useEffect(() => {
+    if (user) {
+      setCurrentUser(user);
+      setUserProfile(user.profile || null);
+    } else {
+      setCurrentUser(null);
+      setUserProfile(null);
+    }
+  }, [user]);
 
   // Enhanced real-time listener for privacy settings
   useEffect(() => {
@@ -610,6 +630,140 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Add block user function
+  const blockUser = async (userId: string) => {
+    if (!currentUser?.uid || !db) {
+      setError('You must be logged in to block users');
+      return;
+    }
+
+    try {
+      // 1. Add userId to current user's blockedUsers array
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
+        blockedUsers: arrayUnion(userId),
+        updatedAt: serverTimestamp()
+      });
+
+      // 2. Remove any follower/following relationships
+      await updateDoc(userRef, {
+        followers: arrayRemove(userId),
+        following: arrayRemove(userId)
+      });
+
+      // 3. Remove current user from blocked user's followers/following
+      const blockedUserRef = doc(db, 'users', userId);
+      await updateDoc(blockedUserRef, {
+        followers: arrayRemove(currentUser.uid),
+        following: arrayRemove(currentUser.uid)
+      });
+
+      // 4. Delete any follower/following documents
+      try {
+        const followerDoc = doc(db, `users/${currentUser.uid}/followers`, userId);
+        const followingDoc = doc(db, `users/${currentUser.uid}/following`, userId);
+        await deleteDoc(followerDoc).catch(() => {});
+        await deleteDoc(followingDoc).catch(() => {});
+        
+        const theirFollowerDoc = doc(db, `users/${userId}/followers`, currentUser.uid);
+        const theirFollowingDoc = doc(db, `users/${userId}/following`, currentUser.uid);
+        await deleteDoc(theirFollowerDoc).catch(() => {});
+        await deleteDoc(theirFollowingDoc).catch(() => {});
+      } catch (error) {
+        console.error('Error removing follower documents:', error);
+        // Continue anyway as this is not critical
+      }
+
+      // 5. Delete any existing conversations between the users
+      try {
+        const conversationsRef = collection(db, 'conversations');
+        const q = query(
+          conversationsRef,
+          where('participants', 'array-contains', currentUser.uid)
+        );
+        const conversationsSnapshot = await getDocs(q);
+        
+        // Find conversations with the blocked user
+        const conversationsToDelete = conversationsSnapshot.docs.filter(doc => {
+          const data = doc.data();
+          return data.participants.includes(userId);
+        });
+        
+        // Delete each conversation
+        const batch = writeBatch(db);
+        conversationsToDelete.forEach(doc => {
+          batch.delete(doc.ref);
+        });
+        
+        await batch.commit();
+      } catch (error) {
+        console.error('Error deleting conversations:', error);
+        // Continue anyway
+      }
+
+      // 6. Update local state
+      setUser(prev => {
+        if (!prev) return null;
+        
+        const updatedBlockedUsers = [...(prev.blockedUsers || []), userId];
+        const updatedFollowers = prev.followers?.filter(id => id !== userId) || [];
+        const updatedFollowing = prev.following?.filter(id => id !== userId) || [];
+        
+        return {
+          ...prev,
+          blockedUsers: updatedBlockedUsers,
+          followers: updatedFollowers,
+          following: updatedFollowing
+        };
+      });
+
+      toast.success('User blocked successfully');
+    } catch (error) {
+      console.error('Error blocking user:', error);
+      setError('Failed to block user');
+      toast.error('Failed to block user');
+    }
+  };
+
+  // Add unblock user function
+  const unblockUser = async (userId: string) => {
+    if (!currentUser?.uid || !db) {
+      setError('You must be logged in to unblock users');
+      return;
+    }
+
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
+        blockedUsers: arrayRemove(userId),
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      setUser(prev => {
+        if (!prev) return null;
+        
+        const updatedBlockedUsers = prev.blockedUsers?.filter(id => id !== userId) || [];
+        
+        return {
+          ...prev,
+          blockedUsers: updatedBlockedUsers
+        };
+      });
+
+      toast.success('User unblocked successfully');
+    } catch (error) {
+      console.error('Error unblocking user:', error);
+      setError('Failed to unblock user');
+      toast.error('Failed to unblock user');
+    }
+  };
+
+  // Add helper function to check if a user is blocked
+  const isUserBlocked = (userId: string): boolean => {
+    return currentUser?.blockedUsers?.includes(userId) || false;
+  };
+
   const value = {
     user,
     loading,
@@ -621,18 +775,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sendEmailVerification,
     setError,
     forceCheckEmailVerification,
-    currentUser: user,
-    userProfile: user?.profile || null,
-    setUserProfile: (profile: UserProfile) => {
-      if (user) {
-        setUser({
-          ...user,
-          profile
-        });
-      }
-    },
+    currentUser,
+    userProfile,
+    setUserProfile,
     verifySourceCodeAndCompleteLogin,
-    tempUserForSourceCode
+    tempUserForSourceCode,
+    blockUser,
+    unblockUser,
+    isUserBlocked
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
