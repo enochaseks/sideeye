@@ -1,7 +1,7 @@
 {
   "name": "side-eye",
   "homepage": "https://www.sideeye.uk",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "proxy": "http://localhost:3001",
   "dependencies": {
@@ -75,7 +75,8 @@
     "deploy:all": "npm run build && firebase deploy",
     "server": "ts-node server.ts",
     "lint": "eslint .",
-    "update-version": "node scripts/update-version.js"
+    "update-version": "node scripts/update-version.js",
+    "watch-version": "node scripts/watch-release-notes.js"
   },
   "eslintConfig": {
     "extends": [
@@ -117,6 +118,7 @@
     "@types/serve-static": "^1.15.7",
     "@types/testing-library__jest-dom": "^5.14.9",
     "@types/uuid": "^10.0.0",
+    "chokidar": "^4.0.3",
     "compression-webpack-plugin": "^11.1.0",
     "cross-env": "^7.0.3",
     "gh-pages": "^6.3.0",
