@@ -12,6 +12,7 @@
 - New blocking/reporting on users profiles.
 - New Following features, reporting and blocking in the side rooms
 - New blocking section added to the settings page
+- Privacy chnages
 
 ## Version 1.0.0
 - Initial release of SideEye 

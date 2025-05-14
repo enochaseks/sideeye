@@ -783,10 +783,10 @@ const Profile: React.FC = () => {
                 This account is private
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Follow this account to see their photos and videos.
-              </Typography>
+                Follow this account to see their side rooms.  {/* [DO NOT CHANGE THIS] */}
+              </Typography> 
             </Box>
-          )}
+          )} 
         </Paper>
         
         {/* Tabs for content - keep only the profile icon */}
