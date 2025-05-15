@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   Container,
   Box,
@@ -192,11 +192,26 @@ const SetupSourceCode: React.FC = () => {
             }}
             required
           />
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 2 }}>
+            Your source code is a permanent security feature that cannot be reset. It protects your account by verifying your identity when logging in from new devices. Please remember this code as you will need it anytime you log in from a new device.
+          </Typography>
+          <Link 
+            to="/faq#source-code-faq" 
+            style={{ 
+              display: 'block', 
+              textAlign: 'center', 
+              marginBottom: '16px', 
+              fontSize: '0.9rem',
+              color: 'primary'
+            }}
+          >
+            Why do I need to set up a source code?
+          </Link>
           <Button
             type="submit"
             fullWidth
             variant="contained"
-            sx={{ mt: 3 }}
+            sx={{ mt: 1 }}
             disabled={loading || !deviceId}
           >
             {loading ? <CircularProgress size={24} /> : 'Register This Device'}

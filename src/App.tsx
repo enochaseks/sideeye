@@ -44,7 +44,6 @@ import { FirestoreProvider } from './context/FirestoreContext';
 import NotificationPage from './pages/Notifications';
 import SetupSourceCode from './pages/SetupSourceCode';
 import EnterSourceCode from './pages/EnterSourceCode';
-import ResetSourceCode from './pages/ResetSourceCode';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Debug from './pages/Debug';
@@ -56,6 +55,7 @@ import ReportPage from './pages/ReportPage';
 import { HelmetProvider } from 'react-helmet-async';
 import SadeAIInfo from './pages/SadeAIInfo';
 import UpdateNotification from './components/UpdateNotification';
+import FAQPage from './pages/FAQPage';
 
 const DRAWER_WIDTH = 240;
 const COLLAPSED_DRAWER_WIDTH = 64;
@@ -63,7 +63,7 @@ const COLLAPSED_DRAWER_WIDTH = 64;
 const BottomNavWrapper: React.FC = () => {
   const { currentUser } = useAuth();
   const location = useLocation();
-  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   
   if (!currentUser || ['/login', '/register'].includes(location.pathname)) {
     return null;
@@ -77,7 +77,7 @@ const AppContent: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isVibitsPage = location.pathname === '/vibits';
-  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -105,12 +105,12 @@ const AppContent: React.FC = () => {
             <Route path="/verify-email" element={<EmailVerification />} />
             <Route path="/setup-source-code" element={<SetupSourceCode />} />
             <Route path="/enter-source-code" element={<EnterSourceCode />} />
-            <Route path="/reset-source-code" element={<ResetSourceCode />} />
             <Route path="/safety" element={<SafetyPage />} />
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
             <Route path="/about" element={<About />} />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/cookies" element={<CookiePolicy />} />
+            <Route path="/faq" element={<FAQPage />} />
             
             {/* Protected routes */}
             <Route path="/" element={

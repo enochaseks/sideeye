@@ -308,6 +308,7 @@ const Settings: React.FC = () => {
   const [registrationSourceCode, setRegistrationSourceCode] = useState('');
   const [showSourceCodeDialog, setShowSourceCodeDialog] = useState(false);
   const [sourceCode, setSourceCode] = useState('');
+  const [sourceCodeInput, setSourceCodeInput] = useState('');
   const [emailNotifications, setEmailNotifications] = useState({
     sideRoomNotifications: true,
     messageNotifications: true, 
@@ -439,18 +440,20 @@ const Settings: React.FC = () => {
       
       if (userDoc.exists()) {
         const userData = userDoc.data();
-        const codeField = userData.sourceCodeHash || userData.verificationCode;
-        if (codeField) {
+        if (userData.sourceCodeHash) {
+          // If they have a source code hash, show the dialog to enter their source code
           setShowVerificationDialog(true);
         } else {
+          // If they don't have a source code set up yet, show the dialog to create one
           setShowCreateCodeDialog(true);
+          toast.error("You need to set up your source code first");
         }
       } else {
         toast.error("User data not found.");
       }
     } catch (error) {
-      console.error('Error checking verification code:', error);
-      toast.error('Failed to check verification status');
+      console.error('Error checking source code:', error);
+      toast.error('Failed to check source code status');
     }
   };
 
@@ -488,17 +491,18 @@ const Settings: React.FC = () => {
       
       if (userDoc.exists()) {
         const userData = userDoc.data();
-        const storedCode = userData.verificationCode;
+        const sourceCodeHash = userData.sourceCodeHash;
 
-        if (storedCode === verificationCode) {
-          const registrationCode = userData.registrationSourceCode || `REG-${currentUser.uid}`;
-          setSourceCode(registrationCode);
+        // Use bcrypt to compare entered code with the stored hash
+        if (sourceCodeHash && bcrypt.compareSync(verificationCode, sourceCodeHash)) {
+          // If the source code is correct, show confirmation of their source code
+          setSourceCode(verificationCode); // Use the entered code
           setShowSourceCodeDialog(true);
           setShowVerificationDialog(false);
           setVerificationCode('');
-          toast.success('Code verified successfully');
+          toast.success('Identity verified successfully');
         } else {
-          toast.error('Invalid verification code');
+          toast.error('Invalid source code');
         }
       } else {
         toast.error("User data not found.");
@@ -562,9 +566,9 @@ const Settings: React.FC = () => {
       isSetting: true
     },
     {
-      title: 'View Registration Code',
+      title: 'View Source Code',
       icon: <CodeIcon />,
-      description: 'View your unique registration code for new devices',
+      description: 'View your unique source code for new devices',
       onClick: handleViewSourceCode,
       isSetting: true
     },
@@ -962,6 +966,30 @@ const Settings: React.FC = () => {
       </Box>
 
       <Box sx={{ mb: 4 }}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>Frequently Asked Questions</Typography>
+        <Paper elevation={0} sx={{ p: 3, borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', py: 2 }}>
+            <HelpOutlineIcon sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
+            <Typography variant="h6" gutterBottom>
+              Need help with Source Codes or Security?
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3, maxWidth: 500 }}>
+              Visit our FAQ page to learn about source codes, security features, and get answers to commonly asked questions.
+            </Typography>
+            <Button 
+              variant="contained" 
+              component={Link} 
+              to="/faq" 
+              startIcon={<InfoIcon />}
+              sx={{ minWidth: 200 }}
+            >
+              Visit FAQ Page
+            </Button>
+          </Box>
+        </Paper>
+      </Box>
+
+      <Box sx={{ mb: 4 }}>
         <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>Sade AI Assistant</Typography>
         <Paper elevation={0} sx={{ p: 3, borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
           <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 3, alignItems: 'center' }}>
@@ -1092,13 +1120,13 @@ const Settings: React.FC = () => {
       </Dialog>
 
       <Dialog open={showVerificationDialog} onClose={() => setShowVerificationDialog(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Enter Verification Code</DialogTitle>
+        <DialogTitle>Enter Your Source Code</DialogTitle>
         <DialogContent>
            <Typography variant="body2" color="text.secondary" gutterBottom>
-            Enter the numeric verification code you created.
+            To view your registration code, please enter your source code for verification.
           </Typography>
           <TextField
-            label="Verification Code"
+            label="Source Code"
             value={verificationCode}
             onChange={(e) => setVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
             fullWidth
@@ -1120,12 +1148,12 @@ const Settings: React.FC = () => {
       </Dialog>
 
       <Dialog open={showSourceCodeDialog} onClose={() => setShowSourceCodeDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Your Registration Code</DialogTitle>
+        <DialogTitle>Your Source Code</DialogTitle>
         <DialogContent>
           <Alert severity="warning" icon={<InfoIcon />} sx={{ mb: 2 }}>
              Keep this code safe and private. You'll need it to log in on new devices. Do not share it.
           </Alert>
-          <Typography variant="body2" gutterBottom>Registration Code:</Typography>
+          <Typography variant="body2" gutterBottom>Source Code:</Typography>
           <Paper elevation={0} sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
              <Typography sx={{
                fontFamily: 'monospace',
@@ -1133,7 +1161,7 @@ const Settings: React.FC = () => {
                fontSize: '1.1rem',
                textAlign: 'center'
              }}>
-               {sourceCode || "No registration code found."}
+               {sourceCode || "No source code found."}
              </Typography>
           </Paper>
         </DialogContent>
@@ -1142,7 +1170,7 @@ const Settings: React.FC = () => {
            <Button
                onClick={() => {
                    navigator.clipboard.writeText(sourceCode);
-                   toast.success("Registration code copied!");
+                   toast.success("Source code copied!");
                }}
                disabled={!sourceCode}
            >

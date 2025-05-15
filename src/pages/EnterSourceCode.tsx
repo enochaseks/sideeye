@@ -9,7 +9,6 @@ import {
   CircularProgress,
   Alert,
   Paper,
-  Link as MuiLink,
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -82,11 +81,9 @@ const EnterSourceCode: React.FC = () => {
           >
             {loading ? <CircularProgress size={24} /> : 'Verify Code'}
           </Button>
-          <Box textAlign="center">
-            <MuiLink component={RouterLink} to="/reset-source-code" variant="body2" sx={{ mt: 1 }}>
-              Forgot Source Code?
-            </MuiLink>
-          </Box>
+          <Alert severity="info" sx={{ mt: 2 }}>
+            Your source code is the 8-digit security code you created during setup. This code is permanent and cannot be reset for security reasons.
+          </Alert>
         </Box>
       </Paper>
     </Container>

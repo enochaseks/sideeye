@@ -19,7 +19,8 @@ import {
     limit,
     Timestamp, // Ensure Timestamp is imported if used
     deleteField, // Import deleteField
-    addDoc // Import addDoc
+    addDoc, // Import addDoc
+    getDocs // Import getDocs
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -1055,6 +1056,18 @@ const SideRoomComponent: React.FC = () => {
                 setRoom(roomData);
                 setRoomHeartCount(roomData.heartCount || 0); // Set heart count
                 setLoading(false);
+                
+                // Check if room is password protected and user is not the owner
+                if (roomData.isPrivate && roomData.password && roomData.ownerId !== currentUser.uid) {
+                    // Check if user is already in viewers list (already authenticated)
+                    const isAlreadyViewer = roomData.viewers?.some(viewer => 
+                        viewer.userId === currentUser.uid && viewer.role !== 'guest'
+                    );
+                    
+                    if (!isAlreadyViewer) {
+                        setShowPasswordDialog(true);
+                    }
+                }
             } else {
                 // ADD THIS LOG:
                 console.warn(`[SideRoomComponent - Room Listener] Room document for roomId '${roomId}' reported as non-existent. Current error: '${error}'. Setting room state to null.`);
@@ -1434,18 +1447,68 @@ const SideRoomComponent: React.FC = () => {
         setIsInvitingUser(true);
         if (socket && currentUser?.uid && roomId && selectedInviteeForInvite?.username) {
             console.log(`Emitting invite-user-to-room: ${selectedInviteeForInvite.username}`);
-            socket.emit('invite-user-to-room', { 
-                roomId, 
-                inviterId: currentUser.uid, 
-                inviteeUsername: selectedInviteeForInvite.username 
-            });
+            
+            // Force check to see if user is already invited
+            try {
+                // Check if the user exists in the users collection first
+                const userQuery = query(
+                    collection(db, 'users'),
+                    where('username', '==', selectedInviteeForInvite.username)
+                );
+                const userSnapshot = await getDocs(userQuery);
+                
+                if (userSnapshot.empty) {
+                    toast.error("User not found.");
+                    setIsInvitingUser(false);
+                    return;
+                }
+                
+                // Get the first matching user (should be unique by username)
+                const userData = userSnapshot.docs[0].data() as UserProfile;
+                const userId = userSnapshot.docs[0].id;
+                
+                // Now check if this user is in the room's viewers list
+                const roomRef = doc(db, 'sideRooms', roomId);
+                const roomSnapshot = await getDoc(roomRef);
+                
+                if (!roomSnapshot.exists()) {
+                    toast.error("Room not found.");
+                    setIsInvitingUser(false);
+                    return;
+                }
+                
+                const roomData = roomSnapshot.data() as SideRoom;
+                const isUserInRoom = roomData.viewers?.some(viewer => viewer.userId === userId);
+                
+                if (isUserInRoom) {
+                    toast.error(`${selectedInviteeForInvite.username} is already in this room.`);
+                    setIsInvitingUser(false);
+                    return;
+                }
+                
+                // If we get here, user exists and is not in the room, so proceed with invite
+                socket.emit('invite-user-to-room', { 
+                    roomId, 
+                    inviterId: currentUser.uid, 
+                    inviteeUsername: selectedInviteeForInvite.username 
+                });
+            } catch (error) {
+                console.error("Error checking if user is in room:", error);
+                // Continue with invite anyway, let server handle validation
+                socket.emit('invite-user-to-room', { 
+                    roomId, 
+                    inviterId: currentUser.uid, 
+                    inviteeUsername: selectedInviteeForInvite.username 
+                });
+            }
+            
             // Let the 'invite-success' or 'invite-failed' listeners handle UI updates
         } else {
             console.warn("Could not send invite due to missing socket, user, room, or selected invitee info.", { socket: !!socket, currentUser: !!currentUser?.uid, roomId, selectedInviteeForInvite });
             toast.error("Cannot send invite: connection or user data issue.");
             setIsInvitingUser(false); // Reset processing state immediately on client-side error
         }
-    }, [currentUser?.uid, roomId, selectedInviteeForInvite, socket]); // Depend on socket state
+    }, [currentUser?.uid, roomId, selectedInviteeForInvite, socket, db]); // Added db to dependencies
 
     const handleDeleteRoom = useCallback(async () => {
         if (!roomId || !isRoomOwner) return;
@@ -2533,6 +2596,54 @@ const SideRoomComponent: React.FC = () => {
         }
     };
 
+    // Add/update the handlePasswordSubmit function
+    const handlePasswordSubmit = async () => {
+        if (!room || !password || !currentUser) {
+            toast.error("Missing information. Please try again.");
+            return;
+        }
+        
+        setIsProcessing(true);
+        
+        try {
+            // Check if password matches
+            if (room.password === password) {
+                // Add user to viewers list if not already there
+                const roomRef = doc(db, 'sideRooms', roomId as string);
+                
+                // Get current viewers list
+                const roomSnapshot = await getDoc(roomRef);
+                const roomData = roomSnapshot.data() as SideRoom;
+                const viewers = roomData.viewers || [];
+                
+                // Check if user is already in viewers list
+                const viewerExists = viewers.some(v => v.userId === currentUser.uid);
+                
+                if (!viewerExists) {
+                    // Add user to viewers list
+                    await updateDoc(roomRef, {
+                        viewers: [...viewers, {
+                            userId: currentUser.uid,
+                            username: currentUser.displayName || currentUser.email || 'User',
+                            role: 'viewer',
+                            joinedAt: serverTimestamp()
+                        }]
+                    });
+                }
+                
+                toast.success("Password correct. Welcome to the room!");
+                setShowPasswordDialog(false);
+            } else {
+                toast.error("Incorrect password. Please try again.");
+            }
+        } catch (error) {
+            console.error("Error verifying password:", error);
+            toast.error("An error occurred. Please try again.");
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     // Main return for SideRoomComponent
     return (
         <>
@@ -2865,44 +2976,45 @@ const SideRoomComponent: React.FC = () => {
                 {/* --- Edit Room Dialog (using RoomForm) --- */}
                 {showEditDialog && room && (
                     <RoomForm
-                        open={showEditDialog} // Use state variable for open prop
+                        open={showEditDialog} 
                         onClose={() => setShowEditDialog(false)}
                         onSubmit={async (updatedData, newThumbnailFile) => {
-                            // ... (Submit logic as implemented before)
-                            if (!roomId || !currentUser || !room) {
+                            if (!roomId || !currentUser) {
                                 toast.error("Error: Missing room or user data.");
                                 return;
                             }
                             setIsProcessing(true);
                             try {
-                                let thumbnailUrl = room.thumbnailUrl;
+                                // Start with current thumbnail URL
+                                let thumbnailUrl = room.thumbnailUrl || '';
+                                
+                                // Upload new thumbnail if provided
                                 if (newThumbnailFile) {
                                     const storageRef = ref(storage, `room-thumbnails/${roomId}_${Date.now()}_${newThumbnailFile.name}`);
                                     await uploadBytes(storageRef, newThumbnailFile);
                                     thumbnailUrl = await getDownloadURL(storageRef);
                                 }
+                                
                                 const roomRef = doc(db, 'sideRooms', roomId);
-                                const dataToUpdate: Partial<SideRoom> = {
+                                
+                                // Define fields to update
+                                const dataToUpdate: Record<string, any> = {
                                     name: updatedData.name,
                                     description: updatedData.description,
                                     isPrivate: updatedData.isPrivate,
                                     tags: updatedData.tags || [],
-                                    thumbnailUrl: thumbnailUrl, // Updated or existing URL
-                                    lastActive: serverTimestamp() as any, // Cast to any
+                                    thumbnailUrl: thumbnailUrl,
+                                    lastActive: serverTimestamp()
                                 };
-
-                                // Only include password if room is private AND a new password was entered
+                                
+                                // Handle password field
                                 if (updatedData.isPrivate && updatedData.password && updatedData.password.length > 0) {
                                     dataToUpdate.password = updatedData.password;
+                                } else if (!updatedData.isPrivate) {
+                                    // Remove password if room is public
+                                    dataToUpdate.password = deleteField();
                                 }
-                                // If room is being made public, ensure password field is removed/nullified
-                                else if (!updatedData.isPrivate) {
-                                    // Use deleteField() cast to any to satisfy TS here, updateDoc handles the sentinel
-                                    dataToUpdate.password = deleteField() as any; 
-                                }
-                                // If room remains private but password field was empty, keep existing password (don't set to null)
-                                // No explicit action needed here for this case.
-
+                                
                                 await updateDoc(roomRef, dataToUpdate);
                                 toast.success('Room details updated successfully!');
                                 setShowEditDialog(false);
@@ -3021,6 +3133,45 @@ const SideRoomComponent: React.FC = () => {
                             autoFocus
                         >
                             {isProcessing ? <CircularProgress size={24} /> : "End and Delete"}
+                        </Button>
+                    </DialogActions>
+                </Dialog>
+
+                {/* Add or update Password Dialog */}
+                <Dialog open={showPasswordDialog} onClose={() => {
+                    // If user closes dialog without entering password, navigate away
+                    if (!isRoomOwner && !hasRoomAccess) {
+                        navigate('/side-rooms');
+                    }
+                }}>
+                    <DialogTitle>Password Required</DialogTitle>
+                    <DialogContent>
+                        <Typography variant="body1" gutterBottom>
+                            This room is password protected. Please enter the password to join.
+                        </Typography>
+                        <TextField
+                            autoFocus
+                            margin="dense"
+                            id="password"
+                            label="Password"
+                            type="password"
+                            fullWidth
+                            variant="outlined"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && handlePasswordSubmit()}
+                        />
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={() => navigate('/side-rooms')} disabled={isProcessing}>
+                            Cancel
+                        </Button>
+                        <Button 
+                            onClick={handlePasswordSubmit} 
+                            disabled={isProcessing || !password} 
+                            variant="contained"
+                        >
+                            {isProcessing ? <CircularProgress size={24} /> : "Submit"}
                         </Button>
                     </DialogActions>
                 </Dialog>

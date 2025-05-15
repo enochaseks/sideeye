@@ -80,7 +80,8 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) 
   };
 
   const toggleDrawer = () => {
-    setIsDrawerOpen(!isDrawerOpen);
+    // Keep sidebar always collapsed by setting to false
+    setIsDrawerOpen(false);
   };
 
   const navigationItems = [
@@ -171,10 +172,10 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) 
         variant="permanent"
         anchor="left"
         sx={{
-          width: isDrawerOpen ? DRAWER_WIDTH : COLLAPSED_DRAWER_WIDTH,
+          width: COLLAPSED_DRAWER_WIDTH, // Always use collapsed width
           flexShrink: 0,
           '& .MuiDrawer-paper': {
-            width: isDrawerOpen ? DRAWER_WIDTH : COLLAPSED_DRAWER_WIDTH,
+            width: COLLAPSED_DRAWER_WIDTH, // Always use collapsed width
             boxSizing: 'border-box',
             borderRight: `1px solid ${theme.palette.divider}`,
             backgroundColor: theme.palette.background.paper,
@@ -206,9 +207,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) 
             backgroundColor: theme.palette.background.paper,
             borderTop: `1px solid ${theme.palette.divider}`
           }}>
-            <IconButton onClick={toggleDrawer}>
-              {isDrawerOpen ? <ChevronLeftIcon /> : <ChevronRightIcon />}
-            </IconButton>
+            {/* Remove toggle button to prevent users from expanding the sidebar */}
           </Box>
         </Box>
       </Drawer>
