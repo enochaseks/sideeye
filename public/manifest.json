@@ -21,12 +21,13 @@
       "purpose": "any maskable"
     }
   ],
-  "start_url": ".",
+  "start_url": ".https://sideeye.uk",
   "scope": ".",
   "display": "standalone",
   "theme_color": "#1976d2",
   "background_color": "#ffffff",
   "orientation": "portrait",
   "lang": "en-US",
-  "dir": "ltr"
+  "dir": "ltr",
+  "id": "com.sideeye.app"
 }
