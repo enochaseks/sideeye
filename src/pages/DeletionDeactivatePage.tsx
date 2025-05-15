@@ -22,7 +22,7 @@ import {
   DeleteForever as DeleteIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, deleteDoc, collection, query, getDocs, where, writeBatch, arrayRemove, getDoc } from 'firebase/firestore';
 import { deleteUser, EmailAuthProvider, reauthenticateWithCredential, getAuth } from 'firebase/auth';
 import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
@@ -37,6 +37,7 @@ const DeletionDeactivatePage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteProgress, setDeleteProgress] = useState<string | null>(null);
 
   // Function to handle account deactivation
   const handleDeactivateAccount = async () => {
@@ -87,6 +88,7 @@ const DeletionDeactivatePage: React.FC = () => {
 
     setLoading(true);
     setError(null);
+    setDeleteProgress('Authenticating...');
 
     try {
       if (!user.email) {
@@ -100,12 +102,18 @@ const DeletionDeactivatePage: React.FC = () => {
       await reauthenticateWithCredential(user, credential);
       console.log("Re-authentication successful");
 
+      // Manually perform cleanup before deleting user
+      setDeleteProgress('Cleaning up your data...');
+      await cleanupUserData(user.uid);
+
+      // Delete user document after cleanup
+      setDeleteProgress('Deleting user profile...');
       const userRef = doc(db, 'users', user.uid);
       await deleteDoc(userRef);
       console.log("Firestore user document deleted");
 
-      console.log("Cloud Function 'onUserDeleted' will handle further data cleanup.");
-
+      // Delete Firebase Auth user
+      setDeleteProgress('Finalizing account deletion...');
       await deleteUser(user);
       console.log("Firebase Auth user deleted");
       
@@ -125,6 +133,7 @@ const DeletionDeactivatePage: React.FC = () => {
       }
     } finally {
       setLoading(false);
+      setDeleteProgress(null);
       setPassword('');
       if (error) {
           setConfirmDeleteDialog(true);
@@ -133,6 +142,129 @@ const DeletionDeactivatePage: React.FC = () => {
           setConfirmDeleteDialog(false);
           setOpenDeleteDialog(false);
       }
+    }
+  };
+
+  // Function to clean up user data when account is deleted
+  const cleanupUserData = async (userId: string) => {
+    try {
+      // Use individual operations instead of batches for more reliability
+      setDeleteProgress('Processing side rooms created by you...');
+      
+      // 1. Find all SideRooms created by the user
+      const sideRoomsQuery = query(
+        collection(db, 'sideRooms'),
+        where('ownerId', '==', userId)
+      );
+      const sideRoomsSnapshot = await getDocs(sideRoomsQuery);
+      
+      // Mark rooms as deleted with individual operations
+      for (const roomDoc of sideRoomsSnapshot.docs) {
+        console.log(`Marking room ${roomDoc.id} as deleted`);
+        await updateDoc(doc(db, 'sideRooms', roomDoc.id), {
+          deleted: true,
+          deletedAt: new Date().toISOString(),
+          deletedBy: 'account-deletion'
+        });
+      }
+      
+      // 2. Remove user from all side rooms where they might be a viewer
+      setDeleteProgress('Removing you from all side rooms...');
+      const allRoomsQuery = query(collection(db, 'sideRooms'));
+      const allRoomsSnapshot = await getDocs(allRoomsQuery);
+      
+      for (const roomDoc of allRoomsSnapshot.docs) {
+        const roomData = roomDoc.data();
+        if (roomData.viewers && Array.isArray(roomData.viewers)) {
+          // Check if this user is in the viewers array
+          const userIsViewer = roomData.viewers.some((viewer: any) => 
+            viewer.userId === userId
+          );
+          
+          if (userIsViewer) {
+            console.log(`Removing user from room ${roomDoc.id} viewers`);
+            // Create a new viewers array without this user
+            const newViewers = roomData.viewers.filter((viewer: any) => viewer.userId !== userId);
+            await updateDoc(doc(db, 'sideRooms', roomDoc.id), {
+              viewers: newViewers,
+              viewerCount: Math.max(0, (roomData.viewerCount || 0) - 1)
+            });
+          }
+        }
+      }
+      
+      // 3. Get user's following collection (users they follow)
+      setDeleteProgress('Updating follower relationships...');
+      const followingCollection = collection(db, 'users', userId, 'following');
+      const followingSnapshot = await getDocs(followingCollection);
+      
+      // Process each user that the current user follows
+      for (const followingDoc of followingSnapshot.docs) {
+        const followedUserId = followingDoc.id;
+        console.log(`Processing followed user: ${followedUserId}`);
+        
+        try {
+          // Remove the current user from their followers collection
+          const followerDocRef = doc(db, 'users', followedUserId, 'followers', userId);
+          await deleteDoc(followerDocRef);
+          console.log(`Deleted follower document: users/${followedUserId}/followers/${userId}`);
+          
+          // Update their followers array
+          const userDocRef = doc(db, 'users', followedUserId);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            if (userData.followers && Array.isArray(userData.followers)) {
+              const newFollowers = userData.followers.filter((id: string) => id !== userId);
+              await updateDoc(userDocRef, { followers: newFollowers });
+              console.log(`Updated followers array for user ${followedUserId}`);
+            }
+          }
+        } catch (error) {
+          console.error(`Error updating followed user ${followedUserId}:`, error);
+          // Continue with the next user even if one fails
+        }
+      }
+      
+      // 4. Get user's followers collection (users who follow them)
+      setDeleteProgress('Updating following relationships...');
+      const followersCollection = collection(db, 'users', userId, 'followers');
+      const followersSnapshot = await getDocs(followersCollection);
+      
+      // Process each user who follows the current user
+      for (const followerDoc of followersSnapshot.docs) {
+        const followerUserId = followerDoc.id;
+        console.log(`Processing follower: ${followerUserId}`);
+        
+        try {
+          // Remove the current user from their following collection
+          const followingDocRef = doc(db, 'users', followerUserId, 'following', userId);
+          await deleteDoc(followingDocRef);
+          console.log(`Deleted following document: users/${followerUserId}/following/${userId}`);
+          
+          // Update their following array
+          const userDocRef = doc(db, 'users', followerUserId);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            if (userData.following && Array.isArray(userData.following)) {
+              const newFollowing = userData.following.filter((id: string) => id !== userId);
+              await updateDoc(userDocRef, { following: newFollowing });
+              console.log(`Updated following array for user ${followerUserId}`);
+            }
+          }
+        } catch (error) {
+          console.error(`Error updating follower ${followerUserId}:`, error);
+          // Continue with the next user even if one fails
+        }
+      }
+      
+      console.log("User data cleanup completed successfully");
+    } catch (error) {
+      console.error("Error cleaning up user data:", error);
+      throw new Error("Failed to clean up user data");
     }
   };
 
@@ -282,13 +414,21 @@ const DeletionDeactivatePage: React.FC = () => {
       {/* Final Confirmation Dialog */}
       <Dialog
         open={confirmDeleteDialog}
-        onClose={() => setConfirmDeleteDialog(false)}
+        onClose={() => !loading && setConfirmDeleteDialog(false)}
       >
         <DialogTitle><WarningIcon color="error" /> Final Warning</DialogTitle>
         <DialogContent>
           <DialogContentText>
             <strong>This action cannot be undone.</strong> Your account and all your data will be permanently deleted from our servers. Are you absolutely sure you want to proceed?
           </DialogContentText>
+          {deleteProgress && loading && (
+            <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <CircularProgress size={24} sx={{ mb: 1 }} />
+              <Typography variant="body2" color="text.secondary">
+                {deleteProgress}
+              </Typography>
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmDeleteDialog(false)} disabled={loading}>

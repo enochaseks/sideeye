@@ -67,69 +67,49 @@ const Login: React.FC = () => {
       
       // Perform login
       await login(email.trim(), password);
-      // login function should update the currentUser state via onAuthStateChanged
-      // We will rely on currentUser from context which updates shortly after login.
 
-      // NOTE: There's a potential timing issue here. If the component proceeds
-      // immediately after await login(), currentUser might not be updated yet.
-      // A more robust solution might involve checking within the AuthProvider's 
-      // onAuthStateChanged listener, but for simplicity, we check here.
-      // We add a small delay or check if currentUser becomes available.
-
-      // Get the currentUser AFTER the login attempt. 
-      // It might be null immediately after await, so we access it from the context state.
-      // We might need to handle the case where it's still null if navigation happens too fast.
+      setStatusMessage({type: 'info', message: 'Checking account status...'});
       
-      // Let's assume AuthContext updates currentUser reliably upon successful login.
-      // We access the currentUser *value* that exists *after* the login await completes.
-      if (currentUser) { // Check the currentUser from context state
-        const userRef = doc(db, "users", currentUser.uid);
-        const userDoc = await getDoc(userRef);
-
-        if (userDoc.exists() && userDoc.data()?.isActive === false) {
-          console.log("[Login] Reactivating account for user:", currentUser.uid);
-          await updateDoc(userRef, {
-            isActive: true,
-            deactivatedAt: deleteField() // Remove the deactivatedAt field
-          });
-          toast.success("Welcome back! Your account has been reactivated.");
+      // We need to wait a moment to ensure currentUser is updated
+      setTimeout(async () => {
+        // Check if we have a currentUser after login
+        if (currentUser) {
+          try {
+            const userRef = doc(db, "users", currentUser.uid);
+            const userDoc = await getDoc(userRef);
+            
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              
+              // Check if the account is deactivated
+              if (userData.isActive === false) {
+                console.log("[Login] Reactivating account for user:", currentUser.uid);
+                
+                // Reactivate the account
+                await updateDoc(userRef, {
+                  isActive: true,
+                  reactivatedAt: new Date().toISOString(),
+                  deactivatedAt: deleteField() // Remove the deactivatedAt field
+                });
+                
+                // Show success message
+                toast.success("Welcome back! Your account has been reactivated.");
+                
+                // Navigate to home
+                navigate('/');
+              }
+            }
+          } catch (error) {
+            console.error("[Login] Error checking/reactivating account:", error);
+          }
         }
-      } else {
-          // This case might happen if the component logic proceeds before 
-          // the AuthContext state is fully updated after login.
-          console.warn("[Login] currentUser not available immediately after login for reactivation check.");
-      }
-      // --- End Reactivation Check ---
-      
-      // Login success message - shows briefly before potential redirect
-      setStatusMessage({type: 'success', message: 'Login successful! Redirecting...'});
-      
-    } catch (err: any) {
-      console.error('Login component caught error:', err);
-      // Display user-friendly error message
-      if (err.code === 'auth/too-many-requests' || err.message === 'auth/too-many-requests') {
-        setStatusMessage({
-          type: 'error', 
-          message: 'Too many failed login attempts. Please try again later or reset your password.'
-        });
-      } else if (err.code === 'auth/invalid-credential' || err.message === 'auth/invalid-credential') {
-        setStatusMessage({
-          type: 'error', 
-          message: 'Invalid email or password. Please try again.'
-        });
-      } else if (err.code === 'auth/invalid-email' || err.message === 'auth/invalid-email') {
-        setStatusMessage({
-          type: 'error',
-          message: 'Invalid email address. Please check the format.'
-        });
-      } else {
-        setStatusMessage({
-          type: 'error',
-          message: err.message || 'Login failed. Please try again.'
-        });
-      }
-    } finally {
+        
+        setLocalLoading(false);
+      }, 1000); // Small delay to ensure currentUser is updated
+    } catch (error: any) {
+      console.error('Login error:', error);
       setLocalLoading(false);
+      // The AuthContext's error handling will take care of displaying error messages
     }
   };
 

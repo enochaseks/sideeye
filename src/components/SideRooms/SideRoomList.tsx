@@ -38,7 +38,8 @@ import {
   Search as SearchIcon,
   FilterList as FilterIcon,
   Visibility as VisibilityIcon,
-  AccessTime as AccessTimeIcon
+  AccessTime as AccessTimeIcon,
+  CleaningServices as CleanupIcon
 } from '@mui/icons-material';
 import CreateSideRoom from '../CreateSideRoom';
 import { useFirestore } from '../../context/FirestoreContext';
@@ -93,6 +94,8 @@ const SideRoomList: React.FC = () => {
   const [password, setPassword] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
+  const [isAdminCleanupRunning, setIsAdminCleanupRunning] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   
   // Search and filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -183,8 +186,11 @@ const SideRoomList: React.FC = () => {
             } as SideRoomData;
           });
           
-          // Filter out rooms from blocked users
-          const filteredRooms = roomsData.filter(room => !blockedUsers.includes(room.ownerId));
+          // Double-check filtering of deleted rooms since some might not have the deleted field
+          const filteredRooms = roomsData.filter(room => 
+            !blockedUsers.includes(room.ownerId) && 
+            !(room as any).deleted
+          );
           
           setRooms(filteredRooms);
           setLoading(false);
@@ -203,7 +209,7 @@ const SideRoomList: React.FC = () => {
       setError(`Error setting up query: ${err.message}`);
       setLoading(false);
     }
-  }, [db, blockedUsers]); // Add blockedUsers as dependency to re-run when blockedUsers changes
+  }, [db, blockedUsers]);
 
   // Separate useEffect for filtering/sorting based on user interaction
   useEffect(() => {
@@ -250,6 +256,24 @@ const SideRoomList: React.FC = () => {
     setFilteredRooms(filtered);
 
   }, [rooms, searchQuery, selectedGenre, sortBy]); // Re-run filtering when data or filters change
+
+  // Check if the current user is an admin
+  useEffect(() => {
+    if (!currentUser || !db) return;
+    
+    const checkAdminStatus = async () => {
+      try {
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        const userData = userDoc.data();
+        setIsAdmin(userData?.role === 'admin');
+      } catch (error) {
+        console.error("Error checking admin status:", error);
+        setIsAdmin(false);
+      }
+    };
+    
+    checkAdminStatus();
+  }, [currentUser, db]);
 
   const handleJoinRoom = async (room: SideRoomData) => {
     if (!currentUser || !db) {
@@ -349,6 +373,68 @@ const SideRoomList: React.FC = () => {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
+  // Function to check for orphaned rooms (rooms whose owners don't exist anymore)
+  const cleanupOrphanedRooms = async () => {
+    if (!currentUser || !isAdmin) {
+      toast.error("Only administrators can run this operation");
+      return;
+    }
+    
+    setIsAdminCleanupRunning(true);
+    try {
+      // 1. Get all rooms
+      const roomsQuery = query(collection(db, 'sideRooms'), where("deleted", "!=", true));
+      const roomsSnapshot = await getDocs(roomsQuery);
+      
+      // Set of all owner IDs
+      const ownerIds = new Set<string>();
+      const roomsToCheck: { id: string, ownerId: string }[] = [];
+      
+      roomsSnapshot.forEach(roomDoc => {
+        const roomData = roomDoc.data();
+        if (roomData.ownerId) {
+          ownerIds.add(roomData.ownerId);
+          roomsToCheck.push({ id: roomDoc.id, ownerId: roomData.ownerId });
+        }
+      });
+      
+      console.log(`Found ${ownerIds.size} unique room owners to check`);
+      
+      // Only check each owner once - creates a map of userId -> exists
+      const ownerExistsMap = new Map<string, boolean>();
+      
+      // Check each unique owner
+      const ownerIdsArray = Array.from(ownerIds);
+      for (const ownerId of ownerIdsArray) {
+        const userDoc = await getDoc(doc(db, 'users', ownerId));
+        ownerExistsMap.set(ownerId, userDoc.exists());
+      }
+      
+      // Mark rooms as deleted if their owner doesn't exist
+      let cleanupCount = 0;
+      for (const room of roomsToCheck) {
+        const ownerExists = ownerExistsMap.get(room.ownerId) ?? false;
+        
+        if (!ownerExists) {
+          console.log(`Marking room ${room.id} as deleted - owner ${room.ownerId} no longer exists`);
+          await updateDoc(doc(db, 'sideRooms', room.id), {
+            deleted: true,
+            deletedAt: new Date().toISOString(),
+            deletedBy: 'admin-cleanup'
+          });
+          cleanupCount++;
+        }
+      }
+      
+      toast.success(`Cleanup complete: ${cleanupCount} orphaned rooms marked as deleted`);
+    } catch (error) {
+      console.error("Error cleaning up orphaned rooms:", error);
+      toast.error("Error during cleanup");
+    } finally {
+      setIsAdminCleanupRunning(false);
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
@@ -365,14 +451,26 @@ const SideRoomList: React.FC = () => {
     <Box sx={{ flexGrow: 1, p: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">Side Rooms</Typography>
-        <Button
-          variant="contained"
-          startIcon={<Add />}
-          onClick={() => setShowCreateRoom(true)}
-          disabled={!currentUser}
-        >
-          Create Room
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          {isAdmin && (
+            <Button
+              variant="outlined"
+              startIcon={isAdminCleanupRunning ? <CircularProgress size={20} /> : <CleanupIcon />}
+              onClick={cleanupOrphanedRooms}
+              disabled={isAdminCleanupRunning}
+            >
+              {isAdminCleanupRunning ? 'Cleaning...' : 'Cleanup Orphaned Rooms'}
+            </Button>
+          )}
+          <Button
+            variant="contained"
+            startIcon={<Add />}
+            onClick={() => setShowCreateRoom(true)}
+            disabled={!currentUser}
+          >
+            Create Room
+          </Button>
+        </Box>
       </Box>
 
       <Paper elevation={1} sx={{ p: 2, mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>

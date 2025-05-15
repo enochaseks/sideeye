@@ -92,14 +92,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           console.log('Fetching Firestore document for:', freshFirebaseUser.uid);
-          const userDoc = await getDoc(doc(db, 'users', freshFirebaseUser.uid));
+          const userRef = doc(db, 'users', freshFirebaseUser.uid);
+          const userDoc = await getDoc(userRef);
           
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
-            setUser({
-              ...freshFirebaseUser,
-              profile: userData
-            });
+            
+            // Check if the account is deactivated
+            if (userData.isActive === false) {
+              console.log('Reactivating deactivated account:', freshFirebaseUser.uid);
+              
+              // Reactivate the account
+              await updateDoc(userRef, {
+                isActive: true,
+                reactivatedAt: new Date().toISOString(),
+                deactivatedAt: null // Remove deactivated timestamp
+              });
+              
+              // Fetch the updated user data
+              const updatedUserDoc = await getDoc(userRef);
+              if (updatedUserDoc.exists()) {
+                const updatedUserData = updatedUserDoc.data() as UserProfile;
+                
+                setUser({
+                  ...freshFirebaseUser,
+                  profile: updatedUserData
+                });
+                
+                // Show reactivation message
+                toast.success('Welcome back! Your account has been reactivated.');
+              }
+            } else {
+              // Normal login for active account
+              setUser({
+                ...freshFirebaseUser,
+                profile: userData
+              });
+            }
+            
             console.log('User data loaded successfully:', freshFirebaseUser.uid);
             setLoading(false);
           } else {
