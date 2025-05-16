@@ -112,7 +112,8 @@ import {
     Tune as TuneIcon,
     VolumeDown as VolumeDownIcon,
     PersonAdd as PersonAddIcon,
-    Report as ReportIcon // Added ReportIcon
+    Report as ReportIcon, // Added ReportIcon
+    VerifiedUser as VerifiedUserIcon // Added VerifiedUserIcon
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -3081,7 +3082,22 @@ const SideRoomComponent: React.FC = () => {
                                             {inviteSearchResults.map(userResult => (
                                                 <ListItem key={userResult.id} button onClick={() => handleSelectInvitee(userResult)}>
                                                     <ListItemAvatar><Avatar src={userResult.profilePic} alt={userResult.username} /></ListItemAvatar>
-                                                    <ListItemText primary={userResult.username} secondary={userResult.name} />
+                                                    <ListItemText 
+                                                        primary={
+                                                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                                {userResult.username}
+                                                                <VerifiedUserIcon 
+                                                                    sx={{ 
+                                                                        ml: 0.5, 
+                                                                        color: 'primary.main',
+                                                                        fontSize: '0.8rem',
+                                                                        verticalAlign: 'middle'
+                                                                    }} 
+                                                                />
+                                                            </Box>
+                                                        } 
+                                                        secondary={userResult.name} 
+                                                    />
                                                 </ListItem>
                                             ))}
                                         </List>
@@ -3092,7 +3108,19 @@ const SideRoomComponent: React.FC = () => {
                                 <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>No users found matching "{inviteSearchQuery}".</Typography>
                             )}
                         </Box>
-                        {selectedInviteeForInvite && (<Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'success.main' }}>Selected: {selectedInviteeForInvite.username}</Typography>)}
+                        {selectedInviteeForInvite && (
+                            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'success.main' }}>
+                                Selected: {selectedInviteeForInvite.username}
+                                <VerifiedUserIcon 
+                                    sx={{ 
+                                        ml: 0.3, 
+                                        color: 'primary.main',
+                                        fontSize: '0.7rem',
+                                        verticalAlign: 'middle'
+                                    }} 
+                                />
+                            </Typography>
+                        )}
                     </DialogContent>
                     <DialogActions>
                         <Button onClick={() => { setShowInviteDialog(false); setInviteSearchQuery(''); setSelectedInviteeForInvite(null); setInviteSearchResults([]); setShowInviteDropdown(false); }}>Cancel</Button>

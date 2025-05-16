@@ -153,12 +153,12 @@ const AppContent: React.FC = () => {
                 <SideRoomComponent />
               </ProtectedRoute>
             } />
-            <Route path="/chat/:userId" element={
+            <Route path="/chat/conversation/:conversationId" element={
               <ProtectedRoute>
                 <Chat />
               </ProtectedRoute>
             } />
-            <Route path="/chat/conversation/:conversationId" element={
+            <Route path="/chat/user/:userId" element={
               <ProtectedRoute>
                 <Chat />
               </ProtectedRoute>

@@ -22,6 +22,11 @@
 - Deactivation/Deletion updates, Users who delete their account all their activities and details are deleted on firestore
 - Users who deactivate their account, their activities and profile still in tact but will be logged out until they reactivate.
 - Profile alignment glitch fixed
+- Verification badged added and Follow Request glitch fixed
+- New emoji reactions and picker inside messages.
+- Improved the padding in the chat messages 
+- Removed the auto reply glitch
+- Fixed the search function in the discover page
 
 ## Version 1.0.0
 - Initial release of SideEye 

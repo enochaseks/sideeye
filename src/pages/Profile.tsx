@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Container, 
   Typography, 
@@ -106,8 +106,165 @@ const Profile: React.FC = () => {
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [showBlockDialog, setShowBlockDialog] = useState(false);
   const [showReportDialog, setShowReportDialog] = useState(false);
+  
+  // Username validation states
+  const [checkingUsername, setCheckingUsername] = useState(false);
+  const [usernameTaken, setUsernameTaken] = useState(false);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [usernameOptions, setUsernameOptions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const originalUsername = useRef<string>('');
 
   const userId = targetUserId || currentUser?.uid || '';
+
+  // Function to check if username exists in Firestore
+  const checkUsernameExists = async (username: string): Promise<boolean> => {
+    if (!db) return false;
+    
+    try {
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('username', '==', username));
+      const snapshot = await getDocs(q);
+      
+      // If we found the same username but it belongs to the current user, it's not taken
+      if (!snapshot.empty && snapshot.docs.length === 1) {
+        const foundUserId = snapshot.docs[0].id;
+        if (foundUserId === currentUser?.uid) {
+          return false; // Not taken, it's the current user's username
+        }
+      }
+      
+      return !snapshot.empty; // Taken if there are any documents
+    } catch (error) {
+      console.error('Error checking username:', error);
+      return false;
+    }
+  };
+
+  // Function to generate username suggestions
+  const generateUsernameSuggestions = (username: string): string[] => {
+    const suggestions: string[] = [];
+    
+    // Add a random number
+    suggestions.push(`${username}${Math.floor(Math.random() * 100)}`);
+    
+    // Add the current year
+    const currentYear = new Date().getFullYear();
+    suggestions.push(`${username}${currentYear}`);
+    
+    // Add underscore and random number
+    suggestions.push(`${username}_${Math.floor(Math.random() * 100)}`);
+    
+    // Add a prefix
+    suggestions.push(`real_${username}`);
+    
+    // Add a suffix with random number
+    suggestions.push(`${username}${Math.floor(Math.random() * 1000)}`);
+    
+    return suggestions;
+  };
+  
+  const handleUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newUsername = e.target.value;
+    setEditedUsername(newUsername);
+    
+    // Reset states
+    if (newUsername === originalUsername.current) {
+      setUsernameTaken(false);
+      setUsernameError(null);
+      setShowSuggestions(false);
+      return;
+    }
+    
+    // Basic validation
+    if (!/^[a-zA-Z0-9_-]+$/.test(newUsername)) {
+      setUsernameError('Username can only contain letters, numbers, underscores, and hyphens');
+      return;
+    } else if (newUsername.length < 3) {
+      setUsernameError('Username must be at least 3 characters long');
+      return;
+    } else {
+      setUsernameError(null);
+    }
+  };
+  
+  // Effect to validate username when it changes
+  useEffect(() => {
+    let isActive = true;
+    const debounceTimeout = setTimeout(async () => {
+      // Skip validation for empty usernames or if it's the original username
+      if (!editedUsername || editedUsername === originalUsername.current || editedUsername.length < 3 || !currentUser) {
+        return;
+      }
+      
+      // Basic validation
+      if (!/^[a-zA-Z0-9_-]+$/.test(editedUsername)) {
+        return;
+      }
+      
+      setCheckingUsername(true);
+      
+      try {
+        const exists = await checkUsernameExists(editedUsername);
+        
+        if (!isActive) return;
+        
+        if (exists) {
+          setUsernameTaken(true);
+          setUsernameError('Username is already taken');
+          
+          // Generate suggestions
+          const suggestions = generateUsernameSuggestions(editedUsername);
+          
+          // Verify suggestions are available
+          const validatedSuggestions: string[] = [];
+          
+          // Check each suggestion in parallel
+          const checkResults = await Promise.all(
+            suggestions.map(async (suggestion) => {
+              const exists = await checkUsernameExists(suggestion);
+              return { suggestion, exists };
+            })
+          );
+          
+          // Filter out taken usernames
+          checkResults.forEach(result => {
+            if (!result.exists) {
+              validatedSuggestions.push(result.suggestion);
+            }
+          });
+          
+          if (!isActive) return;
+          
+          setUsernameOptions(validatedSuggestions);
+          setShowSuggestions(validatedSuggestions.length > 0);
+        } else {
+          setUsernameTaken(false);
+          setUsernameError(null);
+          setUsernameOptions([]);
+          setShowSuggestions(false);
+        }
+      } catch (error) {
+        console.error('Error validating username:', error);
+      } finally {
+        if (isActive) {
+          setCheckingUsername(false);
+        }
+      }
+    }, 500);
+
+    return () => {
+      isActive = false;
+      clearTimeout(debounceTimeout);
+    };
+  }, [editedUsername, db, currentUser?.uid]);
+
+  const handleSuggestionClick = (suggestion: string) => {
+    setEditedUsername(suggestion);
+    setUsernameTaken(false);
+    setUsernameError(null);
+    setShowSuggestions(false);
+  };
 
   useEffect(() => {
     if (!urlParam) {
@@ -179,6 +336,18 @@ const Profile: React.FC = () => {
       }
 
       const userData = userDoc.data() as UserProfile;
+      
+      // Set user as verified
+      userData.isVerified = true;
+      
+      // Update user profile in context if it's the current user
+      if (currentUser?.uid === targetUserId && setUserProfile && userProfile) {
+        const updatedProfile: UserProfile = {
+          ...userProfile,
+          isVerified: true
+        };
+        setUserProfile(updatedProfile);
+      }
 
       if (userData.isActive === false) {
         setIsDeactivated(true);
@@ -195,6 +364,7 @@ const Profile: React.FC = () => {
       setName(userData.name || '');
       setBio(userData.bio || '');
       setProfilePic(userData.profilePic || null);
+      setEmail(userData.email || '');
 
       if (isOwnProfile || !isPrivateAccount) {
         setCanViewFullProfile(true);
@@ -253,7 +423,7 @@ const Profile: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [db, targetUserId, currentUser]);
+  }, [db, targetUserId, currentUser, setUserProfile]);
 
   useEffect(() => {
     fetchUserData();
@@ -309,50 +479,109 @@ const Profile: React.FC = () => {
     return () => unsubscribe();
   }, [db, userId]);
 
+  // EMERGENCY FIX: Force following state to sync by checking both collections
   useEffect(() => {
     if (!db || !currentUser || !userId) return;
 
-    // Check if the user is following, or has sent a follow request that's pending
-    const fetchFollowStatus = async () => {
-      // Check if directly following
-      const followingRef = doc(db, 'users', currentUser.uid, 'following', userId);
-      const followingDoc = await getDoc(followingRef);
+    // Check both collections IMMEDIATELY at page load
+    const forceFollowStateCheck = async () => {
+      console.log("EMERGENCY: Checking follow state for", userId);
       
-      if (followingDoc.exists()) {
-        setIsFollowing(true);
-        return;
-      }
-      
-      // If not directly following, check if a follow request has been sent
-      const followRequestRef = doc(db, 'users', userId, 'followRequests', currentUser.uid);
-      const followRequestDoc = await getDoc(followRequestRef);
-      
-      if (followRequestDoc.exists()) {
-        setFollowRequested(true);
-      } else {
-        setFollowRequested(false);
-        setIsFollowing(false);
+      try {
+        // First, check our following collection
+        const myFollowingRef = doc(db, 'users', currentUser.uid, 'following', userId);
+        const followingDoc = await getDoc(myFollowingRef);
+        
+        // Then, check their followers collection
+        const theirFollowersRef = doc(db, 'users', userId, 'followers', currentUser.uid);
+        const followerDoc = await getDoc(theirFollowersRef);
+        
+        // If either indicates following, show as following
+        if (followingDoc.exists() || followerDoc.exists()) {
+          console.log("EMERGENCY: Setting isFollowing to TRUE for", userId);
+          setIsFollowing(true);
+          setFollowRequested(false);
+          
+          // Force data consistency in both directions
+          if (!followingDoc.exists()) {
+            await setDoc(myFollowingRef, { timestamp: serverTimestamp() });
+            console.log("EMERGENCY: Fixed missing following entry for", userId);
+          }
+          
+          if (!followerDoc.exists()) {
+            await setDoc(theirFollowersRef, { timestamp: serverTimestamp() });
+            console.log("EMERGENCY: Fixed missing follower entry for", userId);
+          }
+          
+          return; // We've determined following status
+        }
+        
+        // Next check for follow requests
+        const requestRef = doc(db, 'users', userId, 'followRequests', currentUser.uid);
+        const requestDoc = await getDoc(requestRef);
+        
+        if (requestDoc.exists()) {
+          console.log("EMERGENCY: Setting followRequested to TRUE for", userId);
+          setFollowRequested(true);
+          setIsFollowing(false);
+        } else {
+          setFollowRequested(false);
+          setIsFollowing(false);
+        }
+      } catch (error) {
+        console.error("EMERGENCY: Error checking follow state:", error);
       }
     };
     
-    fetchFollowStatus();
+    // Run the emergency check immediately
+    forceFollowStateCheck();
     
-    // Also listen for real-time updates to following status
+    // Set up real-time listeners
     const followingRef = doc(db, 'users', currentUser.uid, 'following', userId);
-    const unsubscribe = onSnapshot(followingRef, (doc) => {
-      setIsFollowing(doc.exists());
+    const followerRef = doc(db, 'users', userId, 'followers', currentUser.uid);
+    const requestRef = doc(db, 'users', userId, 'followRequests', currentUser.uid);
+    
+    // Monitor BOTH following and followers collections
+    const unsubFollowing = onSnapshot(followingRef, (doc) => {
       if (doc.exists()) {
+        console.log("EMERGENCY: following doc changed, exists=", doc.exists());
+        setIsFollowing(true);
         setFollowRequested(false);
       }
     });
+    
+    const unsubFollower = onSnapshot(followerRef, (doc) => {
+      if (doc.exists()) {
+        console.log("EMERGENCY: follower doc changed, exists=", doc.exists());
+        setIsFollowing(true);
+        setFollowRequested(false);
+        
+        // Ensure consistency in following collection too
+        setDoc(followingRef, { timestamp: serverTimestamp() })
+          .catch(err => console.error("Failed to sync following doc:", err));
+      }
+    });
+    
+    // Also listen for follow requests
+    const unsubRequest = onSnapshot(requestRef, (doc) => {
+      if (doc.exists() && !isFollowing) {
+        console.log("EMERGENCY: request doc changed, exists=", doc.exists());
+        setFollowRequested(true);
+      }
+    });
 
-    return () => unsubscribe();
-  }, [db, currentUser, userId]);
+    return () => {
+      unsubFollowing();
+      unsubFollower();
+      unsubRequest();
+    };
+  }, [db, currentUser, userId, isFollowing]);
 
   useEffect(() => {
     if (isEditing) {
       setEditedName(name);
       setEditedUsername(username);
+      originalUsername.current = username; // Store the original username
       setEditedBio(bio);
     }
   }, [isEditing, name, username, bio]);
@@ -366,6 +595,15 @@ const Profile: React.FC = () => {
     try {
       setIsLoading(true);
       
+      // Update UI state FIRST before any async operations
+      if (isPrivate) {
+        // Immediately update UI for request
+        setFollowRequested(true);
+      } else {
+        // Immediately update UI for follow
+        setIsFollowing(true);
+      }
+      
       // Check if the target account is private
       if (isPrivate) {
         // Send follow request
@@ -375,7 +613,7 @@ const Profile: React.FC = () => {
           username: userProfile?.username || user?.displayName || `User_${currentUser.uid.substring(0, 5)}`,
           timestamp: serverTimestamp()
         });
-        setFollowRequested(true);
+        // UI already updated above
         toast.success('Follow request sent');
       } else {
         // Also check if the current user has a private account - if the current user follows someone,
@@ -387,20 +625,43 @@ const Profile: React.FC = () => {
           toast.success('Your account is private. They will need to send a request to follow you back.');
         }
         
-        // Direct follow
+        // Direct follow - UI already updated above 
         const followingRef = doc(db, 'users', currentUser.uid, 'following', userId);
         const followersRef = doc(db, 'users', userId, 'followers', currentUser.uid);
         
-        await setDoc(followingRef, { timestamp: serverTimestamp() });
-        await setDoc(followersRef, { timestamp: serverTimestamp() });
-        
-        setIsFollowing(true);
-        toast.success('Followed successfully');
+        try {
+          // Use a batch to ensure both writes happen together
+          const batch = writeBatch(db);
+          batch.set(followingRef, { timestamp: serverTimestamp() });
+          batch.set(followersRef, { timestamp: serverTimestamp() });
+          await batch.commit();
+          
+          console.log("EMERGENCY: Successfully followed user with batch write");
+          // UI already updated above
+          toast.success('Followed successfully');
+        } catch (batchError) {
+          console.error("EMERGENCY: Batch write failed, trying individual writes", batchError);
+          
+          // If batch fails, try individual writes
+          await setDoc(followingRef, { timestamp: serverTimestamp() });
+          await setDoc(followersRef, { timestamp: serverTimestamp() });
+          
+          console.log("EMERGENCY: Individual writes succeeded");
+          toast.success('Followed successfully');
+        }
       }
     } catch (error) {
-      console.error('Error handling follow:', error);
+      console.error('EMERGENCY: Error in handleFollow:', error);
+      
+      // Revert UI changes on error
+      if (isPrivate) {
+        setFollowRequested(false);
+      } else {
+        setIsFollowing(false);
+      }
+      
       setError('Failed to process follow request');
-      toast.error('Failed to process follow request');
+      toast.error('Failed to follow user. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -415,21 +676,44 @@ const Profile: React.FC = () => {
     try {
       setIsLoading(true);
       
-      const followingDocRef = doc(db, 'users', currentUser.uid, 'following', userId);
-      await deleteDoc(followingDocRef);
-
-      const followersRef = doc(db, 'users', userId, 'followers', currentUser.uid);
-      await deleteDoc(followersRef);
-
+      // Update UI state FIRST before database operations
       setIsFollowing(false);
+      
+      // References to both collections that need updating
+      const followingDocRef = doc(db, 'users', currentUser.uid, 'following', userId);
+      const followersRef = doc(db, 'users', userId, 'followers', currentUser.uid);
+      
+      try {
+        // Use a batch to ensure both deletes happen together
+        const batch = writeBatch(db);
+        batch.delete(followingDocRef);
+        batch.delete(followersRef);
+        await batch.commit();
+        
+        console.log("EMERGENCY: Successfully unfollowed user with batch delete");
+      } catch (batchError) {
+        console.error("EMERGENCY: Batch delete failed, trying individual deletes", batchError);
+        
+        // If batch fails, try individual deletes
+        try { await deleteDoc(followingDocRef); } catch (e) { console.error("Failed to delete following:", e); }
+        try { await deleteDoc(followersRef); } catch (e) { console.error("Failed to delete follower:", e); }
+        
+        console.log("EMERGENCY: Individual deletes attempted");
+      }
+
+      // Update UI state regardless of DB operation success
       setFollowers(prev => prev.filter(id => id !== currentUser.uid));
       setConnections(prev => prev.filter(id => id !== userId));
       
       toast.success('Unfollowed successfully');
     } catch (error) {
-      console.error('Error unfollowing user:', error);
+      console.error('EMERGENCY: Error in handleUnfollow:', error);
+      
+      // Restore UI state on error
+      setIsFollowing(true);
+      
       setError('Failed to unfollow user');
-      toast.error('Failed to unfollow user');
+      toast.error('Failed to unfollow user. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -437,6 +721,21 @@ const Profile: React.FC = () => {
 
   const handleSaveProfile = async () => {
     if (!currentUser || !db) return;
+
+    // Validate username before saving
+    if (editedUsername !== originalUsername.current && usernameTaken) {
+      toast.error('Please choose a unique username');
+      return;
+    }
+
+    // Check if username is valid
+    if (!/^[a-zA-Z0-9_-]+$/.test(editedUsername)) {
+      toast.error('Username can only contain letters, numbers, underscores, and hyphens');
+      return;
+    } else if (editedUsername.length < 3) {
+      toast.error('Username must be at least 3 characters long');
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -810,6 +1109,19 @@ const Profile: React.FC = () => {
                       >
                         Unfollow
                       </Button>
+                    ) : followRequested ? (
+                      <Button
+                        variant="outlined"
+                        color="secondary"
+                        sx={{ 
+                          borderRadius: 8,
+                          flex: '0 0 auto',
+                          minWidth: '120px'
+                        }}
+                        disabled={true}
+                      >
+                        Requested
+                      </Button>
                     ) : (
                       <Button
                         variant="contained"
@@ -820,9 +1132,8 @@ const Profile: React.FC = () => {
                           flex: '0 0 auto',
                           minWidth: '120px'
                         }}
-                        disabled={followRequested}
                       >
-                        {followRequested ? 'Requested' : 'Follow'}
+                        Follow
                       </Button>
                     )}
                     <Button
@@ -1106,17 +1417,46 @@ const Profile: React.FC = () => {
               variant="outlined"
               placeholder="Name"
             />
-            <TextField
-              label="Username"
-              value={editedUsername}
-              onChange={(e) => setEditedUsername(e.target.value)}
-              fullWidth
-              variant="outlined"
-              placeholder="Username"
-              InputProps={{
-                startAdornment: <InputAdornment position="start">@</InputAdornment>,
-              }}
-            />
+            <Box>
+              <TextField
+                label="Username"
+                value={editedUsername}
+                onChange={handleUsernameChange}
+                fullWidth
+                variant="outlined"
+                placeholder="Username"
+                InputProps={{
+                  startAdornment: <InputAdornment position="start">@</InputAdornment>,
+                  endAdornment: checkingUsername && (
+                    <InputAdornment position="end">
+                      <CircularProgress size={20} />
+                    </InputAdornment>
+                  )
+                }}
+                error={!!usernameError}
+                helperText={usernameError}
+              />
+              {showSuggestions && (
+                <Paper elevation={2} sx={{ mt: 0.5, p: 1, maxHeight: 150, overflow: 'auto' }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Suggested alternatives:
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                    {usernameOptions.map((suggestion) => (
+                      <Chip
+                        key={suggestion}
+                        label={suggestion}
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        onClick={() => handleSuggestionClick(suggestion)}
+                        sx={{ cursor: 'pointer' }}
+                      />
+                    ))}
+                  </Box>
+                </Paper>
+              )}
+            </Box>
             <TextField
               label="Bio"
               value={editedBio}
@@ -1145,7 +1485,7 @@ const Profile: React.FC = () => {
           <Button
             variant="contained"
             onClick={handleSaveProfile}
-            disabled={isLoading}
+            disabled={isLoading || usernameTaken || !!usernameError}
             sx={{ 
               textTransform: 'none',
               minWidth: '100px'

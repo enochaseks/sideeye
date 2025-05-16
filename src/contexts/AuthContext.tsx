@@ -1,10 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { auth } from '../services/firebase';
+import { auth, db, storage } from '../services/firebase';
 import { User as FirebaseUser, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile as firebaseUpdateProfile, sendEmailVerification as firebaseSendEmailVerification, setPersistence, browserLocalPersistence, onAuthStateChanged } from 'firebase/auth';
 import { UserProfile, UserPreferences } from '../types/index';
 import { getDoc, doc, setDoc, Firestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, where, limit, deleteDoc, increment, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
-import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 import bcrypt from 'bcryptjs';
 import { checkAndResetRestrictions } from '../services/contentModeration';
@@ -423,6 +422,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         await setDoc(doc(db, 'users', user.uid), newProfileData);
         console.log("Basic user profile created in Firestore");
+        
+        // Send welcome message from SideEye Contact Team
+        await sendWelcomeMessage(user.uid, username);
       }
 
       // Set the user state to trigger onAuthStateChanged
@@ -873,4 +875,109 @@ export const usePrivacy = () => {
     canViewProfile,
     canViewContent
   };
+};
+
+// Function to send welcome message to new users from SideEye system
+const sendWelcomeMessage = async (userId: string, username: string) => {
+  if (!db) return;
+  
+  try {
+    console.log("Sending welcome message to new user:", userId);
+    
+    // Use the existing official SideEye Contact Team ID
+    // This should already exist in the system and have a profile
+    const contactTeamId = "sideeye"; // Use the actual existing account ID
+    
+    // Create a new conversation between the new user and SideEye
+    const conversationRef = doc(collection(db, 'conversations'));
+    await setDoc(conversationRef, {
+      participants: [contactTeamId, userId],
+      createdAt: serverTimestamp(),
+      lastUpdated: serverTimestamp(),
+      unreadCount: {
+        [contactTeamId]: 0,
+        [userId]: 1 // Set unread count for new user
+      },
+      status: 'accepted' // Auto-accept
+    });
+    
+    // Add welcome message
+    const welcomeMessage = `Hello ${username}, Welcome to SideEye! It is nice to have you on our platform. If you need any support or help, you can just message us here and we will be happy to respond.`;
+    
+    // Add the message to the conversation
+    const messagesRef = collection(db, 'conversations', conversationRef.id, 'messages');
+    await addDoc(messagesRef, {
+      text: welcomeMessage,
+      sender: contactTeamId,
+      timestamp: serverTimestamp(),
+      read: false,
+      reactions: [] // Add empty reactions array for consistency
+    });
+    
+    // Update conversation with last message info
+    await updateDoc(conversationRef, {
+      lastMessage: {
+        text: welcomeMessage,
+        sender: contactTeamId,
+        timestamp: serverTimestamp()
+      },
+      lastUpdated: serverTimestamp()
+    });
+    
+    // Add notification for the new user
+    await createWelcomeNotification(db, {
+      type: 'message',
+      senderId: contactTeamId,
+      senderName: "SideEye Contact Team",
+      senderAvatar: "/logo.png", 
+      recipientId: userId,
+      content: `New message: ${welcomeMessage.slice(0, 50)}${welcomeMessage.length > 50 ? '...' : ''}`,
+      postId: conversationRef.id,
+      roomId: conversationRef.id
+    });
+    
+    console.log("Welcome message sent successfully to:", userId);
+  } catch (error) {
+    console.error("Error sending welcome message:", error);
+    // Don't throw the error to avoid disrupting the registration process
+  }
+};
+
+// Create utility function for notification
+const createWelcomeNotification = async (db: Firestore, notification: {
+  type: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  recipientId: string;
+  content: string;
+  postId: string;
+  roomId: string;
+}) => {
+  try {
+    // Add to notifications collection
+    const notificationsRef = collection(db, 'notifications');
+    await addDoc(notificationsRef, {
+      ...notification,
+      createdAt: serverTimestamp(),
+      isRead: false
+    });
+    
+    // Update user's unread notification counter
+    const userRef = doc(db, 'users', notification.recipientId);
+    const userDoc = await getDoc(userRef);
+    
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const currentUnreadCount = userData.unreadNotificationsCount || 0;
+      
+      await updateDoc(userRef, {
+        unreadNotificationsCount: currentUnreadCount + 1
+      });
+    }
+    
+    console.log("Notification created successfully");
+  } catch (error) {
+    console.error("Error creating notification:", error);
+  }
 }; 

@@ -27,7 +27,10 @@ import {
   DialogActions,
   Tooltip,
   Menu,
-  MenuItem
+  MenuItem,
+  Popover,
+  useMediaQuery,
+  useTheme
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -39,7 +42,11 @@ import {
   Add as AddIcon,
   Image as ImageIcon,
   Videocam as VideoIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  ThumbUp as ThumbUpIcon,
+  Favorite as HeartIcon,
+  SentimentVerySatisfied as HappyIcon,
+  SentimentVeryDissatisfied as SadIcon
 } from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,6 +56,12 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { toast } from 'react-hot-toast';
 import { useNotifications } from '../contexts/NotificationContext';
 
+interface Reaction {
+  emoji: string;
+  userId: string;
+  username?: string;
+}
+
 interface Message {
   id: string;
   text: string;
@@ -57,6 +70,7 @@ interface Message {
   read: boolean;
   mediaUrl?: string;
   mediaType?: 'image' | 'video';
+  reactions?: Reaction[];
 }
 
 interface Conversation {
@@ -118,6 +132,101 @@ const Chat: React.FC = () => {
     mouseY: number;
     message: Message | null;
   } | null>(null);
+  
+  // New state variables for reactions
+  const [reactionPopover, setReactionPopover] = useState<{
+    anchorEl: HTMLElement | null;
+    message: Message | null;
+  }>({ anchorEl: null, message: null });
+  
+  // Add state for reaction details popover
+  const [reactionDetailsPopover, setReactionDetailsPopover] = useState<{
+    anchorEl: HTMLElement | null;
+    message: Message | null;
+    emoji: string | null;
+  }>({ anchorEl: null, message: null, emoji: null });
+  
+  // Track selected emoji category
+  const [selectedEmojiCategory, setSelectedEmojiCategory] = useState<string>('recent');
+  
+  // Available reactions (for backward compatibility)
+  const availableReactions = [
+    { emoji: '👍', icon: <ThumbUpIcon />, label: 'Like' },
+    { emoji: '❤️', icon: <HeartIcon />, label: 'Love' },
+    { emoji: '😀', icon: <HappyIcon />, label: 'Happy' },
+    { emoji: '😔', icon: <SadIcon />, label: 'Sad' },
+    { emoji: '👀', icon: null, label: 'Eyes' },
+    { emoji: '🤬', icon: null, label: 'Angry' },
+    { emoji: '🤔', icon: null, label: 'Thinking' },
+    { emoji: '🤷‍♂️', icon: null, label: 'Shrug' },
+    { emoji: '🤷‍♀️', icon: null, label: 'Shrug' },
+    { emoji: '🤷', icon: null, label: 'Shrug' },
+    { emoji: '🤷‍♂️', icon: null, label: 'Shrug' },
+    { emoji: '🤷‍♀️', icon: null, label: 'Shrug' },
+    { emoji: '🤷', icon: null, label: 'Shrug' },
+    { emoji: '🤢', icon: null, label: 'Disgusted' },
+    { emoji: '🤮', icon: null, label: 'Vomit' },
+    { emoji: '🤧', icon: null, label: 'Sick' },
+    { emoji: '🤒', icon: null, label: 'Sick' },
+    { emoji: '🤕', icon: null, label: 'Sick' },
+    { emoji: '🤖', icon: null, label: 'Robot' },    
+  ];
+  
+  // Emoji categories for scrolling
+  const emojiCategories = [
+    {
+      id: 'recent',
+      name: 'Recent',
+      icon: '🕒',
+      emojis: availableReactions.map(r => r.emoji).slice(0, 8) // First 8 as "recent"
+    },
+    {
+      id: 'smileys',
+      name: 'Smileys',
+      icon: '😀',
+      emojis: ['😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬']
+    },
+    {
+      id: 'gestures',
+      name: 'Gestures',
+      icon: '👍',
+      emojis: ['👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '👊', '👋', '🙌', '👐', '🤲', '🙏', '✋', '🤚', '👆', '👇', '👈', '👉', '💪', '🦾', '👏', '🙏', '🤝', '🤜', '🤛', '✍️', '👋', '👐', '🤲', '🤝', '🙏', '💅', '🤳']
+    },
+    {
+      id: 'love',
+      name: 'Love',
+      icon: '❤️',
+      emojis: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '♥️', '💌', '💋', '👨‍❤️‍💋‍👨', '👩‍❤️‍💋‍👩', '👩‍❤️‍💋‍👨']
+    },
+    {
+      id: 'animals',
+      name: 'Animals',
+      icon: '🐱',
+      emojis: ['🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🙈', '🙉', '🙊', '🐔', '🐧', '🐦', '🐤', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐜', '🦟', '🦗', '🕷', '🕸', '🦂', '🐢', '🐍', '🦎', '🦖', '🦕', '🐙', '🦑', '🦐', '🦞', '🦀', '🐡', '🐠', '🐟', '🐬', '🐳', '🐋', '🦈', '🐊', '🐅', '🐆', '🦓', '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🐫', '🦒', '🦘', '🐃', '🐂', '🐄', '🐎', '🐖', '🐏', '🐑', '🦙', '🐐', '🦌', '🐕', '🐩', '🦮', '🐕‍🦺', '🐈', '🦃', '🦚', '🦜', '🦢', '🦩', '🕊', '🐇', '🦝', '🦨', '🦡', '🦦', '🦥', '🐁', '🐀', '🐿', '🦔']
+    },
+    {
+      id: 'food',
+      name: 'Food',
+      icon: '🍔',
+      emojis: ['🍏', '🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦', '🥬', '🥒', '🌶', '🌽', '🥕', '🥔', '🍠', '🥐', '🥯', '🍞', '🥖', '🥨', '🧀', '🥚', '🍳', '🥞', '🧇', '🥓', '🥩', '🍗', '🍖', '🦴', '🌭', '🍔', '🍟', '🍕', '🥪', '🥙', '🧆', '🌮', '🌯', '🥗', '🥘', '🥫', '🍝', '🍜', '🍲', '🍛', '🍣', '🍱', '🥟', '🦪', '🍤', '🍙', '🍚', '🍘', '🍥', '🥠', '🥮', '🍢', '🍡', '🍧', '🍨', '🍦', '🥧', '🧁', '🍰', '🎂', '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪', '🌰', '🥜', '🍯', '🥛', '🍼', '☕️', '🍵', '🧃', '🥤', '🍶', '🍺', '🍻', '🥂', '🍷', '🥃', '🍸', '🍹', '🧉', '🍾', '🧊']
+    }
+  ];
+  
+  // Add state for emoji picker
+  const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
+  
+  // Common emojis for the scrollbar
+  const commonEmojis = [
+    '😀', '😁', '😂', '🤣', '😃', '😄', '😅', '😆', '😉', '😊', 
+    '😋', '😎', '😍', '🥰', '😘', '😗', '😙', '😚', '🙂', '🤗',
+    '🤔', '🤨', '😐', '😑', '😶', '🙄', '😏', '😣', '😥', '😮',
+    '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '👊', '👋', '🙌',
+    '❤️', '💔', '💖', '💙', '😢', '😭', '😤', '😠', '😡', '🤬'
+  ];
+  
+  // Theme and media query for responsive design
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   
   // Message deletion feature:
   // 1. User long-presses on their own message (touchscreen or mouse)
@@ -351,8 +460,8 @@ const Chat: React.FC = () => {
             }
           }
           
-          // Scroll to bottom
-          scrollToBottom();
+          // Scroll to bottom with buffer for more reliable scrolling
+          scrollToBottomWithBuffer();
         });
       } catch (error) {
         console.error('Error fetching conversation:', error);
@@ -370,6 +479,13 @@ const Chat: React.FC = () => {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  // More accurate scrolling with buffer
+  const scrollToBottomWithBuffer = () => {
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
   };
   
   const sendMessage = async () => {
@@ -402,7 +518,8 @@ const Chat: React.FC = () => {
         text: messageText,
         sender: currentUser.uid,
         timestamp: serverTimestamp(),
-        read: false
+        read: false,
+        reactions: []
       });
       
       // Update conversation with last message and timestamp
@@ -449,7 +566,7 @@ const Chat: React.FC = () => {
       }
       
       setMessageText('');
-      scrollToBottom();
+      scrollToBottomWithBuffer();
     } catch (error) {
       console.error('[Chat] Error sending message:', error);
       toast.error('Failed to send message');
@@ -605,7 +722,8 @@ const Chat: React.FC = () => {
         timestamp: serverTimestamp(),
         read: false,
         mediaUrl,
-        mediaType
+        mediaType,
+        reactions: []
       });
       
       // Update conversation with last message and timestamp
@@ -645,7 +763,7 @@ const Chat: React.FC = () => {
         }
       }
       
-      scrollToBottom();
+      scrollToBottomWithBuffer();
     } catch (error) {
       console.error('[Chat] Error sending media message:', error);
       toast.error('Failed to send media');
@@ -798,27 +916,32 @@ const Chat: React.FC = () => {
 
   // Handle long press start
   const handleMessageMouseDown = (event: React.MouseEvent | React.TouchEvent, message: Message) => {
-    // Only allow users to delete their own messages
-    if (message.sender !== currentUser?.uid) return;
-    
     // Start a timer for long press
     const timer = setTimeout(() => {
-      // Show context menu at pointer position
-      if ('clientX' in event) { // mouse event
-        setContextMenu({
-          mouseX: event.clientX - 2,
-          mouseY: event.clientY - 4,
-          message: message
-        });
-      } else if (event.touches?.length) { // touch event
-        const touch = event.touches[0];
-        setContextMenu({
-          mouseX: touch.clientX - 2,
-          mouseY: touch.clientY - 4,
-          message: message
-        });
+      // For the message owner, show delete option
+      if (message.sender === currentUser?.uid) {
+        if ('clientX' in event) { // mouse event
+          setContextMenu({
+            mouseX: event.clientX - 2,
+            mouseY: event.clientY - 4,
+            message: message
+          });
+        } else if (event.touches?.length) { // touch event
+          const touch = event.touches[0];
+          setContextMenu({
+            mouseX: touch.clientX - 2,
+            mouseY: touch.clientY - 4,
+            message: message
+          });
+        }
+        setSelectedMessage(message);
+      } 
+      // For both sender and recipient, show reaction options on long press
+      else {
+        if ('currentTarget' in event) {
+          handleOpenReactions(event as React.MouseEvent<HTMLElement>, message);
+        }
       }
-      setSelectedMessage(message);
     }, 500); // 500ms long press
     
     setLongPressTimer(timer);
@@ -843,6 +966,167 @@ const Chat: React.FC = () => {
     setContextMenu(null);
   };
 
+  // Open reaction popover
+  const handleOpenReactions = (event: React.MouseEvent<HTMLElement>, message: Message) => {
+    // Clear any pending long press timers
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      setLongPressTimer(null);
+    }
+    
+    // Open the reaction popover
+    setReactionPopover({
+      anchorEl: event.currentTarget,
+      message: message
+    });
+    
+    // If there was a context menu open, close it
+    if (contextMenu) {
+      setContextMenu(null);
+    }
+  };
+  
+  // Close reaction popover
+  const handleCloseReactions = () => {
+    setReactionPopover({
+      anchorEl: null,
+      message: null
+    });
+  };
+  
+  // Open reaction details popover
+  const handleOpenReactionDetails = (event: React.MouseEvent<HTMLElement>, message: Message, emoji: string) => {
+    // Prevent event propagation to avoid triggering other handlers
+    event.stopPropagation();
+    
+    setReactionDetailsPopover({
+      anchorEl: event.currentTarget,
+      message,
+      emoji
+    });
+  };
+  
+  // Close reaction details popover
+  const handleCloseReactionDetails = () => {
+    setReactionDetailsPopover({
+      anchorEl: null,
+      message: null,
+      emoji: null
+    });
+  };
+  
+  // Remove user's reaction
+  const removeReaction = async (messageId: string, emoji: string) => {
+    if (!currentUser?.uid || !conversation) {
+      return;
+    }
+    
+    const actualConversationId = conversationId || userId;
+    if (!actualConversationId) return;
+    
+    try {
+      const messageRef = doc(db, 'conversations', actualConversationId, 'messages', messageId);
+      
+      // Get the message to access its reactions
+      const messageDoc = await getDoc(messageRef);
+      if (!messageDoc.exists()) {
+        toast.error('Message not found');
+        return;
+      }
+      
+      const messageData = messageDoc.data();
+      const existingReactions = messageData.reactions || [];
+      
+      // Filter out the user's reaction with this emoji
+      const updatedReactions = existingReactions.filter(
+        (r: Reaction) => !(r.userId === currentUser.uid && r.emoji === emoji)
+      );
+      
+      // Update Firestore
+      await updateDoc(messageRef, {
+        reactions: updatedReactions
+      });
+      
+      // Update local state
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId ? { ...msg, reactions: updatedReactions } : msg
+      ));
+      
+      // Close the details popover
+      handleCloseReactionDetails();
+      
+    } catch (error) {
+      console.error('[Chat] Error removing reaction:', error);
+      toast.error('Failed to remove reaction');
+    }
+  };
+  
+  // Add a reaction to a message
+  const addReaction = async (emoji: string) => {
+    if (!reactionPopover.message || !currentUser?.uid || !conversation) {
+      return;
+    }
+    
+    const actualConversationId = conversationId || userId;
+    if (!actualConversationId) return;
+    
+    try {
+      const messageId = reactionPopover.message.id;
+      const messageRef = doc(db, 'conversations', actualConversationId, 'messages', messageId);
+      
+      // Get existing reactions or initialize empty array
+      const existingReactions = reactionPopover.message.reactions || [];
+      
+      // Check if user already reacted with this emoji
+      const existingReactionIndex = existingReactions.findIndex(
+        r => r.userId === currentUser.uid && r.emoji === emoji
+      );
+      
+      if (existingReactionIndex !== -1) {
+        // User already reacted with this emoji, remove the reaction
+        const updatedReactions = [...existingReactions];
+        updatedReactions.splice(existingReactionIndex, 1);
+        
+        // Update Firestore
+        await updateDoc(messageRef, {
+          reactions: updatedReactions
+        });
+        
+        // Update local state
+        setMessages(prev => prev.map(msg => 
+          msg.id === messageId ? { ...msg, reactions: updatedReactions } : msg
+        ));
+      } else {
+        // Add new reaction
+        const newReaction: Reaction = {
+          emoji,
+          userId: currentUser.uid,
+          username: currentUser.displayName || ''
+        };
+        
+        const updatedReactions = [...existingReactions, newReaction];
+        
+        // Update Firestore
+        await updateDoc(messageRef, {
+          reactions: updatedReactions
+        });
+        
+        // Update local state
+        setMessages(prev => prev.map(msg => 
+          msg.id === messageId ? { ...msg, reactions: updatedReactions } : msg
+        ));
+      }
+      
+      // Close the reaction popover
+      handleCloseReactions();
+      
+    } catch (error) {
+      console.error('[Chat] Error adding reaction:', error);
+      toast.error('Failed to add reaction');
+      handleCloseReactions();
+    }
+  };
+
   const renderMessage = (message: Message) => {
     const isCurrentUser = message.sender === currentUser?.uid;
     
@@ -851,9 +1135,10 @@ const Chat: React.FC = () => {
         key={message.id}
         sx={{
           display: 'flex',
-          justifyContent: isCurrentUser ? 'flex-end' : 'flex-start',
-          mb: 1,
-          px: 2
+          flexDirection: 'column',
+          alignItems: isCurrentUser ? 'flex-end' : 'flex-start',
+          mb: 0.5,
+          px: 1
         }}
       >
         <Box
@@ -882,16 +1167,14 @@ const Chat: React.FC = () => {
               color: isCurrentUser ? 'rgba(255,255,255,0.7)' : (theme) => 
                 theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'text.secondary'
             },
-            ...(isCurrentUser && {
-              transition: 'opacity 0.2s ease',
-              '&:hover': {
-                opacity: 0.9,
-                cursor: 'pointer'
-              },
-              '&:active': {
-                opacity: 0.7
-              }
-            })
+            transition: 'opacity 0.2s ease',
+            '&:hover': {
+              opacity: 0.9,
+              cursor: 'pointer'
+            },
+            '&:active': {
+              opacity: 0.7
+            }
           }}
           onMouseDown={(e) => handleMessageMouseDown(e, message)}
           onMouseUp={handleMessageMouseUp}
@@ -899,6 +1182,7 @@ const Chat: React.FC = () => {
           onTouchStart={(e) => handleMessageMouseDown(e, message)}
           onTouchEnd={handleMessageMouseUp}
           onTouchCancel={handleMessageMouseUp}
+          onClick={(e) => handleOpenReactions(e, message)}
         >
           {message.mediaUrl && message.mediaType === 'image' && (
             <Box sx={{ mb: 1 }}>
@@ -935,8 +1219,83 @@ const Chat: React.FC = () => {
             {formatTime(message.timestamp)}
           </Typography>
         </Box>
+        
+        {/* Render reactions if any exist */}
+        {message.reactions && message.reactions.length > 0 && (
+          <Box 
+            sx={{
+              display: 'flex',
+              flexDirection: isCurrentUser ? 'row-reverse' : 'row',
+              flexWrap: 'wrap',
+              gap: 0.5,
+              mt: 0.5,
+              maxWidth: '70%',
+            }}
+          >
+            {/* Group reactions by emoji and show count */}
+            {Object.entries(
+              message.reactions.reduce((acc, reaction) => {
+                acc[reaction.emoji] = (acc[reaction.emoji] || 0) + 1;
+                return acc;
+              }, {} as Record<string, number>)
+            ).map(([emoji, count]) => {
+              // Check if current user has this reaction
+              const userHasThisReaction = message.reactions?.some(
+                r => r.emoji === emoji && r.userId === currentUser?.uid
+              );
+              
+              return (
+                <Chip
+                  key={emoji}
+                  label={`${emoji} ${count}`}
+                  size="small"
+                  variant="outlined"
+                  onClick={(e) => handleOpenReactionDetails(e, message, emoji)}
+                  sx={{ 
+                    borderRadius: '12px',
+                    height: '24px',
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                    backgroundColor: (theme) => 
+                      userHasThisReaction
+                        ? theme.palette.mode === 'dark' 
+                          ? 'rgba(25, 118, 210, 0.2)' 
+                          : 'rgba(25, 118, 210, 0.1)'
+                        : theme.palette.mode === 'dark' 
+                          ? 'rgba(255,255,255,0.1)' 
+                          : 'rgba(0,0,0,0.05)',
+                    border: (theme) => 
+                      userHasThisReaction 
+                        ? `1px solid ${theme.palette.primary.main}` 
+                        : undefined,
+                    '&:hover': {
+                      backgroundColor: (theme) => 
+                        userHasThisReaction
+                          ? theme.palette.mode === 'dark' 
+                            ? 'rgba(25, 118, 210, 0.3)' 
+                            : 'rgba(25, 118, 210, 0.2)'
+                          : theme.palette.mode === 'dark' 
+                            ? 'rgba(255,255,255,0.15)' 
+                            : 'rgba(0,0,0,0.1)',
+                    }
+                  }}
+                />
+              );
+            })}
+          </Box>
+        )}
       </Box>
     );
+  };
+
+  // Add emoji to message text
+  const addEmojiToMessage = (emoji: string) => {
+    setMessageText(prev => prev + emoji);
+  };
+  
+  // Toggle emoji picker
+  const toggleEmojiPicker = () => {
+    setShowEmojiPicker(prev => !prev);
   };
 
   return (
@@ -1082,8 +1441,8 @@ const Chat: React.FC = () => {
         flexGrow: 1, 
         overflowY: 'auto', 
         bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.900' : 'grey.50', 
-        p: 2, 
-        pb: 80 
+        p: 2,
+        pb: 2
       }}>
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
@@ -1093,11 +1452,11 @@ const Chat: React.FC = () => {
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50%' }}>
             <Typography color="text.secondary">No messages yet. Start the conversation!</Typography>
           </Box>
-        ) : (
-          <Box>
+                  ) : (
+          <Box sx={{ mb: "60px" }}> {/* Add bottom margin to account for fixed input area */}
             {Object.entries(groupMessagesByDate()).map(([dateStr, dateMessages]) => (
-              <Box key={dateStr} sx={{ mb: 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <Box key={dateStr} sx={{ mb: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                   <Divider sx={{ 
                     flexGrow: 1, 
                     mr: 2,
@@ -1116,7 +1475,7 @@ const Chat: React.FC = () => {
                 {dateMessages.map(renderMessage)}
               </Box>
             ))}
-            <div ref={messagesEndRef} />
+            <div ref={messagesEndRef} style={{ height: "4px" }} />
           </Box>
         )}
       </Box>
@@ -1128,7 +1487,9 @@ const Chat: React.FC = () => {
           bottom: 0,
           left: 0,
           right: 0,
-          p: 2,
+          pt: 1,
+          pb: 1.5,
+          px: 1.5,
           backgroundColor: (theme) => theme.palette.mode === 'dark' ? 'background.paper' : 'white',
           borderTop: (theme) => `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : '#ddd'}`,
           boxShadow: (theme) => theme.palette.mode === 'dark' 
@@ -1147,52 +1508,118 @@ const Chat: React.FC = () => {
             />
           </Box>
         ) : (
-          <Box sx={{ display: 'flex', width: '100%' }}>
-            {/* Add file upload input (hidden) */}
-            <HiddenFileInput
-              ref={fileInputRef}
-              accept="image/*,video/*"
-              id="file-upload-input"
-              type="file"
-              onChange={handleFileUpload}
-              disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
-            />
+          <>
+            {/* Emoji Scroll Bar for Desktop - Only show if not uploading */}
+            {isDesktop && !isUploading && (
+              <Box 
+                sx={{
+                  display: 'flex',
+                  overflowX: 'auto',
+                  mb: 1,
+                  pb: 1,
+                  '&::-webkit-scrollbar': {
+                    height: '4px',
+                  },
+                  '&::-webkit-scrollbar-track': {
+                    background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                  },
+                  '&::-webkit-scrollbar-thumb': {
+                    background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+                    borderRadius: '2px',
+                  },
+                }}
+              >
+                {commonEmojis.map((emoji) => (
+                  <Tooltip key={emoji} title={emoji} placement="top">
+                    <Box
+                      component="button"
+                      onClick={() => addEmojiToMessage(emoji)}
+                      sx={{
+                        border: 'none',
+                        background: 'none',
+                        cursor: 'pointer',
+                        fontSize: '1.5rem',
+                        mx: 0.5,
+                        p: 0.5,
+                        borderRadius: '4px',
+                        minWidth: '40px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.2s',
+                        '&:hover': {
+                          transform: 'scale(1.2)',
+                          background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+                        }
+                      }}
+                    >
+                      {emoji}
+                    </Box>
+                  </Tooltip>
+                ))}
+              </Box>
+            )}
             
-            {/* Add button for file upload */}
-            <IconButton 
-              onClick={handleUploadClick}
-              disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
-              color="primary"
-              sx={{ mr: 1 }}
-              aria-label="attach image or video"
-            >
-              <AddIcon />
-            </IconButton>
-            
-            <TextField
-              fullWidth
-              variant="outlined"
-              placeholder="Type a message..."
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-              disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
-              sx={{ 
-                mr: 1,
-                "& .MuiInputBase-root": {
-                  bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'white'
-                }
-              }}
-            />
-            <Button 
-              variant="contained" 
-              color="primary"
-              disabled={isUploading || (!messageText.trim() && !isUploading) || (isPending && conversation?.participants[0] !== currentUser?.uid)}
-              onClick={sendMessage}
-            >
-              Send
-            </Button>
-          </Box>
+            <Box sx={{ display: 'flex', width: '100%' }}>
+              {/* Add file upload input (hidden) */}
+              <HiddenFileInput
+                ref={fileInputRef}
+                accept="image/*,video/*"
+                id="file-upload-input"
+                type="file"
+                onChange={handleFileUpload}
+                disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
+              />
+              
+              {/* Add button for file upload */}
+              <IconButton 
+                onClick={handleUploadClick}
+                disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
+                color="primary"
+                sx={{ mr: 1 }}
+                aria-label="attach image or video"
+              >
+                <AddIcon />
+              </IconButton>
+              
+              {/* Add emoji button for mobile */}
+              {!isDesktop && (
+                <IconButton
+                  onClick={toggleEmojiPicker}
+                  disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
+                  color="primary"
+                  sx={{ mr: 1 }}
+                  aria-label="add emoji"
+                >
+                  <EmojiIcon />
+                </IconButton>
+              )}
+              
+              <TextField
+                fullWidth
+                variant="outlined"
+                placeholder="Type a message..."
+                value={messageText}
+                onChange={(e) => setMessageText(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
+                sx={{ 
+                  mr: 1,
+                  "& .MuiInputBase-root": {
+                    bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'white'
+                  }
+                }}
+              />
+              <Button 
+                variant="contained" 
+                color="primary"
+                disabled={isUploading || (!messageText.trim() && !isUploading) || (isPending && conversation?.participants[0] !== currentUser?.uid)}
+                onClick={sendMessage}
+              >
+                Send
+              </Button>
+            </Box>
+          </>
         )}
       </Box>
 
@@ -1243,6 +1670,314 @@ const Chat: React.FC = () => {
         onClose={handleSnackbarClose}
         message={snackbarMessage}
       />
+
+      {/* Reaction Popover with Categories */}
+      <Popover
+        open={Boolean(reactionPopover.anchorEl)}
+        anchorEl={reactionPopover.anchorEl}
+        onClose={handleCloseReactions}
+        anchorOrigin={{
+          vertical: 'top',
+          horizontal: 'center',
+        }}
+        transformOrigin={{
+          vertical: 'bottom',
+          horizontal: 'center',
+        }}
+        PaperProps={{
+          sx: { 
+            width: '320px',
+            maxWidth: '90vw',
+            maxHeight: '350px',
+            overflow: 'hidden'
+          }
+        }}
+      >
+        <Box sx={{ 
+          display: 'flex',
+          flexDirection: 'column',
+          bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'background.paper',
+          borderRadius: 2
+        }}>
+          {/* Quick Reactions Row */}
+          <Box sx={{ 
+            display: 'flex',
+            p: 1,
+            borderBottom: 1,
+            borderColor: 'divider',
+            justifyContent: 'center'
+          }}>
+            {availableReactions.slice(0, 7).map((reaction) => (
+              <IconButton
+                key={reaction.emoji}
+                onClick={() => addReaction(reaction.emoji)}
+                sx={{ 
+                  mx: 0.5,
+                  '&:hover': {
+                    bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.04)'
+                  }
+                }}
+                aria-label={reaction.label}
+              >
+                <Typography variant="body1" sx={{ fontSize: '1.4rem' }}>
+                  {reaction.emoji}
+                </Typography>
+              </IconButton>
+            ))}
+          </Box>
+          
+          {/* Category Tabs */}
+          <Box sx={{ 
+            display: 'flex',
+            overflowX: 'auto',
+            py: 1,
+            borderBottom: 1,
+            borderColor: 'divider',
+            '&::-webkit-scrollbar': {
+              height: '4px',
+            },
+            '&::-webkit-scrollbar-track': {
+              background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+              borderRadius: '2px',
+            },
+          }}>
+            {emojiCategories.map((category) => (
+              <Box
+                key={category.id}
+                onClick={() => setSelectedEmojiCategory(category.id)}
+                sx={{ 
+                  minWidth: 'auto',
+                  mx: 1.5,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  opacity: selectedEmojiCategory === category.id ? 1 : 0.6,
+                  borderBottom: selectedEmojiCategory === category.id ? 2 : 0,
+                  borderColor: 'primary.main',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    opacity: 0.8
+                  }
+                }}
+              >
+                <Typography sx={{ fontSize: '1.4rem' }}>{category.icon}</Typography>
+                <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
+                  {category.name}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+          
+          {/* Emoji Grid for Selected Category */}
+          <Box sx={{ 
+            height: '200px',
+            overflowY: 'auto',
+            p: 1,
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'flex-start',
+            '&::-webkit-scrollbar': {
+              width: '4px',
+            },
+            '&::-webkit-scrollbar-track': {
+              background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+              borderRadius: '2px',
+            },
+          }}>
+            {emojiCategories.find(c => c.id === selectedEmojiCategory)?.emojis.map((emoji) => (
+              <Box
+                key={emoji}
+                component="button"
+                onClick={() => addReaction(emoji)}
+                sx={{
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  fontSize: '1.6rem',
+                  width: '40px',
+                  height: '40px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'transform 0.2s',
+                  borderRadius: '4px',
+                  '&:hover': {
+                    transform: 'scale(1.2)',
+                    background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+                  }
+                }}
+              >
+                {emoji}
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      </Popover>
+
+      {/* Emoji Picker Popover for Mobile */}
+      {!isDesktop && (
+        <Popover
+          open={showEmojiPicker}
+          onClose={() => setShowEmojiPicker(false)}
+          anchorReference="anchorPosition"
+          anchorPosition={{ top: window.innerHeight - 300, left: window.innerWidth / 2 }}
+          transformOrigin={{
+            vertical: 'bottom',
+            horizontal: 'center',
+          }}
+        >
+          <Box sx={{ 
+            p: 1, 
+            width: '300px',
+            maxWidth: '90vw',
+            height: '200px',
+            overflow: 'auto',
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'center'
+          }}>
+            {commonEmojis.map((emoji) => (
+              <Box
+                key={emoji}
+                component="button"
+                onClick={() => {
+                  addEmojiToMessage(emoji);
+                  setShowEmojiPicker(false);
+                }}
+                sx={{
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  fontSize: '1.8rem',
+                  m: 0.5,
+                  p: 0.5,
+                  borderRadius: '4px',
+                  minWidth: '40px',
+                  height: '40px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  '&:hover': {
+                    background: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+                  }
+                }}
+              >
+                {emoji}
+              </Box>
+            ))}
+          </Box>
+        </Popover>
+      )}
+
+      {/* Reaction Details Popover */}
+      <Popover
+        open={Boolean(reactionDetailsPopover.anchorEl)}
+        anchorEl={reactionDetailsPopover.anchorEl}
+        onClose={handleCloseReactionDetails}
+        anchorOrigin={{
+          vertical: 'top',
+          horizontal: 'center',
+        }}
+        transformOrigin={{
+          vertical: 'bottom',
+          horizontal: 'center',
+        }}
+        PaperProps={{
+          sx: { 
+            width: '250px',
+            maxWidth: '90vw',
+            maxHeight: '300px'
+          }
+        }}
+      >
+        <Box sx={{ 
+          p: 2,
+          bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'background.paper',
+        }}>
+          {/* Reaction Header */}
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            mb: 1.5,
+            pb: 1,
+            borderBottom: 1,
+            borderColor: 'divider'
+          }}>
+            <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center' }}>
+              <Box component="span" sx={{ fontSize: '1.6rem', mr: 1 }}>
+                {reactionDetailsPopover.emoji}
+              </Box>
+              Reactions
+            </Typography>
+            
+            {/* If user has this reaction, show Remove button */}
+            {reactionDetailsPopover.message && reactionDetailsPopover.emoji && 
+             reactionDetailsPopover.message.reactions?.some(
+               r => r.emoji === reactionDetailsPopover.emoji && r.userId === currentUser?.uid
+             ) && (
+              <Button 
+                variant="outlined" 
+                color="error" 
+                size="small"
+                onClick={() => removeReaction(
+                  reactionDetailsPopover.message?.id || '', 
+                  reactionDetailsPopover.emoji || ''
+                )}
+              >
+                Remove
+              </Button>
+            )}
+          </Box>
+          
+          {/* Users who reacted list */}
+          <List sx={{ py: 0 }}>
+            {reactionDetailsPopover.message && reactionDetailsPopover.emoji && 
+             reactionDetailsPopover.message.reactions
+              ?.filter(r => r.emoji === reactionDetailsPopover.emoji)
+              .map((reaction, index) => (
+                <ListItem 
+                  key={`${reaction.userId}-${index}`}
+                  sx={{ 
+                    py: 0.5, 
+                    px: 1,
+                    borderRadius: 1,
+                    my: 0.3,
+                    bgcolor: reaction.userId === currentUser?.uid 
+                      ? (theme) => theme.palette.mode === 'dark' ? 'rgba(25, 118, 210, 0.15)' : 'rgba(25, 118, 210, 0.05)'
+                      : 'transparent'
+                  }}
+                >
+                  <Box sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    width: '100%',
+                    justifyContent: 'space-between'
+                  }}>
+                    <Typography>
+                      {reaction.username || 'User'} 
+                      {reaction.userId === currentUser?.uid && (
+                        <Typography component="span" color="text.secondary" sx={{ ml: 0.5, fontSize: '0.8rem' }}>
+                          (you)
+                        </Typography>
+                      )}
+                    </Typography>
+                    <Typography fontSize="1.2rem">
+                      {reaction.emoji}
+                    </Typography>
+                  </Box>
+                </ListItem>
+            ))}
+          </List>
+        </Box>
+      </Popover>
     </Box>
   );
 };

@@ -35,7 +35,8 @@ import {
   PersonAdd as PersonAddIcon,
   Message as MessageIcon,
   People as PeopleIcon,
-  Public as PublicIcon
+  Public as PublicIcon,
+  VerifiedUser as VerifiedUserIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -46,7 +47,7 @@ import {
   orderBy, 
   limit, 
   DocumentData, 
-  Timestamp,
+  Timestamp, 
   doc,
   setDoc,
   deleteDoc,
@@ -77,6 +78,8 @@ interface UserProfile {
   isAuthenticated?: boolean;
   createdAt: Timestamp;
   isActive?: boolean;
+  isVerified?: boolean;
+  email?: string;
 }
 
 interface Room {
@@ -107,6 +110,7 @@ interface FirestoreUser extends DocumentData {
   avatar?: string;
   email?: string;
   createdAt: Timestamp;
+  isVerified?: boolean;
 }
 
 interface FirestoreRoom extends DocumentData {
@@ -168,18 +172,23 @@ const Discover: React.FC = () => {
       );
       
       const querySnapshot = await getDocs(q);
-      const usersData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        username: doc.data().username || '',
-        name: doc.data().name || '',
-        profilePic: doc.data().profilePic,
-        bio: doc.data().bio,
-        coverPhoto: doc.data().coverPhoto,
-        isPublic: doc.data().isPublic,
-        isAuthenticated: doc.data().isAuthenticated,
-        createdAt: doc.data().createdAt,
-        isActive: doc.data().isActive
-      })) as UserProfile[];
+      const usersData = querySnapshot.docs
+        // Filter out system/auto-responder accounts
+        .filter(doc => doc.id !== 'sideeye' && doc.id !== 'contact-team')
+        .map(doc => ({
+          id: doc.id,
+          username: doc.data().username || '',
+          name: doc.data().name || '',
+          profilePic: doc.data().profilePic,
+          bio: doc.data().bio,
+          coverPhoto: doc.data().coverPhoto,
+          isPublic: doc.data().isPublic,
+          isAuthenticated: doc.data().isAuthenticated,
+          createdAt: doc.data().createdAt,
+          isActive: doc.data().isActive,
+          isVerified: true, // Set all users as verified
+          email: doc.data().email
+        })) as UserProfile[];
       
       setUsers(usersData);
     } catch (error) {
@@ -289,41 +298,121 @@ const Discover: React.FC = () => {
     }
   };
 
+  // Refresh follow status whenever the component is displayed or focused
   useEffect(() => {
     fetchDefaultUsers();
     fetchRooms();
-    if (currentUser) {
-      fetchFollowing();
+    
+    // Update following status and pending requests
+    const updateFollowStatus = async () => {
+      if (currentUser) {
+        await fetchFollowing();
+        await fetchPendingRequests();
+      }
+    };
+    
+    updateFollowStatus();
+    
+    // Set up a focus event listener to refresh follow status when returning to this page
+    const handleFocus = () => {
+      updateFollowStatus();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [currentUser]);
+  
+  // Update pending requests whenever following state changes
+  useEffect(() => {
+    if (currentUser && following.size > 0) {
       fetchPendingRequests();
     }
-  }, [currentUser]);
+  }, [following]);
 
   const fetchFollowing = async () => {
-    if (!currentUser) return;
+    if (!currentUser || !db) return;
     try {
+      // First, check "following" collection to find users we're following
       const followingQuery = firestoreQuery(
         collection(db, `users/${currentUser.uid}/following`)
       );
       const snapshot = await getDocs(followingQuery);
       const followingIds = new Set(snapshot.docs.map(doc => doc.id));
+      
+      // Also check "followers" collections of all users to ensure we don't miss any
+      // This handles cases where DB might be inconsistent between collections
+      const usersQuery = firestoreQuery(collection(db, 'users'));
+      const usersSnapshot = await getDocs(usersQuery);
+      
+      // Check each user's followers collection for our ID
+      await Promise.all(usersSnapshot.docs.map(async (userDoc) => {
+        if (followingIds.has(userDoc.id)) return; // Skip if already known to be following
+        
+        const followerRef = doc(db, `users/${userDoc.id}/followers/${currentUser.uid}`);
+        const followerDoc = await getDoc(followerRef);
+        
+        if (followerDoc.exists()) {
+          followingIds.add(userDoc.id);
+          
+          // Fix inconsistency by adding to our following collection if missing
+          const followingRef = doc(db, `users/${currentUser.uid}/following/${userDoc.id}`);
+          const followingDoc = await getDoc(followingRef);
+          
+          if (!followingDoc.exists()) {
+            await setDoc(followingRef, { timestamp: serverTimestamp() });
+            console.log(`Fixed inconsistent follow status for user ${userDoc.id}`);
+          }
+        }
+      }));
+      
       setFollowing(followingIds);
     } catch (error) {
       console.error('Error fetching following:', error);
     }
   };
 
-  // Add function to fetch pending follow requests
+  // Improved function to fetch pending follow requests
   const fetchPendingRequests = async () => {
     if (!currentUser || !db) return;
     try {
-      // Get all users this user has sent follow requests to
-      const pendingRequestsQuery = collection(db, 'users');
-      const usersSnapshot = await getDocs(pendingRequestsQuery);
-      
       const pendingIds = new Set<string>();
       
-      // Check each user's followRequests collection for current user's ID
-      await Promise.all(usersSnapshot.docs.map(async (userDoc) => {
+      // Only check private accounts that we're not already following
+      const privateUsersQuery = firestoreQuery(
+        collection(db, 'users'),
+        where('isPrivate', '==', true)
+      );
+      
+      const privateUsersSnapshot = await getDocs(privateUsersQuery);
+      
+      // For each private account, check if we have a pending request
+      await Promise.all(privateUsersSnapshot.docs.map(async (userDoc) => {
+        // Skip if we're already following
+        if (following.has(userDoc.id)) return;
+        
+        const requestRef = doc(db, `users/${userDoc.id}/followRequests/${currentUser.uid}`);
+        const requestSnapshot = await getDoc(requestRef);
+        
+        if (requestSnapshot.exists()) {
+          pendingIds.add(userDoc.id);
+        }
+      }));
+      
+      // Also check legacy private accounts (using isPublic:false instead of isPrivate:true)
+      const legacyPrivateUsersQuery = firestoreQuery(
+        collection(db, 'users'),
+        where('isPublic', '==', false)
+      );
+      
+      const legacyPrivateUsersSnapshot = await getDocs(legacyPrivateUsersQuery);
+      
+      await Promise.all(legacyPrivateUsersSnapshot.docs.map(async (userDoc) => {
+        // Skip if we're already following or already checked
+        if (following.has(userDoc.id) || pendingIds.has(userDoc.id)) return;
+        
         const requestRef = doc(db, `users/${userDoc.id}/followRequests/${currentUser.uid}`);
         const requestSnapshot = await getDoc(requestRef);
         
@@ -467,99 +556,220 @@ const Discover: React.FC = () => {
       // Combine both lists of users to exclude
       const excludeUserIds = [...blockedUsers, ...blockedByUsers];
 
-      // Search users
+      // Initialize arrays to collect search results
+      let usersResults: UserProfile[] = [];
+      
+      // Search users by username (case insensitive)
       const usersRef = collection(db, 'users');
-      const usersQuery = firestoreQuery(
-        usersRef,
-        where('username', '>=', query.toLowerCase()),
-        where('username', '<=', query.toLowerCase() + '\uf8ff'),
-        limit(10)
-      );
-      const usersSnapshot = await getDocs(usersQuery);
+      const lowerQuery = query.toLowerCase();
       
-      // Filter out blocked users and users who have blocked the current user
-      const usersData = usersSnapshot.docs
-        .map(doc => ({
-          id: doc.id,
-          username: doc.data().username || '',
-          name: doc.data().name || '',
-          bio: doc.data().bio || '',
-          profilePic: doc.data().profilePic || '',
-          isPublic: doc.data().isPublic ?? true,
-          isAuthenticated: doc.data().isAuthenticated,
-          createdAt: doc.data().createdAt,
-          isActive: doc.data().isActive
-        }))
-        .filter(user => !excludeUserIds.includes(user.id));
-
-      // Search rooms similarly filtering out rooms from blocked users
-      const roomsRef = collection(db, 'sideRooms');
-      const roomsQuery = firestoreQuery(
-        roomsRef,
-        where('name', '>=', query),
-        where('name', '<=', query + '\uf8ff'),
-        limit(10)
-      );
-      const roomsSnapshot = await getDocs(roomsQuery);
-      
-      // Filter out rooms owned by blocked users or users who have blocked the current user
-      const roomsData = await Promise.all(
-        roomsSnapshot.docs
+      // 1. Try searching by username_lower if it exists
+      try {
+        const usernameQuery = firestoreQuery(
+          usersRef,
+          orderBy('username_lower'),
+          startAt(lowerQuery),
+          endAt(lowerQuery + '\uf8ff'),
+          limit(20)
+        );
+        
+        const usernameSnapshot = await getDocs(usernameQuery);
+        usersResults = usernameSnapshot.docs
           .map(doc => ({
             id: doc.id,
-            ...doc.data()
-          } as FirestoreRoom))
-          .filter(room => room.ownerId && !excludeUserIds.includes(room.ownerId))
-          .map(async (room) => {
-            // Fetch room owner data
-            try {
-              const ownerDoc = await getDoc(doc(db, 'users', room.ownerId));
-              const ownerData = ownerDoc.exists() ? ownerDoc.data() : null;
+            username: doc.data().username || '',
+            name: doc.data().name || '',
+            bio: doc.data().bio || '',
+            profilePic: doc.data().profilePic || '',
+            isPublic: doc.data().isPublic ?? true,
+            isAuthenticated: doc.data().isAuthenticated,
+            createdAt: doc.data().createdAt,
+            isActive: doc.data().isActive,
+            isVerified: true,
+            email: doc.data().email
+          }))
+          .filter(user => !excludeUserIds.includes(user.id) && user.id !== 'sideeye' && user.id !== 'contact-team');
+      } catch (error) {
+        console.error('Error searching by username_lower:', error);
+      }
+      
+      // 2. If we didn't get enough results or username_lower doesn't exist, try name_lower
+      if (usersResults.length < 10) {
+        try {
+          const nameQuery = firestoreQuery(
+            usersRef,
+            orderBy('name_lower'),
+            startAt(lowerQuery),
+            endAt(lowerQuery + '\uf8ff'),
+            limit(20)
+          );
+          
+          const nameSnapshot = await getDocs(nameQuery);
+          const nameResults = nameSnapshot.docs
+            .map(doc => ({
+              id: doc.id,
+              username: doc.data().username || '',
+              name: doc.data().name || '',
+              bio: doc.data().bio || '',
+              profilePic: doc.data().profilePic || '',
+              isPublic: doc.data().isPublic ?? true,
+              isAuthenticated: doc.data().isAuthenticated,
+              createdAt: doc.data().createdAt,
+              isActive: doc.data().isActive,
+              isVerified: true,
+              email: doc.data().email
+            }))
+            .filter(user => 
+              !excludeUserIds.includes(user.id) && 
+              user.id !== 'sideeye' && 
+              user.id !== 'contact-team' &&
+              !usersResults.some(existingUser => existingUser.id === user.id)
+            );
+          
+          // Combine results (avoiding duplicates)
+          usersResults = [...usersResults, ...nameResults];
+        } catch (error) {
+          console.error('Error searching by name_lower:', error);
+        }
+      }
+      
+      // 3. Fallback to a simple 'get all and filter' approach if needed
+      if (usersResults.length === 0) {
+        console.log('Falling back to simple search approach');
+        const allUsersQuery = firestoreQuery(
+          usersRef,
+          limit(50)
+        );
+        
+        const allUsersSnapshot = await getDocs(allUsersQuery);
+        usersResults = allUsersSnapshot.docs
+          .map(doc => ({
+            id: doc.id,
+            username: doc.data().username || '',
+            name: doc.data().name || '',
+            bio: doc.data().bio || '',
+            profilePic: doc.data().profilePic || '',
+            isPublic: doc.data().isPublic ?? true,
+            isAuthenticated: doc.data().isAuthenticated,
+            createdAt: doc.data().createdAt,
+            isActive: doc.data().isActive,
+            isVerified: true,
+            email: doc.data().email
+          }))
+          .filter(user => 
+            !excludeUserIds.includes(user.id) && 
+            user.id !== 'sideeye' && 
+            user.id !== 'contact-team' &&
+            (
+              user.username.toLowerCase().includes(lowerQuery) ||
+              user.name.toLowerCase().includes(lowerQuery)
+            )
+          );
+      }
 
-              return {
-                id: room.id,
-                name: room.name,
-                description: room.description,
-                memberCount: room.memberCount || 0,
-                shareCount: 0,
-                isPrivate: room.isPrivate || false,
-                createdAt: room.createdAt?.toDate() || new Date(),
-                creatorName: ownerData?.username || 'Unknown',
-                creatorId: room.ownerId,
-                creatorAvatar: ownerData?.profilePic || '',
-                tags: room.tags || [],
-                lastActive: room.lastActive?.toDate() || new Date(),
-                maxMembers: room.maxMembers || 100,
-                activeUsers: room.activeUsers || 0,
-                isLive: room.isLive || false,
-                thumbnailUrl: room.thumbnailUrl || ''
-              } as Room;
-            } catch (error) {
-              console.error(`Error fetching owner data for room ${room.id}:`, error);
-              // Return a default Room object if we can't fetch owner data
-              return {
-                id: room.id,
-                name: room.name,
-                description: room.description,
-                memberCount: room.memberCount || 0,
-                shareCount: 0,
-                isPrivate: room.isPrivate || false,
-                createdAt: room.createdAt?.toDate() || new Date(),
-                creatorName: 'Unknown',
-                creatorId: room.ownerId,
-                creatorAvatar: '',
-                tags: room.tags || [],
-                lastActive: room.lastActive?.toDate() || new Date(),
-                maxMembers: room.maxMembers || 100,
-                activeUsers: room.activeUsers || 0,
-                isLive: room.isLive || false,
-                thumbnailUrl: room.thumbnailUrl || ''
-              } as Room;
-            }
-          })
+      // Search rooms with a more comprehensive approach
+      const roomsRef = collection(db, 'sideRooms');
+      let roomsResults: FirestoreRoom[] = [];
+      
+      // Try different search approaches for rooms
+      try {
+        // 1. Try exact name search first
+        const exactRoomsQuery = firestoreQuery(
+          roomsRef,
+          where('name', '>=', query),
+          where('name', '<=', query + '\uf8ff'),
+          limit(20)
+        );
+        
+        const exactRoomsSnapshot = await getDocs(exactRoomsQuery);
+        roomsResults = exactRoomsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as FirestoreRoom));
+        
+        // 2. If not enough results, try a more general approach
+        if (roomsResults.length < 5) {
+          // Get rooms and filter client-side (not ideal but works as a fallback)
+          const generalRoomsQuery = firestoreQuery(
+            roomsRef,
+            where('deleted', '!=', true),
+            limit(50)
+          );
+          
+          const generalRoomsSnapshot = await getDocs(generalRoomsQuery);
+          const additionalRooms = generalRoomsSnapshot.docs
+            .map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            } as FirestoreRoom))
+            .filter(room => 
+              !roomsResults.some(existingRoom => existingRoom.id === room.id) &&
+              (
+                room.name.toLowerCase().includes(lowerQuery) ||
+                (room.description && room.description.toLowerCase().includes(lowerQuery)) ||
+                (room.tags && room.tags.some(tag => tag.toLowerCase().includes(lowerQuery)))
+              )
+            );
+          
+          roomsResults = [...roomsResults, ...additionalRooms];
+        }
+      } catch (error) {
+        console.error('Error searching rooms:', error);
+      }
+      
+      // Filter rooms by blocked users
+      roomsResults = roomsResults.filter(room => room.ownerId && !excludeUserIds.includes(room.ownerId));
+      
+      // Process room results to include owner data
+      const roomsData = await Promise.all(
+        roomsResults.map(async (room) => {
+          try {
+            const ownerDoc = await getDoc(doc(db, 'users', room.ownerId));
+            const ownerData = ownerDoc.exists() ? ownerDoc.data() : null;
+
+            return {
+              id: room.id,
+              name: room.name,
+              description: room.description,
+              memberCount: room.memberCount || 0,
+              shareCount: 0,
+              isPrivate: room.isPrivate || false,
+              createdAt: room.createdAt?.toDate() || new Date(),
+              creatorName: ownerData?.username || 'Unknown',
+              creatorId: room.ownerId,
+              creatorAvatar: ownerData?.profilePic || '',
+              tags: room.tags || [],
+              lastActive: room.lastActive?.toDate() || new Date(),
+              maxMembers: room.maxMembers || 100,
+              activeUsers: room.activeUsers || 0,
+              isLive: room.isLive || false,
+              thumbnailUrl: room.thumbnailUrl || ''
+            } as Room;
+          } catch (error) {
+            console.error(`Error fetching owner data for room ${room.id}:`, error);
+            return {
+              id: room.id,
+              name: room.name,
+              description: room.description,
+              memberCount: room.memberCount || 0,
+              shareCount: 0,
+              isPrivate: room.isPrivate || false,
+              createdAt: room.createdAt?.toDate() || new Date(),
+              creatorName: 'Unknown',
+              creatorId: room.ownerId,
+              creatorAvatar: '',
+              tags: room.tags || [],
+              lastActive: room.lastActive?.toDate() || new Date(),
+              maxMembers: room.maxMembers || 100,
+              activeUsers: room.activeUsers || 0,
+              isLive: room.isLive || false,
+              thumbnailUrl: room.thumbnailUrl || ''
+            } as Room;
+          }
+        })
       );
 
-      setUsers(usersData);
+      setUsers(usersResults);
       setRooms(roomsData);
     } catch (error) {
       console.error('Error searching:', error);
@@ -597,42 +807,94 @@ const Discover: React.FC = () => {
         isPublic: doc.data()?.isPublic ?? true,
         isAuthenticated: doc.data()?.isAuthenticated,
         createdAt: doc.data()?.createdAt,
-        isActive: doc.data()?.isActive
+        isActive: doc.data()?.isActive,
+        isVerified: true, // Set all users as verified
+        email: doc.data()?.email
       });
-      
-      // Modified query to search by username
-      const usersQuery = firestoreQuery(
-        usersRef,
-        orderBy('username_lower'),
-        startAt(searchTerm),
-        endAt(searchTerm + '\uf8ff'),
-        limit(5)
-      );
 
-      const usersSnapshot = await getDocs(usersQuery);
-      let usersData = usersSnapshot.docs.map(mapDocToUser);
+      let usersData: UserProfile[] = [];
       
-      if (usersData.length < 5) {
-        // If not enough results with username, try searching by display name
-        const nameQuery = firestoreQuery(
+      // Try different search approaches one by one
+      try {
+        // 1. First try username_lower
+        const usersQuery = firestoreQuery(
           usersRef,
-          orderBy('name_lower'),
+          orderBy('username_lower'),
           startAt(searchTerm),
           endAt(searchTerm + '\uf8ff'),
-          limit(5 - usersData.length)
+          limit(10)
         );
-        const nameSnapshot = await getDocs(nameQuery);
-        const nameUsersData = nameSnapshot.docs.map(mapDocToUser);
-        // Combine and remove duplicates
-        const combined = [...usersData, ...nameUsersData];
-        usersData = Array.from(new Map(combined.map(u => [u.id, u])).values());
-      } 
+        
+        const usersSnapshot = await getDocs(usersQuery);
+        usersData = usersSnapshot.docs
+          .filter(doc => doc.id !== 'sideeye' && doc.id !== 'contact-team')
+          .map(mapDocToUser);
+      } catch (error) {
+        console.log('Error searching by username_lower:', error);
+      }
+      
+      // 2. If not enough results, try name_lower
+      if (usersData.length < 5) {
+        try {
+          const nameQuery = firestoreQuery(
+            usersRef,
+            orderBy('name_lower'),
+            startAt(searchTerm),
+            endAt(searchTerm + '\uf8ff'),
+            limit(10)
+          );
+          
+          const nameSnapshot = await getDocs(nameQuery);
+          const nameResults = nameSnapshot.docs
+            .filter(doc => 
+              doc.id !== 'sideeye' && 
+              doc.id !== 'contact-team' &&
+              !usersData.some(u => u.id === doc.id)
+            )
+            .map(mapDocToUser);
+          
+          usersData = [...usersData, ...nameResults];
+        } catch (error) {
+          console.log('Error searching by name_lower:', error);
+        }
+      }
+      
+      // 3. If still not enough, fallback to a comprehensive search
+      if (usersData.length < 3) {
+        const fallbackQuery = firestoreQuery(
+          usersRef,
+          limit(25) // Get a decent sample to filter from
+        );
+        
+        try {
+          const fallbackSnapshot = await getDocs(fallbackQuery);
+          const fallbackResults = fallbackSnapshot.docs
+            .filter(doc => 
+              doc.id !== 'sideeye' && 
+              doc.id !== 'contact-team' &&
+              !usersData.some(u => u.id === doc.id) &&
+              (
+                (doc.data()?.username || '').toLowerCase().includes(searchTerm) ||
+                (doc.data()?.name || '').toLowerCase().includes(searchTerm)
+              )
+            )
+            .map(mapDocToUser);
+          
+          usersData = [...usersData, ...fallbackResults];
+        } catch (error) {
+          console.log('Error with fallback search:', error);
+        }
+      }
+      
+      // Filter for blocked users if needed
+      if (currentUser?.blockedUsers) {
+        usersData = usersData.filter(user => !currentUser.blockedUsers?.includes(user.id));
+      }
       
       setDropdownUsers(usersData.slice(0, 5));
-      setShowDropdown(true);
+      setShowDropdown(usersData.length > 0);
     } catch (error) {
       console.error('Instant search error:', error);
-      toast.error('Failed to search users');
     }
   };
 
@@ -841,6 +1103,16 @@ const Discover: React.FC = () => {
                                   primary={
                                     <Typography variant="body1">
                                       {user.name}
+                                      {user.isVerified && (
+                                        <VerifiedUserIcon 
+                                          sx={{ 
+                                            ml: 0.5, 
+                                            color: 'primary.main',
+                                            fontSize: '0.9rem',
+                                            verticalAlign: 'middle'
+                                          }} 
+                                        />
+                                      )}
                                     </Typography>
                                   }
                                   secondary={
@@ -983,6 +1255,16 @@ const Discover: React.FC = () => {
                           primary={
                             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                               {user.name}
+                              {user.isVerified && (
+                                <VerifiedUserIcon 
+                                  sx={{ 
+                                    ml: 0.5, 
+                                    color: 'primary.main',
+                                    fontSize: '1rem',
+                                    verticalAlign: 'middle'
+                                  }} 
+                                />
+                              )}
                             </Typography>
                           }
                           secondary={
@@ -1377,6 +1659,16 @@ const Discover: React.FC = () => {
                           primary={
                             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                               {user.name}
+                              {user.isVerified && (
+                                <VerifiedUserIcon 
+                                  sx={{ 
+                                    ml: 0.5, 
+                                    color: 'primary.main',
+                                    fontSize: '1rem',
+                                    verticalAlign: 'middle'
+                                  }} 
+                                />
+                              )}
                             </Typography>
                           }
                           secondary={
