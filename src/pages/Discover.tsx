@@ -1637,12 +1637,14 @@ const Discover: React.FC = () => {
                     <React.Fragment key={user.id}>
                       <ListItem 
                         sx={{ 
-                          py: 2,
+                          py: 3,
+                          px: 2,
                           cursor: 'pointer',
                           '&:hover': {
                             backgroundColor: 'action.hover'
                           },
-                          borderRadius: 1
+                          borderRadius: 1,
+                          mb: 1
                         }}
                         onClick={() => navigate(`/profile/${user.id}`)}
                       >
@@ -1650,7 +1652,7 @@ const Discover: React.FC = () => {
                           <Avatar 
                             src={user.isActive === false ? undefined : user.profilePic}
                             alt={user.name}
-                            sx={{ width: 60, height: 60 }}
+                            sx={{ width: 60, height: 60, mr: 2 }}
                           >
                             {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
                           </Avatar>
@@ -1696,19 +1698,23 @@ const Discover: React.FC = () => {
                           sx={{ ml: 2 }}
                         />
                         {currentUser && user.id !== currentUser.uid && (
-                          <ListItemSecondaryAction>
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                              <Button
-                                variant="outlined"
+                          <ListItemSecondaryAction sx={{ right: 16 }}>
+                            <Box sx={{ display: 'flex', gap: 1, flexWrap: { xs: 'wrap', sm: 'nowrap' } }}>
+                              <IconButton
+                                color="primary"
                                 size="small"
-                                startIcon={<MessageIcon />}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  navigate(`/chat/${user.id}`);
+                                  navigate(`/chat/user/${user.id}`);
+                                }}
+                                sx={{ 
+                                  border: '1px solid',
+                                  borderColor: 'primary.main',
+                                  p: 1
                                 }}
                               >
-                                Message
-                              </Button>
+                                <MessageIcon fontSize="small" />
+                              </IconButton>
                               <Button
                                 variant={following.has(user.id) ? "contained" : pendingRequests.has(user.id) ? "contained" : "outlined"}
                                 size="small"
