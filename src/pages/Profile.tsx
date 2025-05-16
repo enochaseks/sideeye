@@ -41,7 +41,8 @@ import {
   Lock,
   MoreVert as MoreVertIcon,
   Block as BlockIcon,
-  Report as ReportIcon
+  Report as ReportIcon,
+  VerifiedUser as VerifiedUserIcon
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, writeBatch, Timestamp } from 'firebase/firestore';
@@ -311,9 +312,38 @@ const Profile: React.FC = () => {
   useEffect(() => {
     if (!db || !currentUser || !userId) return;
 
+    // Check if the user is following, or has sent a follow request that's pending
+    const fetchFollowStatus = async () => {
+      // Check if directly following
+      const followingRef = doc(db, 'users', currentUser.uid, 'following', userId);
+      const followingDoc = await getDoc(followingRef);
+      
+      if (followingDoc.exists()) {
+        setIsFollowing(true);
+        return;
+      }
+      
+      // If not directly following, check if a follow request has been sent
+      const followRequestRef = doc(db, 'users', userId, 'followRequests', currentUser.uid);
+      const followRequestDoc = await getDoc(followRequestRef);
+      
+      if (followRequestDoc.exists()) {
+        setFollowRequested(true);
+      } else {
+        setFollowRequested(false);
+        setIsFollowing(false);
+      }
+    };
+    
+    fetchFollowStatus();
+    
+    // Also listen for real-time updates to following status
     const followingRef = doc(db, 'users', currentUser.uid, 'following', userId);
     const unsubscribe = onSnapshot(followingRef, (doc) => {
       setIsFollowing(doc.exists());
+      if (doc.exists()) {
+        setFollowRequested(false);
+      }
     });
 
     return () => unsubscribe();
@@ -336,6 +366,7 @@ const Profile: React.FC = () => {
     try {
       setIsLoading(true);
       
+      // Check if the target account is private
       if (isPrivate) {
         // Send follow request
         const requestRef = doc(db, 'users', userId, 'followRequests', currentUser.uid);
@@ -347,6 +378,15 @@ const Profile: React.FC = () => {
         setFollowRequested(true);
         toast.success('Follow request sent');
       } else {
+        // Also check if the current user has a private account - if the current user follows someone,
+        // that person can't automatically follow them back without a request
+        const isCurrentUserPrivate = await checkIfFollowRequestNeeded(currentUser.uid);
+        
+        if (isCurrentUserPrivate) {
+          // The current user's account is private, so the target user needs to send a request
+          toast.success('Your account is private. They will need to send a request to follow you back.');
+        }
+        
         // Direct follow
         const followingRef = doc(db, 'users', currentUser.uid, 'following', userId);
         const followersRef = doc(db, 'users', userId, 'followers', currentUser.uid);
@@ -513,6 +553,26 @@ const Profile: React.FC = () => {
     }
   };
 
+  // Add a function to check if a user needs to send a follow request
+  const checkIfFollowRequestNeeded = async (targetUserId: string): Promise<boolean> => {
+    if (!db) return false;
+    
+    try {
+      const targetUserRef = doc(db, 'users', targetUserId);
+      const targetUserDoc = await getDoc(targetUserRef);
+      
+      if (targetUserDoc.exists()) {
+        const targetUserData = targetUserDoc.data();
+        return targetUserData.isPrivate === true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error checking if follow request needed:', error);
+      return false;
+    }
+  };
+
   if (authLoading || isLoading) {
     return (
       <Container maxWidth="lg">
@@ -534,16 +594,27 @@ const Profile: React.FC = () => {
         <Paper elevation={0} sx={{ p: 3, borderRadius: 2, backgroundColor: 'background.paper' }}>
           {/* User name at the top with 3-dot menu for other users' profiles */}
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', mb: 3, position: 'relative' }}>
-            <Typography 
-              variant="h5" 
-              sx={{ 
-                fontWeight: 'bold',
-                textAlign: 'center'
-              }}
-            >
-              {username || 'username'}
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Typography 
+                variant="h5" 
+                sx={{ 
+                  fontWeight: 'bold',
+                  textAlign: 'center'
+                }}
+              >
+                {username || 'username'}
+              </Typography>
+              {userProfile?.isVerified && (
+                <VerifiedUserIcon 
+                  sx={{ 
+                    ml: 0.5, 
+                    color: email === 'enochaseks@yahoo.com' || email === 'contact@sideye.uk' ? 'gold' : 'primary.main', 
+                    fontSize: '1.5rem' 
+                  }} 
+                />
+              )}
               {isPrivate && <LockIcon sx={{ ml: 1, fontSize: 20, verticalAlign: 'middle' }} />}
-            </Typography>
+            </Box>
             
             {/* 3-dot menu only shown when viewing other users' profiles */}
             {currentUser?.uid !== targetUserId && (
@@ -632,17 +703,34 @@ const Profile: React.FC = () => {
             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
               {/* Name and Bio */}
               <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-                <Typography 
-                  variant="h6" 
-                  component="h1" 
+                <Box 
                   sx={{ 
-                    fontWeight: 'bold',
-                    textAlign: 'center',
-                    width: '100%'
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    width: '100%' 
                   }}
                 >
-                  {name || username}
-                </Typography>
+                  <Typography 
+                    variant="h6" 
+                    component="h1" 
+                    sx={{ 
+                      fontWeight: 'bold',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {name || username}
+                  </Typography>
+                  {userProfile?.isVerified && (
+                    <VerifiedUserIcon 
+                      sx={{ 
+                        ml: 0.5, 
+                        color: email === 'enochaseks@yahoo.com' || email === 'contact@sideye.uk' ? 'gold' : 'primary.main', 
+                        fontSize: '1.2rem' 
+                      }} 
+                    />
+                  )}
+                </Box>
                 {bio && (
                   <Typography 
                     variant="body1" 

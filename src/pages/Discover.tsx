@@ -130,6 +130,7 @@ const Discover: React.FC = () => {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [following, setFollowing] = useState<Set<string>>(new Set());
+  const [pendingRequests, setPendingRequests] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
@@ -293,6 +294,7 @@ const Discover: React.FC = () => {
     fetchRooms();
     if (currentUser) {
       fetchFollowing();
+      fetchPendingRequests();
     }
   }, [currentUser]);
 
@@ -307,6 +309,52 @@ const Discover: React.FC = () => {
       setFollowing(followingIds);
     } catch (error) {
       console.error('Error fetching following:', error);
+    }
+  };
+
+  // Add function to fetch pending follow requests
+  const fetchPendingRequests = async () => {
+    if (!currentUser || !db) return;
+    try {
+      // Get all users this user has sent follow requests to
+      const pendingRequestsQuery = collection(db, 'users');
+      const usersSnapshot = await getDocs(pendingRequestsQuery);
+      
+      const pendingIds = new Set<string>();
+      
+      // Check each user's followRequests collection for current user's ID
+      await Promise.all(usersSnapshot.docs.map(async (userDoc) => {
+        const requestRef = doc(db, `users/${userDoc.id}/followRequests/${currentUser.uid}`);
+        const requestSnapshot = await getDoc(requestRef);
+        
+        if (requestSnapshot.exists()) {
+          pendingIds.add(userDoc.id);
+        }
+      }));
+      
+      setPendingRequests(pendingIds);
+    } catch (error) {
+      console.error('Error fetching pending requests:', error);
+    }
+  };
+
+  const checkIfPrivateAccount = async (userId: string): Promise<boolean> => {
+    if (!db) return false;
+    
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        // Check both isPrivate (newer field) and !isPublic (older field) for compatibility
+        return userData.isPrivate === true || userData.isPublic === false;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error checking if account is private:', error);
+      return false;
     }
   };
 
@@ -328,29 +376,45 @@ const Discover: React.FC = () => {
         });
         toast.success('Unfollowed user');
       } else {
-        // Follow
-        await setDoc(followingRef, {
-          timestamp: serverTimestamp()
-        });
-        await setDoc(followerRef, {
-          timestamp: serverTimestamp()
-        });
-        setFollowing(prev => new Set(prev).add(userId));
+        // Check if the target account is private
+        const isPrivate = await checkIfPrivateAccount(userId);
+        
+        if (isPrivate) {
+          // Send follow request instead of direct follow
+          const requestRef = doc(db, 'users', userId, 'followRequests', currentUser.uid);
+          await setDoc(requestRef, {
+            userId: currentUser.uid,
+            username: currentUser.displayName || currentUser.email?.split('@')[0] || `User_${currentUser.uid.substring(0, 5)}`,
+            timestamp: serverTimestamp()
+          });
+          // Update pending requests state
+          setPendingRequests(prev => new Set(prev).add(userId));
+          toast.success('Follow request sent');
+        } else {
+          // Direct follow for public accounts
+          await setDoc(followingRef, {
+            timestamp: serverTimestamp()
+          });
+          await setDoc(followerRef, {
+            timestamp: serverTimestamp()
+          });
+          setFollowing(prev => new Set(prev).add(userId));
 
-        // Create notification for followed user
-        const notificationData = {
-          type: 'follow',
-          senderId: currentUser.uid,
-          senderName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone',
-          senderAvatar: currentUser.photoURL || '',
-          recipientId: userId,
-          content: `${currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone'} started following you`,
-          createdAt: serverTimestamp(),
-          isRead: false
-        };
-        await addDoc(collection(db, 'notifications'), notificationData);
+          // Create notification for followed user
+          const notificationData = {
+            type: 'follow',
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone',
+            senderAvatar: currentUser.photoURL || '',
+            recipientId: userId,
+            content: `${currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone'} started following you`,
+            createdAt: serverTimestamp(),
+            isRead: false
+          };
+          await addDoc(collection(db, 'notifications'), notificationData);
 
-        toast.success('Followed user');
+          toast.success('Followed user');
+        }
       }
     } catch (error) {
       console.error('Error toggling follow:', error);
@@ -801,9 +865,12 @@ const Discover: React.FC = () => {
                                       size="small"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        handleFollow(user.id);
+                                        if (!pendingRequests.has(user.id)) {
+                                          handleFollow(user.id);
+                                        }
                                       }}
-                                      color={following.has(user.id) ? "primary" : "default"}
+                                      color={following.has(user.id) ? "primary" : pendingRequests.has(user.id) ? "secondary" : "default"}
+                                      disabled={pendingRequests.has(user.id)}
                                     >
                                       <PersonAddIcon fontSize="small" />
                                     </IconButton>
@@ -956,10 +1023,13 @@ const Discover: React.FC = () => {
                               <IconButton
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleFollow(user.id);
+                                  if (!pendingRequests.has(user.id)) {
+                                    handleFollow(user.id);
+                                  }
                                 }}
                                 size="small"
-                                color={following.has(user.id) ? "primary" : "default"}
+                                color={following.has(user.id) ? "primary" : pendingRequests.has(user.id) ? "secondary" : "default"}
+                                disabled={pendingRequests.has(user.id)}
                               >
                                 <PersonAddIcon />
                               </IconButton>
@@ -1348,16 +1418,19 @@ const Discover: React.FC = () => {
                                 Message
                               </Button>
                               <Button
-                                variant={following.has(user.id) ? "contained" : "outlined"}
+                                variant={following.has(user.id) ? "contained" : pendingRequests.has(user.id) ? "contained" : "outlined"}
                                 size="small"
-                                startIcon={following.has(user.id) ? null : <PersonAddIcon />}
+                                startIcon={following.has(user.id) || pendingRequests.has(user.id) ? null : <PersonAddIcon />}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleFollow(user.id);
+                                  if (!pendingRequests.has(user.id)) {
+                                    handleFollow(user.id);
+                                  }
                                 }}
-                                color="primary"
+                                color={pendingRequests.has(user.id) ? "secondary" : "primary"}
+                                disabled={pendingRequests.has(user.id)}
                               >
-                                {following.has(user.id) ? "Following" : "Follow"}
+                                {following.has(user.id) ? "Following" : pendingRequests.has(user.id) ? "Requested" : "Follow"}
                               </Button>
                             </Box>
                           </ListItemSecondaryAction>
