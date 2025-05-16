@@ -533,13 +533,12 @@ const Profile: React.FC = () => {
         {/* Profile Header */}
         <Paper elevation={0} sx={{ p: 3, borderRadius: 2, backgroundColor: 'background.paper' }}>
           {/* User name at the top with 3-dot menu for other users' profiles */}
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', mb: 3, position: 'relative' }}>
             <Typography 
               variant="h5" 
               sx={{ 
                 fontWeight: 'bold',
-                pl: 1,
-                textAlign: 'left'
+                textAlign: 'center'
               }}
             >
               {username || 'username'}
@@ -548,7 +547,11 @@ const Profile: React.FC = () => {
             
             {/* 3-dot menu only shown when viewing other users' profiles */}
             {currentUser?.uid !== targetUserId && (
-              <IconButton onClick={handleMenuOpen} size="small">
+              <IconButton 
+                onClick={handleMenuOpen} 
+                size="small" 
+                sx={{ position: 'absolute', right: 0 }}
+              >
                 <MoreVertIcon />
               </IconButton>
             )}
@@ -582,10 +585,10 @@ const Profile: React.FC = () => {
             </MenuItem>
           </Menu>
 
-          {/* Reordered profile content - stats on left, profile pic on right */}
-          <Box sx={{ display: 'flex', flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 4 }}>
-            {/* Profile Picture - moved to right */}
-            <Box sx={{ position: 'relative' }}>
+          {/* Updated layout - Profile picture at the top, centered content below */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+            {/* Profile Picture - moved to top and centered */}
+            <Box sx={{ position: 'relative', display: 'flex', justifyContent: 'center', width: '100%' }}>
               <Badge
                 overlap="circular"
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
@@ -625,16 +628,17 @@ const Profile: React.FC = () => {
               </Badge>
             </Box>
             
-            {/* Profile Info - now on left */}
-            <Box sx={{ flexGrow: 1, pl: 1 }}>
+            {/* Profile Info - now centered below profile pic */}
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
               {/* Name and Bio */}
-              <Box sx={{ mb: 2 }}>
+              <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
                 <Typography 
                   variant="h6" 
                   component="h1" 
                   sx={{ 
                     fontWeight: 'bold',
-                    textAlign: 'left'
+                    textAlign: 'center',
+                    width: '100%'
                   }}
                 >
                   {name || username}
@@ -646,7 +650,8 @@ const Profile: React.FC = () => {
                     sx={{ 
                       mt: 1, 
                       whiteSpace: 'pre-wrap',
-                      textAlign: 'left'
+                      textAlign: 'center',
+                      width: '100%'
                     }}
                   >
                     {bio}
@@ -655,7 +660,7 @@ const Profile: React.FC = () => {
               </Box>
               
               {/* Stats */}
-              <Box sx={{ display: 'flex', gap: 3, mt: 2 }}>
+              <Box sx={{ display: 'flex', gap: 3, mt: 2, justifyContent: 'center', width: '100%' }}>
                 <Box sx={{ textAlign: 'center' }}>
                   <Typography variant="body2" color="text.secondary">
                     Rooms
@@ -691,18 +696,18 @@ const Profile: React.FC = () => {
               </Box>
               
               {/* Add curved Edit Profile / Follow buttons */}
-              <Box sx={{ mt: 3 }}>
+              <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center', width: '100%' }}>
                 {currentUser?.uid === targetUserId ? (
                   <Button
                     variant="outlined"
                     onClick={() => setIsEditing(true)}
                     fullWidth 
-                    sx={{ borderRadius: 8 }}
+                    sx={{ borderRadius: 8, maxWidth: '300px' }}
                   >
                     Edit Profile
                   </Button>
                 ) : currentUser ? (
-                  <Box sx={{ display: 'flex', gap: 2 }}>
+                  <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', width: '100%' }}>
                     {isFollowing ? (
                       <Button
                         variant="outlined"

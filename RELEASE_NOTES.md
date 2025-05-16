@@ -21,6 +21,7 @@
 - Room Password Updated
 - Deactivation/Deletion updates, Users who delete their account all their activities and details are deleted on firestore
 - Users who deactivate their account, their activities and profile still in tact but will be logged out until they reactivate.
+- Profile alignment glitch fixed
 
 ## Version 1.0.0
 - Initial release of SideEye 
