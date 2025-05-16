@@ -859,8 +859,16 @@ const Chat: React.FC = () => {
         <Box
           sx={{
             maxWidth: message.mediaUrl ? '80%' : '70%',
-            backgroundColor: isCurrentUser ? 'primary.main' : 'background.paper',
-            color: isCurrentUser ? 'primary.contrastText' : 'text.primary',
+            backgroundColor: isCurrentUser 
+              ? 'primary.main' 
+              : (theme) => theme.palette.mode === 'dark' 
+                ? 'rgba(255, 255, 255, 0.15)' 
+                : 'background.paper',
+            color: isCurrentUser 
+              ? 'primary.contrastText' 
+              : (theme) => theme.palette.mode === 'dark' 
+                ? 'common.white' 
+                : 'text.primary',
             borderRadius: isCurrentUser ? '20px 20px 0 20px' : '20px 20px 20px 0',
             p: message.mediaUrl ? 1 : 2,
             position: 'relative',
@@ -871,7 +879,8 @@ const Chat: React.FC = () => {
               right: isCurrentUser ? 8 : 'auto',
               left: isCurrentUser ? 'auto' : 8,
               fontSize: '0.7rem',
-              color: isCurrentUser ? 'rgba(255,255,255,0.7)' : 'text.secondary'
+              color: isCurrentUser ? 'rgba(255,255,255,0.7)' : (theme) => 
+                theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'text.secondary'
             },
             ...(isCurrentUser && {
               transition: 'opacity 0.2s ease',
@@ -1069,7 +1078,13 @@ const Chat: React.FC = () => {
         </Box>
       )}
       
-      <Box sx={{ flexGrow: 1, overflowY: 'auto', bgcolor: 'grey.50', p: 2, pb: 80 }}>
+      <Box sx={{ 
+        flexGrow: 1, 
+        overflowY: 'auto', 
+        bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.900' : 'grey.50', 
+        p: 2, 
+        pb: 80 
+      }}>
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
             <CircularProgress />
@@ -1083,11 +1098,20 @@ const Chat: React.FC = () => {
             {Object.entries(groupMessagesByDate()).map(([dateStr, dateMessages]) => (
               <Box key={dateStr} sx={{ mb: 3 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <Divider sx={{ flexGrow: 1, mr: 2 }} />
-                  <Typography variant="caption" color="text.secondary">
+                  <Divider sx={{ 
+                    flexGrow: 1, 
+                    mr: 2,
+                    borderColor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.12)' : 'inherit'
+                  }} />
+                  <Typography variant="caption" sx={{ color: (theme) => 
+                    theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'text.secondary' }}>
                     {formatMessageDate(dateMessages[0].timestamp)}
                   </Typography>
-                  <Divider sx={{ flexGrow: 1, ml: 2 }} />
+                  <Divider sx={{ 
+                    flexGrow: 1, 
+                    ml: 2,
+                    borderColor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.12)' : 'inherit'
+                  }} />
                 </Box>
                 {dateMessages.map(renderMessage)}
               </Box>
@@ -1105,9 +1129,11 @@ const Chat: React.FC = () => {
           left: 0,
           right: 0,
           p: 2,
-          backgroundColor: 'white',
-          borderTop: '1px solid #ddd',
-          boxShadow: '0px -2px 10px rgba(0,0,0,0.1)',
+          backgroundColor: (theme) => theme.palette.mode === 'dark' ? 'background.paper' : 'white',
+          borderTop: (theme) => `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : '#ddd'}`,
+          boxShadow: (theme) => theme.palette.mode === 'dark' 
+            ? '0px -2px 10px rgba(0,0,0,0.3)'
+            : '0px -2px 10px rgba(0,0,0,0.1)',
           zIndex: 9999
         }}
       >
@@ -1151,7 +1177,12 @@ const Chat: React.FC = () => {
               onChange={(e) => setMessageText(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
               disabled={isUploading || (isPending && conversation?.participants[0] !== currentUser?.uid)}
-              sx={{ mr: 1 }}
+              sx={{ 
+                mr: 1,
+                "& .MuiInputBase-root": {
+                  bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'white'
+                }
+              }}
             />
             <Button 
               variant="contained" 

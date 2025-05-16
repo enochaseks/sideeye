@@ -1043,7 +1043,10 @@ const SadeAIPage: React.FC = () => {
     <Box
       sx={{
         minHeight: "100vh",
-        background: "linear-gradient(135deg, #FFF8DC 0%, #FFC0CB 100%)",
+        background: (theme) => 
+          theme.palette.mode === 'dark' 
+            ? 'linear-gradient(135deg, #1a1a2e 0%, #333355 100%)'
+            : 'linear-gradient(135deg, #FFF8DC 0%, #FFC0CB 100%)',
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -1061,7 +1064,8 @@ const SadeAIPage: React.FC = () => {
           borderRadius: 4,
           mb: 2,
           mt: 2,
-          bgcolor: "#fffefa",
+          bgcolor: (theme) => 
+            theme.palette.mode === 'dark' ? 'background.paper' : '#fffefa',
           boxShadow: "0 12px 40px rgba(0, 0, 0, 0.12)",
         }}
       >
@@ -1098,11 +1102,17 @@ const SadeAIPage: React.FC = () => {
             minHeight: 320,
             maxHeight: { xs: 350, sm: 400 },
             overflowY: "auto",
-            bgcolor: "rgba(255, 255, 255, 0.6)",
+            bgcolor: (theme) => 
+              theme.palette.mode === 'dark' 
+                ? 'rgba(0, 0, 0, 0.2)' 
+                : 'rgba(255, 255, 255, 0.6)',
             borderRadius: 3,
             p: 2,
             mb: 2,
-            boxShadow: "inset 0 1px 3px rgba(0,0,0,0.05)",
+            boxShadow: (theme) => 
+              theme.palette.mode === 'dark'
+                ? 'inset 0 1px 3px rgba(255,255,255,0.05)'
+                : 'inset 0 1px 3px rgba(0,0,0,0.05)',
             transition: "background 0.3s",
           }}
         >
@@ -1141,8 +1151,10 @@ const SadeAIPage: React.FC = () => {
                 <Paper
                   elevation={0}
                   sx={{
-                    bgcolor: message.sender === 'user' ? 'primary.main' : '#f3f6fb',
-                    color: message.sender === 'user' ? 'primary.contrastText' : 'text.primary',
+                    bgcolor: message.sender === 'user' ? 'primary.main' : (theme) => 
+                      theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.15)' : '#f3f6fb',
+                    color: message.sender === 'user' ? 'primary.contrastText' : (theme) => 
+                      theme.palette.mode === 'dark' ? 'common.white' : 'text.primary',
                     borderRadius: message.sender === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
                     px: 2,
                     py: 1.2,
@@ -1180,7 +1192,8 @@ const SadeAIPage: React.FC = () => {
               />
               <Box
                 sx={{
-                  bgcolor: "#f3f6fb", // Match AI message bubble background
+                  bgcolor: (theme) => 
+                    theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.15)' : '#f3f6fb',
                   borderRadius: "18px 18px 18px 4px", // Match AI message bubble radius
                   px: 1, // Adjust padding for indicator
                   py: 0.5, // Adjust padding for indicator
@@ -1343,7 +1356,7 @@ const SadeAIPage: React.FC = () => {
           )}
         {/* --- END: Render Connect 4 Board --- */}
 
-        <Box
+                  <Box
           sx={{
             display: "flex",
             gap: 1,
@@ -1353,9 +1366,15 @@ const SadeAIPage: React.FC = () => {
             left: 0,
             width: { xs: "100vw", sm: "auto" },
             maxWidth: { xs: "100vw", sm: "none" },
-            bgcolor: { xs: "rgba(255,255,255,0.95)", sm: "transparent" },
+            bgcolor: (theme) => ({ 
+              xs: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.95)', 
+              sm: 'transparent' 
+            }),
             p: { xs: 2, sm: 0 },
-            borderTop: { xs: "1px solid #eee", sm: "none" },
+            borderTop: (theme) => ({ 
+              xs: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : '#eee'}`, 
+              sm: 'none' 
+            }),
             zIndex: 1200,
           }}
         >
@@ -1380,7 +1399,7 @@ const SadeAIPage: React.FC = () => {
               activeGame?.gameType === "guess_the_number" ? "number" : "text"
             }
             sx={{
-              bgcolor: "white",
+              bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'white',
               borderRadius: 2,
               boxShadow: "0 1px 4px 0 rgba(31,38,135,0.04)",
             }}
