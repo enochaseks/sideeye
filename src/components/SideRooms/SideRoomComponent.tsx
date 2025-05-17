@@ -214,6 +214,7 @@ interface PresenceData {
     displayName?: string;
     photoURL?: string;
     role?: 'owner' | 'viewer' | 'guest';
+    isConnectedToAudio?: boolean;
 }
 
 // --- Room Theme Definitions & Constants ---
@@ -1012,6 +1013,16 @@ const SideRoomComponent: React.FC = () => {
                 await call.join({ create: true }); 
                 console.log(`[Stream Call] Successfully joined/created call: ${call.cid}`);
                 setActiveStreamCallInstance(call);
+                
+                // Update presence to indicate audio connection
+                if (currentUser?.uid && roomId && db) {
+                    const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
+                    await updateDoc(userPresenceRef, { 
+                        isConnectedToAudio: true,
+                        lastSeen: serverTimestamp()
+                    });
+                    console.log(`[Stream Call] Updated presence with isConnectedToAudio=true for user ${currentUser.uid}`);
+                }
             } catch (error: any) {
                 console.error('[Stream Call] Error joining or creating call:', error);
                 toast.error(`Failed to connect to audio: ${error.message || 'Unknown error'}`);
@@ -1036,6 +1047,15 @@ const SideRoomComponent: React.FC = () => {
         return () => {
             if (activeStreamCallInstance) {
                 console.log(`[Stream Call] Leaving active call ${activeStreamCallInstance.cid} on component unmount or room change.`);
+                
+                // Update presence to indicate no longer connected to audio
+                if (currentUser?.uid && roomId && db) {
+                    const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
+                    updateDoc(userPresenceRef, { 
+                        isConnectedToAudio: false
+                    }).catch(err => console.error(`[Stream Call] Error updating presence when leaving:`, err));
+                }
+                
                 activeStreamCallInstance.leave()
                     .then(() => console.log(`[Stream Call] Successfully left call ${activeStreamCallInstance.cid}`))
                     .catch(err => console.error(`[Stream Call] Error leaving call ${activeStreamCallInstance.cid}:`, err))
@@ -1044,7 +1064,7 @@ const SideRoomComponent: React.FC = () => {
                     });
             }
         };
-    }, [activeStreamCallInstance, roomId]); 
+    }, [activeStreamCallInstance, roomId, currentUser?.uid, db]); 
 
     // --- Room Listener ---
     useEffect(() => {
@@ -3492,6 +3512,14 @@ const InsideStreamCallContent: React.FC<{
     }, [participants, fetchUserFirestoreData, firestoreUserData]);
 
     const handleLeaveCall = () => {
+        // Update presence to indicate no longer connected to audio
+        if (currentUser?.uid && room?.id && db) {
+            const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
+            updateDoc(userPresenceRef, { 
+                isConnectedToAudio: false
+            }).catch(err => console.error(`[Stream Call] Error updating presence when leaving:`, err));
+        }
+        
         call?.leave().then(() => navigate('/side-rooms')); 
     }; 
 
@@ -3533,7 +3561,13 @@ const InsideStreamCallContent: React.FC<{
             const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
             const userPresencePath = `sideRooms/${room.id}/presence/${currentUser.uid}`;
             console.log('[DEBUG Mute Sync] Attempting updateDoc to path:', userPresencePath, 'with data:', JSON.stringify({ isMuted: localUserIsMute }, null, 2));
-            updateDoc(userPresenceRef, { isMuted: localUserIsMute })
+            
+            // For room owners, when they unmute, we need to ensure the room shows as "live"
+            // isConnectedToAudio will be true regardless of mute state as long as they're in the call
+            updateDoc(userPresenceRef, { 
+                isMuted: localUserIsMute,
+                isConnectedToAudio: true // Set to true whenever this effect runs because user is in the call
+            })
                 .then(() => {
                     console.log(`[InsideStreamCallContent] Synced local mute state (${localUserIsMute}) to Firestore for ${currentUser.uid}`);
                 })

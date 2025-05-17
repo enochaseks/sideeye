@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, arrayUnion, where, getDocs, addDoc, serverTimestamp, Firestore, Timestamp, runTransaction, getDoc, FieldValue, increment } from 'firebase/firestore';
@@ -35,11 +35,12 @@ import {
   Group,
   Add,
   Lock,
-  Search as SearchIcon,
+  SearchOutlined as SearchIcon,
   FilterList as FilterIcon,
   Visibility as VisibilityIcon,
   AccessTime as AccessTimeIcon,
-  CleaningServices as CleanupIcon
+  CleaningServices as CleanupIcon,
+  RemoveRedEye as RemoveRedEyeIcon
 } from '@mui/icons-material';
 import CreateSideRoom from '../CreateSideRoom';
 import { useFirestore } from '../../context/FirestoreContext';
@@ -69,6 +70,7 @@ interface SideRoomData {
   category?: string;
   thumbnailUrl?: string;
   ownerId: string;
+  isLive: boolean;
 }
 
 const GENRES = [
@@ -101,6 +103,8 @@ const SideRoomList: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('All');
   const [sortBy, setSortBy] = useState('newest');
+  
+  const [ownerProfiles, setOwnerProfiles] = useState<Record<string, {profilePic?: string}>>({});
   
   const navigate = useNavigate();
   const { currentUser } = useAuth();
@@ -173,8 +177,8 @@ const SideRoomList: React.FC = () => {
               description: data.description,
               createdAt: data.createdAt as Timestamp,
               lastActive: data.lastActive as Timestamp,
-              viewerCount: data.viewerCount || 0,
-              maxViewers: data.maxViewers || 100,
+              viewerCount: data.activeUsers || data.viewerCount || 0,
+              maxViewers: data.maxMembers || data.maxViewers || 100,
               viewers: data.viewers as SideRoomMember[] | undefined,
               isPrivate: data.isPrivate,
               password: data.password,
@@ -182,7 +186,8 @@ const SideRoomList: React.FC = () => {
               tags: data.tags as string[] | undefined,
               category: data.category,
               thumbnailUrl: data.thumbnailUrl,
-              ownerId: data.ownerId
+              ownerId: data.ownerId,
+              isLive: data.isLive || false
             } as SideRoomData;
           });
           
@@ -274,6 +279,48 @@ const SideRoomList: React.FC = () => {
     
     checkAdminStatus();
   }, [currentUser, db]);
+
+  // Add this useEffect to fetch owner profiles for rooms without thumbnails
+  useEffect(() => {
+    if (!db) return;
+    
+    const roomsWithoutThumbnails = filteredRooms
+      .filter(room => !room.thumbnailUrl && room.ownerId && !ownerProfiles[room.ownerId]);
+    
+    if (roomsWithoutThumbnails.length === 0) return;
+    
+    const fetchOwnerProfiles = async () => {
+      // Get unique owner IDs using Array.from instead of spread operator
+      const ownerIdsSet = new Set(roomsWithoutThumbnails.map(room => room.ownerId));
+      const uniqueOwnerIds = Array.from(ownerIdsSet);
+      
+      const profilePromises = uniqueOwnerIds.map(async (ownerId) => {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', ownerId));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            return { ownerId, profilePic: userData.profilePic };
+          }
+        } catch (error) {
+          console.error(`Error fetching owner profile for ${ownerId}:`, error);
+        }
+        return { ownerId, profilePic: undefined };
+      });
+      
+      const profiles = await Promise.all(profilePromises);
+      
+      const profileMap = profiles.reduce((acc, profile) => {
+        if (profile) {
+          acc[profile.ownerId] = { profilePic: profile.profilePic };
+        }
+        return acc;
+      }, {} as Record<string, {profilePic?: string}>);
+      
+      setOwnerProfiles(prev => ({ ...prev, ...profileMap }));
+    };
+    
+    fetchOwnerProfiles();
+  }, [filteredRooms, db, ownerProfiles]);
 
   const handleJoinRoom = async (room: SideRoomData) => {
     if (!currentUser || !db) {
@@ -435,6 +482,55 @@ const SideRoomList: React.FC = () => {
     }
   };
 
+  // Set up real-time listeners for room status
+  useEffect(() => {
+    const roomListeners: (() => void)[] = [];
+    
+    // Only set up listeners for displayed rooms to avoid excessive connections
+    filteredRooms.forEach(room => {
+      if (!db) return;
+      
+      // Set up a listener for the presence collection of this room
+      const presenceRef = collection(db, 'sideRooms', room.id, 'presence');
+      const presenceQuery = query(presenceRef, where("isOnline", "==", true));
+      
+      const unsubscribe = onSnapshot(presenceQuery, (presenceSnapshot) => {
+        const activeUsers = presenceSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Array<{id: string, role?: string, isConnectedToAudio?: boolean, isMuted?: boolean}>;
+        
+        // Find room owner in presence
+        const roomOwner = activeUsers.find(user => user.role === 'owner');
+        
+        // A room is considered "live" if the owner is present AND either not muted or connected to audio
+        const isLive = Boolean(roomOwner && 
+          ((roomOwner as any).isConnectedToAudio === true || (roomOwner as any).isMuted === false));
+        
+        // Update room in state
+        setRooms(prevRooms => {
+          return prevRooms.map(r => {
+            if (r.id === room.id) {
+              return {
+                ...r,
+                viewerCount: activeUsers.length,
+                isLive: isLive
+              };
+            }
+            return r;
+          });
+        });
+      });
+      
+      roomListeners.push(unsubscribe);
+    });
+    
+    // Clean up listeners when component unmounts or rooms change
+    return () => {
+      roomListeners.forEach(unsubscribe => unsubscribe());
+    };
+  }, [filteredRooms, db]);
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
@@ -525,15 +621,56 @@ const SideRoomList: React.FC = () => {
                 flexDirection: 'column', 
                 height: '100%', // Ensure cards in the same row have the same height
                 borderRadius: 2, 
+                position: 'relative', // Add this for absolute positioning of the LIVE chip
                 transition: 'box-shadow 0.3s', 
                 '&:hover': {
                   boxShadow: 3,
                 }
               }}>
+                {room.isLive && (
+                  <Chip
+                    label="LIVE"
+                    color="error"
+                    size="small"
+                    sx={{ 
+                      fontWeight: 'bold',
+                      position: 'absolute',
+                      top: 10,
+                      right: 10,
+                      zIndex: 1,
+                      '&::after': {
+                        content: '""',
+                        position: 'absolute',
+                        width: '100%',
+                        height: '100%',
+                        top: 0,
+                        left: 0,
+                        borderRadius: '16px',
+                        animation: 'pulse 1.5s infinite',
+                        backgroundColor: 'error.main',
+                        opacity: 0.5,
+                      },
+                      '@keyframes pulse': {
+                        '0%': {
+                          transform: 'scale(1)',
+                          opacity: 0.7,
+                        },
+                        '70%': {
+                          transform: 'scale(1.1)',
+                          opacity: 0,
+                        },
+                        '100%': {
+                          transform: 'scale(1.1)',
+                          opacity: 0,
+                        },
+                      },
+                    }}
+                  />
+                )}
                 <CardMedia
                   component="img"
                   height="140"
-                  image={room.thumbnailUrl || '/default-room.jpg'}
+                  image={room.thumbnailUrl || (ownerProfiles[room.ownerId]?.profilePic) || '/default-room.jpg'}
                   alt={room.name}
                   sx={{ objectFit: 'cover' }}
                 />
@@ -552,7 +689,7 @@ const SideRoomList: React.FC = () => {
                     {room.description}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-                    <Chip icon={<VisibilityIcon fontSize='small' />} label={`${room.viewerCount || 0} Viewing`} size="small" variant="outlined" />
+                    <Chip icon={<RemoveRedEyeIcon fontSize='small' />} label={`${room.viewerCount || 0} Viewing`} size="small" variant="outlined" />
                     <Chip icon={<AccessTimeIcon fontSize='small' />} label={`Active: ${formatTimestamp(room.lastActive)}`} size="small" variant="outlined" />
                     {room.category && <Chip label={room.category} size="small" variant="outlined" color="primary" />}
                   </Box>

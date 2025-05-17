@@ -322,8 +322,27 @@ const Discover: React.FC = () => {
     
     return () => {
       window.removeEventListener('focus', handleFocus);
+      
+      // Clean up all room listeners when component unmounts
+      roomListeners.forEach(unsubscribe => unsubscribe());
     };
   }, [currentUser]);
+  
+  // Set up listeners for all rooms after initial fetch
+  useEffect(() => {
+    if (rooms.length > 0) {
+      // Clean up any existing listeners first
+      roomListeners.forEach(unsubscribe => unsubscribe());
+      setRoomListeners([]);
+      
+      // Set up fresh listeners for each room
+      rooms.forEach(room => {
+        setupRoomListener(room.id);
+      });
+      
+      console.log(`Set up listeners for ${rooms.length} rooms`);
+    }
+  }, [rooms.length]);
   
   // Update pending requests whenever following state changes
   useEffect(() => {
@@ -929,10 +948,18 @@ const Discover: React.FC = () => {
       // Ideally, the 'activeUsers' array should be strongly typed where it's created.
       const roomOwner = activeUsers.find(user => (user as any).role === 'owner');
       
-      // Ensure isLive is always a boolean
-      // We assume the 'roomOwner', if found, has an 'isMuted' property.
-      // Using 'as any' again. The Boolean() conversion handles cases where roomOwner is null/undefined.
-      const isLive = Boolean(roomOwner && !(roomOwner as any).isMuted);
+          // A room is considered "live" if the owner is present AND either:
+    // 1. The owner is connected to audio, OR
+    // 2. The owner is not muted
+    const isLive = Boolean(roomOwner && ((roomOwner as any).isConnectedToAudio === true || !(roomOwner as any).isMuted));
+    
+    // Add debug logging to see what's happening
+    console.log(`Room ${roomId} LIVE check:`, {
+      hasOwner: Boolean(roomOwner),
+      ownerConnectedToAudio: (roomOwner as any)?.isConnectedToAudio,
+      ownerMuted: (roomOwner as any)?.isMuted,
+      isLive: isLive
+    });
       
       // Update room's active users count and live status in Firestore
       updateDoc(roomRef, {
