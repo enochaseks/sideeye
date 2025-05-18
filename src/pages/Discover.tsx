@@ -140,12 +140,10 @@ const Discover: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const [showSearch, setShowSearch] = useState(false);
   const [isSearchView, setIsSearchView] = useState(false);
   const [dropdownUsers, setDropdownUsers] = useState<UserProfile[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = React.useRef<HTMLDivElement>(null);
-  const [roomListeners, setRoomListeners] = useState<(() => void)[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [showPeopleTab, setShowPeopleTab] = useState<boolean>(false);
 
@@ -322,27 +320,8 @@ const Discover: React.FC = () => {
     
     return () => {
       window.removeEventListener('focus', handleFocus);
-      
-      // Clean up all room listeners when component unmounts
-      roomListeners.forEach(unsubscribe => unsubscribe());
     };
   }, [currentUser]);
-  
-  // Set up listeners for all rooms after initial fetch
-  useEffect(() => {
-    if (rooms.length > 0) {
-      // Clean up any existing listeners first
-      roomListeners.forEach(unsubscribe => unsubscribe());
-      setRoomListeners([]);
-      
-      // Set up fresh listeners for each room
-      rooms.forEach(room => {
-        setupRoomListener(room.id);
-      });
-      
-      console.log(`Set up listeners for ${rooms.length} rooms`);
-    }
-  }, [rooms.length]);
   
   // Update pending requests whenever following state changes
   useEffect(() => {
@@ -921,82 +900,6 @@ const Discover: React.FC = () => {
     setShowDropdown(false);
   };
 
-  // Cleanup function for listeners
-  useEffect(() => {
-    return () => {
-      // Cleanup all room listeners when component unmounts
-      roomListeners.forEach(unsubscribe => unsubscribe());
-    };
-  }, [roomListeners]);
-
-  const setupRoomListener = (roomId: string) => {
-    // Create a real-time listener for room status and presence
-    const roomRef = doc(db, 'sideRooms', roomId);
-    const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-    
-    // Listen to presence collection for active users
-    const presenceQuery = firestoreQuery(presenceRef, where("isOnline", "==", true));
-    const presenceUnsubscribe = onSnapshot(presenceQuery, (presenceSnapshot) => {
-      const activeUsers = presenceSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      // Find the room owner in the active users
-      // We assume 'user' objects coming from Firestore presence have a 'role' property.
-      // Using 'as any' here suppresses the TypeScript error temporarily.
-      // Ideally, the 'activeUsers' array should be strongly typed where it's created.
-      const roomOwner = activeUsers.find(user => (user as any).role === 'owner');
-      
-          // A room is considered "live" if the owner is present AND either:
-    // 1. The owner is connected to audio, OR
-    // 2. The owner is not muted
-    const isLive = Boolean(roomOwner && ((roomOwner as any).isConnectedToAudio === true || !(roomOwner as any).isMuted));
-    
-    // Add debug logging to see what's happening
-    console.log(`Room ${roomId} LIVE check:`, {
-      hasOwner: Boolean(roomOwner),
-      ownerConnectedToAudio: (roomOwner as any)?.isConnectedToAudio,
-      ownerMuted: (roomOwner as any)?.isMuted,
-      isLive: isLive
-    });
-      
-      // Update room's active users count and live status in Firestore
-      updateDoc(roomRef, {
-        activeUsers: activeUsers.length,
-        isLive: isLive,  // Now guaranteed to be a boolean
-        lastActive: serverTimestamp()
-      }).catch(error => {
-        console.error(`Error updating room ${roomId} status:`, error);
-      });
-    });
-
-    // Listen to room document for other changes
-    const roomUnsubscribe = onSnapshot(roomRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const roomData = snapshot.data();
-        setRooms(prevRooms => {
-          const updatedRooms = [...prevRooms];
-          const roomIndex = updatedRooms.findIndex(r => r.id === roomId);
-          if (roomIndex !== -1 && snapshot.exists()) { // Check if snapshot exists
-            const roomData = snapshot.data(); // Get data here
-            updatedRooms[roomIndex] = {
-              ...updatedRooms[roomIndex],
-              isLive: Boolean(roomData.isLive),  // Ensure boolean here too
-              activeUsers: roomData.activeUsers || 0,
-              lastActive: roomData.lastActive?.toDate() || new Date(),
-              thumbnailUrl: roomData.thumbnailUrl || updatedRooms[roomIndex].thumbnailUrl // Update thumbnail if changed
-            };
-          }
-          return updatedRooms;
-        });
-      }
-    });
-
-    // Store both unsubscribe functions
-    setRoomListeners(prevListeners => [...prevListeners, roomUnsubscribe]);
-  };
-
   const handleCategoryChange = (event: React.SyntheticEvent, newValue: string) => {
     setSelectedCategory(newValue);
     // When changing category, ensure we are not in search view
@@ -1057,142 +960,149 @@ const Discover: React.FC = () => {
             </Box>
             <ClickAwayListener onClickAway={handleClickAway}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, position: 'relative' }}>
-                {showSearch && (
-                  <Box ref={searchRef}>
-                    <TextField
-                      size="small"
-                      placeholder="Search rooms and users..."
-                      value={searchQuery}
-                      onChange={(e) => {
-                        handleInstantSearch(e.target.value);
-                        handleSearch(e.target.value);
-                      }}
-                      onKeyDown={handleSearchSubmit}
-                      InputProps={{
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <SearchIcon />
-                          </InputAdornment>
-                        ),
-                      }}
-                      sx={{ 
-                        backgroundColor: 'background.paper',
+                <Box ref={searchRef}>
+                  <TextField
+                    size="small"
+                    placeholder="Search rooms and users..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      handleInstantSearch(e.target.value);
+                      handleSearch(e.target.value);
+                    }}
+                    onKeyDown={handleSearchSubmit}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon />
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{ 
+                      backgroundColor: 'background.paper',
+                      borderRadius: 1,
+                      width: isMobile ? '230px' : '300px',
+                      '& .MuiOutlinedInput-root': {
                         borderRadius: 1,
-                        width: isMobile ? '200px' : '250px',
-                        '& .MuiOutlinedInput-root': {
-                          borderRadius: 1,
-                        }
+                      }
+                    }}
+                  />
+                  {/* Dropdown Results */}
+                  <Popper
+                    open={showDropdown && dropdownUsers.length > 0}
+                    anchorEl={searchRef.current}
+                    placement="bottom-start"
+                    style={{ width: searchRef.current?.offsetWidth, zIndex: 1400 }}
+                  >
+                    <Paper 
+                      elevation={3}
+                      sx={{ 
+                        mt: 1,
+                        maxHeight: '300px',
+                        overflowY: 'auto',
+                        borderRadius: 1
                       }}
-                    />
-                    {/* Dropdown Results */}
-                    <Popper
-                      open={showDropdown && dropdownUsers.length > 0}
-                      anchorEl={searchRef.current}
-                      placement="bottom-start"
-                      style={{ width: searchRef.current?.offsetWidth, zIndex: 1400 }}
                     >
-                      <Paper 
-                        elevation={3}
-                        sx={{ 
-                          mt: 1,
-                          maxHeight: '300px',
-                          overflowY: 'auto',
-                          borderRadius: 1
-                        }}
-                      >
-                        <List sx={{ p: 0 }}>
-                          {dropdownUsers.map((user, index) => (
-                            <React.Fragment key={user.id}>
-                              <ListItem
-                                button
-                                onClick={() => {
-                                  navigate(`/profile/${user.id}`);
-                                  setShowDropdown(false);
-                                }}
-                                sx={{ 
-                                  py: 1,
-                                  px: 2,
-                                  '&:hover': {
-                                    backgroundColor: 'action.hover'
-                                  }
-                                }}
-                              >
-                                <ListItemAvatar>
-                                  <Avatar 
-                                    src={user.isActive === false ? undefined : user.profilePic}
-                                    alt={user.name}
-                                    sx={{ width: 32, height: 32 }}
-                                  >
-                                    {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
-                                  </Avatar>
-                                </ListItemAvatar>
-                                <ListItemText
-                                  primary={
-                                    <Typography variant="body1">
-                                      {user.name}
-                                      {user.isVerified && (
-                                        <VerifiedUserIcon 
-                                          sx={{ 
-                                            ml: 0.5, 
-                                            color: 'primary.main',
-                                            fontSize: '0.9rem',
-                                            verticalAlign: 'middle'
-                                          }} 
-                                        />
-                                      )}
-                                    </Typography>
-                                  }
-                                  secondary={
-                                    <Typography variant="body2" color="text.secondary">
+                      <List sx={{ p: 0 }}>
+                        {dropdownUsers.map((user, index) => (
+                          <React.Fragment key={user.id}>
+                            <ListItem
+                              button
+                              onClick={() => {
+                                navigate(`/profile/${user.id}`);
+                                setShowDropdown(false);
+                              }}
+                              sx={{ 
+                                py: 1,
+                                px: 2,
+                                '&:hover': {
+                                  backgroundColor: 'action.hover'
+                                }
+                              }}
+                            >
+                              <ListItemAvatar>
+                                <Avatar 
+                                  src={user.isActive === false ? undefined : user.profilePic}
+                                  alt={user.name}
+                                  sx={{ width: 32, height: 32 }}
+                                >
+                                  {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
+                                </Avatar>
+                              </ListItemAvatar>
+                              <ListItemText
+                                primary={
+                                  <Typography variant="body1" component="div">
+                                    {user.name}
+                                    {user.isVerified && (
+                                      <VerifiedUserIcon 
+                                        sx={{ 
+                                          ml: 0.5, 
+                                          color: 'primary.main',
+                                          fontSize: '0.9rem',
+                                          verticalAlign: 'middle'
+                                        }} 
+                                      />
+                                    )}
+                                  </Typography>
+                                }
+                                secondary={
+                                  <>
+                                    <Typography variant="body2" component="span" color="text.secondary">
                                       @{user.username}
                                     </Typography>
-                                  }
-                                  sx={{ my: 0 }}
-                                />
-                                {currentUser && user.id !== currentUser.uid && (
-                                  <Box sx={{ display: 'flex', gap: 1 }}>
-                                    <IconButton
-                                      size="small"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        navigate(`/messages/${user.id}`);
-                                      }}
-                                    >
-                                      <MessageIcon fontSize="small" />
-                                    </IconButton>
-                                    <IconButton
-                                      size="small"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (!pendingRequests.has(user.id)) {
-                                          handleFollow(user.id);
-                                        }
-                                      }}
-                                      color={following.has(user.id) ? "primary" : pendingRequests.has(user.id) ? "secondary" : "default"}
-                                      disabled={pendingRequests.has(user.id)}
-                                    >
-                                      <PersonAddIcon fontSize="small" />
-                                    </IconButton>
-                                  </Box>
-                                )}
-                              </ListItem>
-                              {index < dropdownUsers.length - 1 && <Divider />}
-                            </React.Fragment>
-                          ))}
-                        </List>
-                      </Paper>
-                    </Popper>
-                  </Box>
-                )}
-                <IconButton 
-                  onClick={() => setShowSearch(!showSearch)}
-                  sx={{ 
-                    backgroundColor: 'background.paper',
-                    '&:hover': { backgroundColor: 'action.hover' }
-                  }}
-                >
-                  <SearchIcon />
-                </IconButton>
+                                    {user.bio && (
+                                      <Typography 
+                                        variant="body2" 
+                                        component="span"
+                                        color="text.secondary"
+                                        sx={{
+                                          mt: 0.5,
+                                          display: 'block',
+                                          WebkitLineClamp: 2,
+                                          WebkitBoxOrient: 'vertical',
+                                          overflow: 'hidden'
+                                        }}
+                                      >
+                                        {user.bio}
+                                      </Typography>
+                                    )}
+                                  </>
+                                }
+                                sx={{ my: 0 }}
+                              />
+                              {currentUser && user.id !== currentUser.uid && (
+                                <Box sx={{ display: 'flex', gap: 1 }}>
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigate(`/messages/${user.id}`);
+                                    }}
+                                  >
+                                    <MessageIcon fontSize="small" />
+                                  </IconButton>
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!pendingRequests.has(user.id)) {
+                                        handleFollow(user.id);
+                                      }
+                                    }}
+                                    color={following.has(user.id) ? "primary" : pendingRequests.has(user.id) ? "secondary" : "default"}
+                                    disabled={pendingRequests.has(user.id)}
+                                  >
+                                    <PersonAddIcon fontSize="small" />
+                                  </IconButton>
+                                </Box>
+                              )}
+                            </ListItem>
+                            {index < dropdownUsers.length - 1 && <Divider />}
+                          </React.Fragment>
+                        ))}
+                      </List>
+                    </Paper>
+                  </Popper>
+                </Box>
               </Box>
             </ClickAwayListener>
           </Box>
@@ -1280,7 +1190,7 @@ const Discover: React.FC = () => {
                         </ListItemAvatar>
                         <ListItemText
                           primary={
-                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            <Typography variant="subtitle1" component="div" sx={{ fontWeight: 600 }}>
                               {user.name}
                               {user.isVerified && (
                                 <VerifiedUserIcon 
@@ -1296,16 +1206,17 @@ const Discover: React.FC = () => {
                           }
                           secondary={
                             <>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" component="span" color="text.secondary">
                                 @{user.username}
                               </Typography>
                               {user.bio && (
                                 <Typography 
                                   variant="body2" 
+                                  component="span"
                                   color="text.secondary"
                                   sx={{
                                     mt: 0.5,
-                                    display: '-webkit-box',
+                                    display: 'block',
                                     WebkitLineClamp: 2,
                                     WebkitBoxOrient: 'vertical',
                                     overflow: 'hidden'
@@ -1385,7 +1296,7 @@ const Discover: React.FC = () => {
                           <CardMedia
                             component="img"
                             height={isMobile ? "220" : "280"}
-                            image={room.thumbnailUrl || room.creatorAvatar || '/default-room.jpg'}
+                            image={room.thumbnailUrl || room.creatorAvatar || 'https://placehold.co/600x400/333/666?text=Room'}
                             alt={room.name}
                             sx={{ 
                               objectFit: 'cover',
@@ -1541,7 +1452,7 @@ const Discover: React.FC = () => {
                       <CardMedia
                         component="img"
                         height={isMobile ? "220" : "280"}
-                        image={room.thumbnailUrl || room.creatorAvatar || '/default-room.jpg'}
+                        image={room.thumbnailUrl || room.creatorAvatar || 'https://placehold.co/600x400/333/666?text=Room'}
                         alt={room.name}
                         sx={{ 
                           objectFit: 'cover',
@@ -1686,7 +1597,7 @@ const Discover: React.FC = () => {
                         </ListItemAvatar>
                         <ListItemText
                           primary={
-                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            <Typography variant="subtitle1" component="div" sx={{ fontWeight: 600 }}>
                               {user.name}
                               {user.isVerified && (
                                 <VerifiedUserIcon 
@@ -1702,16 +1613,17 @@ const Discover: React.FC = () => {
                           }
                           secondary={
                             <>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" component="span" color="text.secondary">
                                 @{user.username}
                               </Typography>
                               {user.bio && (
                                 <Typography 
                                   variant="body2" 
+                                  component="span"
                                   color="text.secondary"
                                   sx={{
                                     mt: 0.5,
-                                    display: '-webkit-box',
+                                    display: 'block',
                                     WebkitLineClamp: 2,
                                     WebkitBoxOrient: 'vertical',
                                     overflow: 'hidden'

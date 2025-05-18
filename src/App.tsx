@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { 
   Routes, 
   Route, 
@@ -6,7 +6,7 @@ import {
   BrowserRouter as Router,
   useLocation
 } from 'react-router-dom';
-import { CssBaseline, Box, useTheme, useMediaQuery } from '@mui/material';
+import { CssBaseline, Box, useTheme, useMediaQuery, CircularProgress } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { ThemeContextProvider } from './contexts/ThemeContext';
@@ -16,46 +16,63 @@ import theme from './theme';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ResetPassword from './pages/ResetPassword';
-import Profile from './pages/Profile';
-import Settings from './pages/Settings';
-import SearchResults from './pages/SearchResults';
-import Discover from './pages/Discover';
-import Messages from './pages/Messages';
 import { Toaster } from 'react-hot-toast';
 import SideRoomList from './components/SideRooms/SideRoomList';
-import SadeAIPage from './pages/SadeAIPage';
-import SideRoomComponent from './components/SideRooms/SideRoomComponent';
-import Chat from './pages/Chat';
-import SafetyPage from './pages/SafetyPage';
-import SecurityPage from './pages/SecurityPage';
-import PrivacyPolicy from './pages/PrivacyPolicy';
-import About from './pages/About';
-import TermsOfService from './pages/TermsOfService';
-import CookiePolicy from './pages/CookiePolicy';
-import EmailVerification from './pages/EmailVerification';
-import TrashPage from './pages/TrashPage';
-import FollowersList from './pages/FollowersList';
-import FollowingList from './pages/FollowingList';
-import DeletionDeactivatePage from './pages/DeletionDeactivatePage';
+import BottomNav from './components/BottomNav';
+import './App.css';
+import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
+import { HelmetProvider } from 'react-helmet-async';
+import UpdateNotification from './components/UpdateNotification';
 import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import RateLimiter from './components/RateLimiter';
 import { FirestoreProvider } from './context/FirestoreContext';
-import NotificationPage from './pages/Notifications';
-import SetupSourceCode from './pages/SetupSourceCode';
-import EnterSourceCode from './pages/EnterSourceCode';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import Debug from './pages/Debug';
 import CookieConsent from './components/CookieConsent';
-import BottomNav from './components/BottomNav';
-import './App.css';
-import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
-import ReportPage from './pages/ReportPage';
-import { HelmetProvider } from 'react-helmet-async';
-import SadeAIInfo from './pages/SadeAIInfo';
-import UpdateNotification from './components/UpdateNotification';
-import FAQPage from './pages/FAQPage';
+
+// Lazy load larger page components
+const Profile = lazy(() => import('./pages/Profile'));
+const Settings = lazy(() => import('./pages/Settings'));
+const SearchResults = lazy(() => import('./pages/SearchResults'));
+const Discover = lazy(() => import('./pages/Discover'));
+const Messages = lazy(() => import('./pages/Messages'));
+const SadeAIPage = lazy(() => import('./pages/SadeAIPage'));
+const SideRoomComponent = lazy(() => import('./components/SideRooms/SideRoomComponent'));
+const Chat = lazy(() => import('./pages/Chat'));
+const SafetyPage = lazy(() => import('./pages/SafetyPage'));
+const SecurityPage = lazy(() => import('./pages/SecurityPage'));
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const About = lazy(() => import('./pages/About'));
+const TermsOfService = lazy(() => import('./pages/TermsOfService'));
+const CookiePolicy = lazy(() => import('./pages/CookiePolicy'));
+const EmailVerification = lazy(() => import('./pages/EmailVerification'));
+const TrashPage = lazy(() => import('./pages/TrashPage'));
+const FollowersList = lazy(() => import('./pages/FollowersList'));
+const FollowingList = lazy(() => import('./pages/FollowingList'));
+const DeletionDeactivatePage = lazy(() => import('./pages/DeletionDeactivatePage'));
+const NotificationPage = lazy(() => import('./pages/Notifications'));
+const SetupSourceCode = lazy(() => import('./pages/SetupSourceCode'));
+const EnterSourceCode = lazy(() => import('./pages/EnterSourceCode'));
+const Debug = lazy(() => import('./pages/Debug'));
+const ReportPage = lazy(() => import('./pages/ReportPage'));
+const SadeAIInfo = lazy(() => import('./pages/SadeAIInfo'));
+const FAQPage = lazy(() => import('./pages/FAQPage'));
+
+// Loading fallback component
+const LoadingFallback = () => (
+  <Box 
+    sx={{ 
+      display: 'flex', 
+      justifyContent: 'center', 
+      alignItems: 'center', 
+      width: '100%', 
+      height: '70vh' 
+    }}
+  >
+    <CircularProgress />
+  </Box>
+);
 
 const DRAWER_WIDTH = 240;
 const COLLAPSED_DRAWER_WIDTH = 64;
@@ -97,118 +114,130 @@ const AppContent: React.FC = () => {
         pb: { xs: '56px', sm: 0 },
       }}>
         <Box component="main" sx={{ flexGrow: 1, width: '100%' }}>
-          <Routes>
-            {/* Public routes */}
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/verify-email" element={<EmailVerification />} />
-            <Route path="/setup-source-code" element={<SetupSourceCode />} />
-            <Route path="/enter-source-code" element={<EnterSourceCode />} />
-            <Route path="/safety" element={<SafetyPage />} />
-            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-            <Route path="/about" element={<About />} />
-            <Route path="/terms" element={<TermsOfService />} />
-            <Route path="/cookies" element={<CookiePolicy />} />
-            <Route path="/faq" element={<FAQPage />} />
-            
-            {/* Protected routes */}
-            <Route path="/" element={
-              <ProtectedRoute>
-                <Discover />
-              </ProtectedRoute>
-            } />
-            <Route path="/profile/:userId" element={
-              <ProtectedRoute>
-                <Profile />
-              </ProtectedRoute>
-            } />
-            <Route path="/settings" element={
-              <ProtectedRoute>
-                <Settings />
-              </ProtectedRoute>
-            } />
-            <Route path="/security" element={
-              <ProtectedRoute>
-                <SecurityPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/search" element={
-              <ProtectedRoute>
-                <SearchResults />
-              </ProtectedRoute>
-            } />
-            <Route path="/messages" element={
-              <ProtectedRoute>
-                <Messages />
-              </ProtectedRoute>
-            } />
-            <Route path="/side-rooms" element={
-              <ProtectedRoute>
-                <SideRoomList />
-              </ProtectedRoute>
-            } />
-            <Route path="/side-room/:roomId" element={
-              <ProtectedRoute>
-                <SideRoomComponent />
-              </ProtectedRoute>
-            } />
-            <Route path="/chat/conversation/:conversationId" element={
-              <ProtectedRoute>
-                <Chat />
-              </ProtectedRoute>
-            } />
-            <Route path="/chat/user/:userId" element={
-              <ProtectedRoute>
-                <Chat />
-              </ProtectedRoute>
-            } />
-            <Route path="/trash" element={
-              <ProtectedRoute>
-                <TrashPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/profile/:userId/followers" element={
-              <ProtectedRoute>
-                <FollowersList />
-              </ProtectedRoute>
-            } />
-            <Route path="/profile/:userId/following" element={
-              <ProtectedRoute>
-                <FollowingList />
-              </ProtectedRoute>
-            } />
-            <Route path="/notifications" element={
-              <ProtectedRoute>
-                <NotificationPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/account-management" element={
-              <ProtectedRoute>
-                <DeletionDeactivatePage />
-              </ProtectedRoute>
-            } />
-            <Route path="/report" element={
-              <ProtectedRoute>
-                <ReportPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/sade-ai-info" element={
-              <ProtectedRoute>
-                <SadeAIInfo />
-              </ProtectedRoute>
-            } />
-            <Route path="/sade-ai" element={<SadeAIPage />} />
-            
-            {/* Redirect all other routes to home */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={<LoadingFallback />}>
+            <Routes>
+              {/* Public routes */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/verify-email" element={<EmailVerification />} />
+              <Route path="/setup-source-code" element={<SetupSourceCode />} />
+              <Route path="/enter-source-code" element={<EnterSourceCode />} />
+              <Route path="/safety" element={<SafetyPage />} />
+              <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/terms" element={<TermsOfService />} />
+              <Route path="/cookies" element={<CookiePolicy />} />
+              <Route path="/faq" element={<FAQPage />} />
+              
+              {/* Protected routes */}
+              <Route path="/" element={
+                <ProtectedRoute>
+                  <Discover />
+                </ProtectedRoute>
+              } />
+              <Route path="/profile/:userId" element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings" element={
+                <ProtectedRoute>
+                  <Settings />
+                </ProtectedRoute>
+              } />
+              <Route path="/security" element={
+                <ProtectedRoute>
+                  <SecurityPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/search" element={
+                <ProtectedRoute>
+                  <SearchResults />
+                </ProtectedRoute>
+              } />
+              <Route path="/messages" element={
+                <ProtectedRoute>
+                  <Messages />
+                </ProtectedRoute>
+              } />
+              <Route path="/side-rooms" element={
+                <ProtectedRoute>
+                  <SideRoomList />
+                </ProtectedRoute>
+              } />
+              <Route path="/side-room/:roomId" element={
+                <ProtectedRoute>
+                  <SideRoomComponent />
+                </ProtectedRoute>
+              } />
+              <Route path="/chat/conversation/:conversationId" element={
+                <ProtectedRoute>
+                  <Chat />
+                </ProtectedRoute>
+              } />
+              <Route path="/chat/user/:userId" element={
+                <ProtectedRoute>
+                  <Chat />
+                </ProtectedRoute>
+              } />
+              <Route path="/trash" element={
+                <ProtectedRoute>
+                  <TrashPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/profile/:userId/followers" element={
+                <ProtectedRoute>
+                  <FollowersList />
+                </ProtectedRoute>
+              } />
+              <Route path="/profile/:userId/following" element={
+                <ProtectedRoute>
+                  <FollowingList />
+                </ProtectedRoute>
+              } />
+              <Route path="/notifications" element={
+                <ProtectedRoute>
+                  <NotificationPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/account-management" element={
+                <ProtectedRoute>
+                  <DeletionDeactivatePage />
+                </ProtectedRoute>
+              } />
+              <Route path="/report" element={
+                <ProtectedRoute>
+                  <ReportPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/sade-ai-info" element={
+                <ProtectedRoute>
+                  <SadeAIInfo />
+                </ProtectedRoute>
+              } />
+              <Route path="/sade-ai" element={<SadeAIPage />} />
+              <Route path="/debug" element={<Debug />} />
+              
+              {/* Redirect all other routes to home */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </Box>
       </Box>
-      <CookieConsent />
-      <Toaster position="bottom-right" />
       <BottomNavWrapper />
       <UpdateNotification />
+      <CookieConsent />
+      <Toaster 
+        position="bottom-center"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: theme.palette.background.paper,
+            color: theme.palette.text.primary,
+          },
+        }}
+      />
     </Box>
   );
 };

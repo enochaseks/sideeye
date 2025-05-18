@@ -18,8 +18,28 @@ import {
   TextField,
   Alert
 } from '@mui/material';
-import { ExitToApp, Lock, Group } from '@mui/icons-material';
-import type { SideRoom, RoomMember } from '../../types';
+import { ExitToApp, Lock, Group, LiveTv } from '@mui/icons-material';
+import type { RoomMember } from '../../types';
+
+// Define SideRoom type locally to ensure it has all the properties we need
+interface SideRoom {
+  id: string;
+  name: string;
+  description: string;
+  ownerId: string;
+  viewers: RoomMember[];
+  memberCount: number;
+  createdAt: any; // Timestamp or Date
+  isPrivate: boolean;
+  password?: string;
+  tags?: string[];
+  lastActive: any; // Timestamp or Date
+  maxMembers: number;
+  bannedUsers?: string[];
+  isLive?: boolean;
+  activeUsers?: number; // Number of users currently viewing
+  viewerCount?: number; // Number of users currently viewing (alternative field)
+}
 
 interface SideRoomProps {
   roomId: string;
@@ -232,9 +252,30 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
     <Box sx={{ p: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
-          <Typography variant="h4" component="h1">
-            {room.name}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+            <Typography variant="h4" component="h1">
+              {room.name}
+            </Typography>
+            {room.isLive && (
+              <Box
+                sx={{
+                  bgcolor: 'error.main',
+                  color: 'error.contrastText',
+                  fontWeight: 'bold',
+                  fontSize: '0.875rem',
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5
+                }}
+              >
+                <LiveTv fontSize="small" />
+                LIVE
+              </Box>
+            )}
+          </Box>
           <Typography variant="subtitle1" color="text.secondary">
             Created by {owner?.username || 'Anonymous'}
           </Typography>
@@ -258,13 +299,20 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           <Chip
             icon={<Group />}
-            label={`${room.memberCount || 0} viewers`}
+            label={`${room.activeUsers || room.viewerCount || 0} viewing`}
           />
           {room.isPrivate && (
             <Chip
               icon={<Lock />}
               label="Private"
               color="default"
+            />
+          )}
+          {room.isLive && (
+            <Chip
+              icon={<LiveTv />}
+              label="LIVE"
+              color="error"
             />
           )}
         </Box>

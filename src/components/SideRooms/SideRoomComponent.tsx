@@ -19,8 +19,10 @@ import {
     limit,
     Timestamp, // Ensure Timestamp is imported if used
     deleteField, // Import deleteField
-    addDoc, // Import addDoc
-    getDocs // Import getDocs
+    addDoc, // Import addDoc for chat messages
+    getFirestore, // Import getFirestore for component use
+    getDocs, // Import getDocs
+    arrayRemove // Import arrayRemove
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -214,7 +216,6 @@ interface PresenceData {
     displayName?: string;
     photoURL?: string;
     role?: 'owner' | 'viewer' | 'guest';
-    isConnectedToAudio?: boolean;
 }
 
 // --- Room Theme Definitions & Constants ---
@@ -519,6 +520,11 @@ const SideRoomComponent: React.FC = () => {
     const [youtubePlayer, setYoutubePlayer] = useState<YT.Player | null>(null);
     const youtubePlayerPlaceholderId = 'youtube-player-placeholder';
 
+    // --- Refs for updating active users count ---
+    const lastActiveUsersCountRef = useRef<number>(0);
+    const activeUsersUpdateTimeRef = useRef<number>(0);
+    const lastPresenceUpdateTimeRef = useRef<number>(0);
+
     // --- Effect for Desktop Check --- (NEW)
     useEffect(() => {
         const handleResize = () => {
@@ -607,24 +613,79 @@ const SideRoomComponent: React.FC = () => {
         }
     }, [showStyleDialog, room]); // Dependencies: dialog visibility and the room object itself
 
+    // --- Effect for updating active users count ---
+    useEffect(() => {
+        // Skip if no room or no presence data
+        if (!roomId || !db || presence.length === 0) return;
+
+        // Get the current online users count
+        const currentOnlineCount = presence.filter(p => p.isOnline).length;
+        
+        // Only update Firestore if count changed and not too frequently (max once per 10 seconds)
+        const now = Date.now();
+        const timeSinceLastUpdate = now - activeUsersUpdateTimeRef.current;
+        
+        if (
+            currentOnlineCount !== lastActiveUsersCountRef.current && 
+            timeSinceLastUpdate > 10000 // 10 seconds minimum between updates
+        ) {
+            console.log(`[Active Users Update] Updating count from ${lastActiveUsersCountRef.current} to ${currentOnlineCount}`);
+            
+            const roomRef = doc(db, 'sideRooms', roomId);
+            updateDoc(roomRef, {
+                activeUsers: currentOnlineCount,
+                // Remove the redundant viewerCount field, using only activeUsers from now on
+                viewerCount: deleteField()
+            })
+            .then(() => {
+                // Update refs after successful operation
+                lastActiveUsersCountRef.current = currentOnlineCount;
+                activeUsersUpdateTimeRef.current = now;
+            })
+            .catch(error => {
+                console.error('[Active Users Update] Error updating room active users count:', error);
+            });
+        }
+        
+        // Update the ref even if we don't update Firestore
+        // This prevents unnecessary Firestore updates if count doesn't change
+        lastActiveUsersCountRef.current = currentOnlineCount;
+    }, [roomId, db, presence.length]); // Only depends on presence.length, not the full presence array
+
     // --- Memos ---
-    // Add console logs to debug isRoomOwner
-    console.log('[SideRoomComponent Debug] Checking owner:');
-    console.log('  Current User UID:', currentUser?.uid);
-    console.log('  Room Owner ID:', room?.ownerId);
-    console.log('  Room Data:', room);
-
-    // Refined check: Ensure both IDs are valid strings before comparing
+    // Add more detailed console logs to debug isRoomOwner
+    console.log('[SideRoomComponent Debug] Owner check details:');
+    console.log('  Current User UID:', currentUser?.uid || 'null/undefined');
+    console.log('  Room Owner ID:', room?.ownerId || 'null/undefined');
+    console.log('  Room Viewers:', room?.viewers || 'null/undefined');
+    
+    // Force type safety and strengthen the owner check
     const isRoomOwner = useMemo(() => {
-        const currentUserId = currentUser?.uid;
-        const ownerUserId = room?.ownerId;
-        return !!currentUserId && !!ownerUserId && currentUserId === ownerUserId;
-    }, [room?.ownerId, currentUser?.uid]);
+        // Immediately return false if currentUser or room is not yet available
+        if (!currentUser?.uid || !room?.ownerId) {
+            console.log('[SideRoomComponent] isRoomOwner = false (missing user or room data)');
+            return false;
+        }
+        
+        // Direct string comparison with strict equality
+        const isOwner = currentUser.uid === room.ownerId;
+        console.log(`[SideRoomComponent] isRoomOwner = ${isOwner} (direct comparison)`);
+        return isOwner;
+    }, [currentUser?.uid, room?.ownerId]);
 
+    // Add similar logging for isGuest check
     const isGuest = useMemo(() => {
-        if (!room || !currentUser?.uid) return false;
-        return room.viewers?.some(member => member.userId === currentUser.uid && member.role === 'guest') || false;
-    }, [room, currentUser?.uid]);
+        if (!room?.viewers || !currentUser?.uid) {
+            console.log('[SideRoomComponent] isGuest = false (missing viewer data or user)');
+            return false;
+        }
+        
+        const foundAsGuest = room.viewers.some(member => 
+            member.userId === currentUser.uid && member.role === 'guest'
+        );
+        console.log(`[SideRoomComponent] isGuest = ${foundAsGuest} (found in viewers with role=guest)`);
+        return foundAsGuest;
+    }, [room?.viewers, currentUser?.uid]);
 
     const isViewer = true;
     const hasRoomAccess = !!room && (isRoomOwner || isViewer || isGuest);
@@ -945,7 +1006,7 @@ const SideRoomComponent: React.FC = () => {
 
     useEffect(() => {
         // Log the API Key value (REMOVE THIS LOG IN PRODUCTION LATER)
-        console.log(`[Stream Client Init Check] REACT_APP_STREAM_API_KEY value: ${process.env.REACT_APP_STREAM_API_KEY}`);
+        console.log('[Stream Client Init Check] Stream API key configured');
         
         if (!streamToken || !currentUser?.uid || !process.env.REACT_APP_STREAM_API_KEY || streamClientForProvider) {
              // Add log to show why it might be skipping
@@ -1014,14 +1075,14 @@ const SideRoomComponent: React.FC = () => {
                 console.log(`[Stream Call] Successfully joined/created call: ${call.cid}`);
                 setActiveStreamCallInstance(call);
                 
-                // Update presence to indicate audio connection
-                if (currentUser?.uid && roomId && db) {
-                    const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-                    await updateDoc(userPresenceRef, { 
-                        isConnectedToAudio: true,
-                        lastSeen: serverTimestamp()
+                // Update room's isLive status if the current user is the room owner
+                if (isRoomOwner && roomId && db) {
+                    console.log('[Stream Call] Current user is room owner, updating isLive status to true');
+                    const roomRef = doc(db, 'sideRooms', roomId);
+                    await updateDoc(roomRef, {
+                        isLive: true,
+                        lastActive: serverTimestamp()
                     });
-                    console.log(`[Stream Call] Updated presence with isConnectedToAudio=true for user ${currentUser.uid}`);
                 }
             } catch (error: any) {
                 console.error('[Stream Call] Error joining or creating call:', error);
@@ -1047,24 +1108,25 @@ const SideRoomComponent: React.FC = () => {
         return () => {
             if (activeStreamCallInstance) {
                 console.log(`[Stream Call] Leaving active call ${activeStreamCallInstance.cid} on component unmount or room change.`);
-                
-                // Update presence to indicate no longer connected to audio
-                if (currentUser?.uid && roomId && db) {
-                    const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
-                    updateDoc(userPresenceRef, { 
-                        isConnectedToAudio: false
-                    }).catch(err => console.error(`[Stream Call] Error updating presence when leaving:`, err));
-                }
-                
                 activeStreamCallInstance.leave()
                     .then(() => console.log(`[Stream Call] Successfully left call ${activeStreamCallInstance.cid}`))
                     .catch(err => console.error(`[Stream Call] Error leaving call ${activeStreamCallInstance.cid}:`, err))
                     .finally(() => {
-                        setActiveStreamCallInstance(null); 
+                        setActiveStreamCallInstance(null);
+                        
+                        // Set isLive to false if the current user is the room owner
+                        if (isRoomOwner && roomId && db) {
+                            console.log('[Stream Call] Room owner left call, updating isLive status to false');
+                            const roomRef = doc(db, 'sideRooms', roomId);
+                            updateDoc(roomRef, {
+                                isLive: false,
+                                lastActive: serverTimestamp()
+                            }).catch(err => console.error('[Stream Call] Error updating room isLive status on leave:', err));
+                        }
                     });
             }
         };
-    }, [activeStreamCallInstance, roomId, currentUser?.uid, db]); 
+    }, [activeStreamCallInstance, roomId, isRoomOwner, db]);
 
     // --- Room Listener ---
     useEffect(() => {
@@ -1154,19 +1216,57 @@ const SideRoomComponent: React.FC = () => {
 
         console.log(`[Presence Listener - Others] Setting up listener for room ${roomId}`);
         const presenceRef = collection(db, 'sideRooms', roomId, 'presence');
-        const q = query(presenceRef, where("isOnline", "==", true)); 
         
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const onlineUsersData = snapshot.docs.map(doc => ({
+        // Get ALL presence data, not just active
+        const unsubscribe = onSnapshot(presenceRef, (snapshot) => {
+            // Get all presence data
+            const allUsersData = snapshot.docs.map(doc => ({
                 userId: doc.id,
                 ...doc.data()
             })) as PresenceData[];
+            
+            // Filter for active users (marked as online and not stale)
+            const currentTime = Date.now();
+            const maxStaleTime = 5 * 60 * 1000; // 5 minutes in milliseconds (increased to reduce updates)
+            
+            // To avoid too many Firestore writes, only mark one user as stale per update cycle
+            let markedOneUserAsStale = false;
+            
+            const onlineUsersData = allUsersData.filter(user => {
+                // If user is marked as online but their lastSeen is too old, mark them as stale
+                if (user.isOnline && user.lastSeen && (currentTime - user.lastSeen > maxStaleTime)) {
+                    // Only log every 5 minutes to reduce console spam
+                    if (Date.now() % 300000 < 1000) {
+                        console.log(`[Presence Listener] User ${user.userId} has stale presence (${Math.floor((currentTime - user.lastSeen)/1000)} seconds old).`);
+                    }
+                    
+                    // Only mark one user as stale per update cycle to reduce Firestore writes
+                    if (!markedOneUserAsStale && db && user.userId !== currentUser?.uid) {
+                        const staleUserRef = doc(db, 'sideRooms', roomId, 'presence', user.userId);
+                        updateDoc(staleUserRef, {
+                            isOnline: false,
+                            lastSeen: serverTimestamp()
+                        }).catch(error => {
+                            console.error(`[Presence Listener] Error marking stale user ${user.userId} as offline:`, error);
+                        });
+                        markedOneUserAsStale = true;
+                    }
+                    return false; // Don't include stale users in online list
+                }
+                return user.isOnline;
+            });
 
-            // Directly set presence from the snapshot data
-            // The query `where("isOnline", "==", true)` should ensure we only get online users.
-            // If the snapshot is empty, onlineUsersData will be an empty array.
             console.log('[Presence Listener - Others] Received presence snapshot. Users:', onlineUsersData.length, onlineUsersData);
             setPresence(onlineUsersData);
+            
+                        // Skip updating active users count to prevent infinite update cycles
+            // This will be handled by a dedicated useEffect instead
+            const newOnlineCount = onlineUsersData.length;
+            
+            // Only log online users count once per 5 minutes to avoid console spam 
+            if (Date.now() % 300000 < 1000) {
+                console.log(`[Presence Listener] Current active users: ${newOnlineCount}`);
+            }
 
         }, (error) => {
             console.error('[Presence Listener - Others] CRITICAL: Snapshot error:', error);
@@ -1177,17 +1277,47 @@ const SideRoomComponent: React.FC = () => {
         return () => {
             console.log(`[Presence Listener - Others] Cleanup for room ${roomId}.`);
             unsubscribe();
-            // Remove timeout clearing as ref is removed
-            // if (presenceClearTimeoutRef.current) {
-            //     clearTimeout(presenceClearTimeoutRef.current);
-            // }
         };
-    }, [roomId, hasRoomAccess, currentUser?.uid, db]); // Minimal dependencies: db added as it's used directly
+    }, [roomId, hasRoomAccess, currentUser?.uid, db]);
 
+    // --- Viewers Cleanup Effect ---
+    useEffect(() => {
+        // This effect's only purpose is to ensure the user is marked as offline when they leave
+        // Store the current user ID and room ID for the cleanup function
+        const effectUserId = currentUser?.uid;
+        const effectRoomId = roomId;
+
+        return () => {
+            if (effectUserId && effectRoomId && db) {
+                console.log(`[Viewers Cleanup] Marking user ${effectUserId} as offline in room ${effectRoomId} on unmount`);
+                
+                // Update the presence document to mark user as offline
+                const presenceRef = doc(db, 'sideRooms', effectRoomId, 'presence', effectUserId);
+                
+                updateDoc(presenceRef, {
+                    isOnline: false,
+                    lastSeen: serverTimestamp()
+                }).then(() => {
+                    console.log(`[Viewers Cleanup] Successfully marked user ${effectUserId} as offline`);
+                }).catch(error => {
+                    console.error(`[Viewers Cleanup] Error marking user ${effectUserId} as offline:`, error);
+                    
+                    // If the presence document doesn't exist, that's okay
+                    if (error.code === 'not-found') {
+                        console.log(`[Viewers Cleanup] No presence document found for user ${effectUserId}, which is fine`);
+                    }
+                });
+            }
+        };
+    }, [roomId, currentUser?.uid, db]);
+    
     // --- Presence Writer (Effect 2: Writing current user's own presence) ---
+    // Reference is now defined at the top level of component
+    
     useEffect(() => {
         console.log(`[Presence Writer - Self] Initializing. RoomId: ${roomId}, HasAccess: ${hasRoomAccess}, CurrentUserUID: ${currentUser?.uid}, IsRoomOwner: ${isRoomOwner}, RoomExists: ${!!room}`);
 
+        // Skip if missing critical data
         if (!roomId || !currentUser?.uid || !room || !hasRoomAccess) {
             // If conditions aren't met to be 'online' in this room, try to set offline if we were previously online.
             // This handles cases like losing access or room becoming null.
@@ -1207,6 +1337,9 @@ const SideRoomComponent: React.FC = () => {
 
         const componentUserId = currentUser.uid; // Stable user ID for async operations
         console.log(`[Presence Writer - Self] Proceeding to write presence for user ${componentUserId} in room ${roomId}.`);
+
+        // Add heartbeat interval to regularly update presence
+        let heartbeatInterval: NodeJS.Timeout | null = null;
 
         const fetchProfileAndWritePresence = async () => {
             try {
@@ -1256,6 +1389,27 @@ const SideRoomComponent: React.FC = () => {
                 await setDoc(myPresenceRef, presenceData, { merge: true });
                 console.log(`[Presence Writer - Self] Presence updated for ${componentUserId}`);
 
+                // Start the heartbeat interval to regularly update presence
+                if (!heartbeatInterval) {
+                    heartbeatInterval = setInterval(async () => {
+                        try {
+                            const now = Date.now();
+                            // Only update if enough time has passed (rate limit heartbeats)
+                            if (now - lastPresenceUpdateTimeRef.current > 30000) {
+                                // Update only the lastSeen timestamp
+                                await updateDoc(myPresenceRef, {
+                                    lastSeen: now,
+                                    isOnline: true
+                                });
+                                lastPresenceUpdateTimeRef.current = now;
+                                console.log(`[Presence Heartbeat] Updated for ${componentUserId}`);
+                            }
+                        } catch (error) {
+                            console.error(`[Presence Heartbeat] Error updating heartbeat:`, error);
+                        }
+                    }, 60000); // Increase to every 60 seconds to reduce Firestore writes
+                }
+
             } catch (profileError) {
                 console.error(`[Presence Writer - Self] Error fetching profile or writing presence for ${componentUserId}:`, profileError);
             }
@@ -1265,6 +1419,12 @@ const SideRoomComponent: React.FC = () => {
 
         // Cleanup: Set user offline when dependencies change causing effect to re-run or on unmount
         return () => {
+            // Clear heartbeat interval
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
+            }
+            
             console.log(`[Presence Writer - Self] Cleanup running for user ${componentUserId} in room ${roomId}. Setting offline.`);
             const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', componentUserId);
             updateDoc(userPresenceRef, {
@@ -2696,7 +2856,14 @@ const SideRoomComponent: React.FC = () => {
                     ? `linear-gradient(to bottom right, ${room?.style?.backgroundColor || theme.palette.background.default}, ${room?.style?.accentColor || theme.palette.secondary.main})` // Gradient when true (Switch ON)
                     : room?.style?.backgroundColor || theme.palette.background.default, // Solid color when false (Switch OFF)
                 color: room?.style?.textColor || theme.palette.text.primary,
-                overflow: 'hidden' // Add this to prevent outer scrollbar
+                overflow: 'hidden', // Add this to prevent outer scrollbar
+                // Add these properties to prevent glitching during transitions
+                willChange: 'transform', // Hardware acceleration hint
+                position: 'relative',
+                zIndex: 1,
+                animation: 'none !important', // Disable any animations
+                transition: 'none !important', // Disable any transitions on first render
+                transform: 'translateZ(0)', // Force hardware acceleration
             }}>
                  {/* Always render the main Room Header */}
                  {room && renderRoomHeader()}
@@ -2884,7 +3051,7 @@ const SideRoomComponent: React.FC = () => {
                     <DialogContent sx={{ flexGrow: 1, overflowY: 'auto', p:1 /* Reduce padding */, backgroundColor: theme.palette.background.default }}>
                         <List sx={{p:0}}>
                             {sadeMessages.map((msg, index) => (
-                                <ListItem key={index} sx={{ 
+                                <ListItem key={`msg-${msg.sender}-${index}`} sx={{ 
                                     display: 'flex', 
                                     flexDirection: msg.sender === 'user' ? 'row-reverse' : 'row',
                                     alignItems: 'flex-start', // Change to flex-start to allow proper alignment with source links
@@ -2963,7 +3130,7 @@ const SideRoomComponent: React.FC = () => {
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1, justifyContent: 'center', px:1 }}>
                                 {sadeSuggestions.map((suggestion, index) => (
                                     <Chip
-                                        key={index}
+                                        key={`suggestion-${index}`}
                                         label={suggestion}
                                         onClick={() => sendSadeMessage(suggestion)}
                                         size="small"
@@ -3274,39 +3441,10 @@ const InsideStreamCallContent: React.FC<{
     const screenSharingParticipant = participants.find(p => p.screenShareStream);
     const isRoomOwnerSharing = screenSharingParticipant?.userId === room.ownerId;
 
-    // This effect ensures screen sharing is properly detected and displayed for ALL participants
+    // Screen sharing detection effect - without manual DOM manipulation
     useEffect(() => {
         if (screenSharingParticipant) {
             console.log(`Screen sharing detected from participant ${screenSharingParticipant.name || screenSharingParticipant.userId}`);
-            
-            // Force stream to attach to the DOM - this ensures it's visible to everyone
-            const screenShareStream = screenSharingParticipant.screenShareStream;
-            if (screenShareStream) {
-                console.log('Screen share stream is available and will be displayed to all participants');
-                
-                // Create a video element to ensure all participants receive the stream
-                const videoEl = document.createElement('video');
-                videoEl.autoplay = true;
-                videoEl.muted = true;
-                videoEl.style.display = 'none';
-                videoEl.style.position = 'absolute';
-                
-                // Attach the stream to the video element
-                if (videoEl.srcObject !== screenShareStream) {
-                    videoEl.srcObject = screenShareStream;
-                    videoEl.play().catch(err => console.error("Failed to play screen share:", err));
-                    
-                    // Append to body to ensure it stays active
-                    document.body.appendChild(videoEl);
-                }
-                
-                // Clean up function
-                return () => {
-                    if (document.body.contains(videoEl)) {
-                        document.body.removeChild(videoEl);
-                    }
-                };
-            }
             
             // Log if it's the room owner to help with debugging
             if (isRoomOwnerSharing) {
@@ -3388,7 +3526,7 @@ const InsideStreamCallContent: React.FC<{
 
     // Handler for sending chat messages
     const handleSendChatMessage = useCallback(async () => {
-        if (!chatInput.trim() || !currentUser?.uid) return;
+        if (!chatInput.trim() || !currentUser?.uid || !room?.id || !db) return;
         
         // Get the current user's Firestore username
         const userData = await fetchUserFirestoreData(currentUser.uid);
@@ -3401,9 +3539,69 @@ const InsideStreamCallContent: React.FC<{
             timestamp: Date.now()
         };
         
-        setChatMessages(prev => [...prev, newMessage]);
+        // Add message to Firestore so other users can see it
+        try {
+            const chatRef = collection(db, 'sideRooms', room.id, 'chatMessages');
+            await addDoc(chatRef, newMessage);
+            console.log('[Chat] Message sent to Firestore');
+        } catch (error) {
+            console.error('[Chat] Error sending message to Firestore:', error);
+            // Still add message locally in case of network issues
+            setChatMessages(prev => [...prev, newMessage]);
+        }
+        
         setChatInput('');
-    }, [chatInput, currentUser?.uid, fetchUserFirestoreData]);
+    }, [chatInput, currentUser?.uid, room?.id, db, fetchUserFirestoreData]);
+
+    // Add useEffect to listen for chat messages from Firestore
+    useEffect(() => {
+        if (!room?.id || !db) return;
+        
+        console.log(`[Chat] Setting up chat listener for room ${room.id}`);
+        
+        // Create a query for chat messages, ordered by timestamp
+        const chatQuery = query(
+            collection(db, 'sideRooms', room.id, 'chatMessages'),
+            orderBy('timestamp', 'asc')
+        );
+        
+        // Set up real-time listener
+        const unsubscribe = onSnapshot(chatQuery, (snapshot) => {
+            const messages: {
+                id: string;
+                userId: string;
+                userName: string;
+                message: string;
+                timestamp: number;
+            }[] = [];
+            
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                messages.push({
+                    id: doc.id,
+                    userId: data.userId,
+                    userName: data.userName,
+                    message: data.message,
+                    timestamp: data.timestamp
+                });
+            });
+            
+            console.log(`[Chat] Received ${messages.length} messages from Firestore`);
+            setChatMessages(messages);
+            
+            // Scroll to bottom when new messages arrive
+            if (chatEndRef.current) {
+                chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+            }
+        }, (error) => {
+            console.error('[Chat] Error listening to chat messages:', error);
+        });
+        
+        return () => {
+            console.log('[Chat] Cleaning up chat listener');
+            unsubscribe();
+        };
+    }, [room?.id, db]);
 
     // Screen sharing toggle handler
     const handleToggleScreenShare = useCallback(async () => {
@@ -3512,14 +3710,6 @@ const InsideStreamCallContent: React.FC<{
     }, [participants, fetchUserFirestoreData, firestoreUserData]);
 
     const handleLeaveCall = () => {
-        // Update presence to indicate no longer connected to audio
-        if (currentUser?.uid && room?.id && db) {
-            const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
-            updateDoc(userPresenceRef, { 
-                isConnectedToAudio: false
-            }).catch(err => console.error(`[Stream Call] Error updating presence when leaving:`, err));
-        }
-        
         call?.leave().then(() => navigate('/side-rooms')); 
     }; 
 
@@ -3561,13 +3751,7 @@ const InsideStreamCallContent: React.FC<{
             const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
             const userPresencePath = `sideRooms/${room.id}/presence/${currentUser.uid}`;
             console.log('[DEBUG Mute Sync] Attempting updateDoc to path:', userPresencePath, 'with data:', JSON.stringify({ isMuted: localUserIsMute }, null, 2));
-            
-            // For room owners, when they unmute, we need to ensure the room shows as "live"
-            // isConnectedToAudio will be true regardless of mute state as long as they're in the call
-            updateDoc(userPresenceRef, { 
-                isMuted: localUserIsMute,
-                isConnectedToAudio: true // Set to true whenever this effect runs because user is in the call
-            })
+            updateDoc(userPresenceRef, { isMuted: localUserIsMute })
                 .then(() => {
                     console.log(`[InsideStreamCallContent] Synced local mute state (${localUserIsMute}) to Firestore for ${currentUser.uid}`);
                 })
@@ -3577,7 +3761,7 @@ const InsideStreamCallContent: React.FC<{
         }
     }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); 
 
-    // This effect creates a direct connection to screen sharing for all participants
+    // Screen sharing detection effect using Stream's native components
     useEffect(() => {
         if (!call || !participants || participants.length === 0) return;
         
@@ -3585,32 +3769,7 @@ const InsideStreamCallContent: React.FC<{
         const screensharer = participants.find(p => p.screenShareStream);
         if (screensharer) {
             console.log(`Screen sharing detected from: ${screensharer.name || screensharer.userId}`);
-            
-            // Create a video element to ensure all participants receive the stream
-            const videoEl = document.createElement('video');
-            videoEl.autoplay = true;
-            videoEl.muted = true;
-            videoEl.style.display = 'none';
-            videoEl.style.position = 'absolute';
-            
-            // Attach the stream to the video element
-            if (screensharer.screenShareStream && videoEl.srcObject !== screensharer.screenShareStream) {
-                videoEl.srcObject = screensharer.screenShareStream;
-                videoEl.play().catch(err => console.error("Failed to play screen share:", err));
-                
-                // Append to body to ensure it stays active
-                document.body.appendChild(videoEl);
-                
-                // Log for debugging
-                console.log("Screen share stream attached and should be visible to ALL participants");
-            }
-            
-            // Clean up function
-            return () => {
-                if (videoEl && document.body.contains(videoEl)) {
-                    document.body.removeChild(videoEl);
-                }
-            };
+            console.log("Screen share stream should be visible to ALL participants");
         }
     }, [call, participants]);
 
@@ -3633,7 +3792,13 @@ const InsideStreamCallContent: React.FC<{
             backgroundColor: room?.style?.backgroundGradient
                 ? `linear-gradient(to bottom right, ${room?.style?.backgroundColor || theme.palette.background.default}, ${room?.style?.accentColor || theme.palette.secondary.main})` 
                 : room?.style?.backgroundColor || theme.palette.background.default,
-            color: room?.style?.textColor || theme.palette.text.primary
+            color: room?.style?.textColor || theme.palette.text.primary,
+            willChange: 'transform',
+            position: 'relative',
+            zIndex: 1,
+            animation: 'none !important',
+            transition: 'none !important',
+            transform: 'translateZ(0)'
         }}>
             {renderCallStatusHeader()}
             
@@ -3731,7 +3896,7 @@ const InsideStreamCallContent: React.FC<{
                             }}>
                                 <ParticipantView 
                                     participant={screenSharingParticipant} 
-                                    trackType="screenShareTrack" 
+                                    trackType="screenShareTrack"
                                 />
                             </Box>
                             )}
@@ -4073,11 +4238,11 @@ const InsideStreamCallContent: React.FC<{
                      <>
                 {gridParticipants.length > 0 && <ParticipantsAudio participants={gridParticipants} />}
 
-                <Grid container spacing={2}>
+                <Grid container spacing={2} sx={{ willChange: 'contents', transform: 'translateZ(0)' }}>
                              {gridParticipants.map((p: StreamVideoParticipant) => {
                         const isCardParticipantTheHost = p.userId === room.ownerId; 
                         return (
-                            <Grid item key={p.sessionId} xs={4} sm={3} md={2}>
+                            <Grid item key={p.userId} xs={4} sm={3} md={2} sx={{ transition: 'none !important' }}>
                                 <StreamParticipantCard 
                                     participant={p} 
                                     isRoomOwner={isRoomOwner}
@@ -4149,7 +4314,7 @@ const InsideStreamCallContent: React.FC<{
                                      
                                      return (
                                          <Chip
-                                             key={p.sessionId}
+                                             key={p.userId}
                                              size="small"
                                              label={displayName}
                                              avatar={<Avatar 
@@ -4443,7 +4608,7 @@ interface StreamParticipantCardProps {
     navigate: Function; // Add this line
 }
 
-const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({ 
+const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo(({ 
     participant, 
     isRoomOwner, 
     isLocalParticipant, 
@@ -4478,6 +4643,20 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
             console.log('[StreamParticipantCard] Attempting to toggle local microphone. Current SDK mute state (from prop localUserIsMute):', localUserIsMute);
             await call.microphone.toggle();
             console.log('[StreamParticipantCard] Local microphone toggle command completed. SDK state should update.');
+            
+            // If the participant is the room owner, update the room's isLive status based on microphone state
+            if (isRoomOwner && localUserAuthData?.uid) {
+                const roomId = call.cid; // The call ID is the room ID
+                const db = getFirestore();
+                const roomRef = doc(db, 'sideRooms', roomId);
+                const newMuteState = !call.microphone.enabled;
+                
+                console.log(`[StreamParticipantCard] Room owner mic toggled, updating isLive to: ${!newMuteState}`);
+                await updateDoc(roomRef, {
+                    isLive: !newMuteState, // If not muted (enabled), then it's live
+                    lastActive: serverTimestamp()
+                });
+            }
         } catch (error) {
             console.error('[StreamParticipantCard] Error toggling local microphone:', error);
             toast.error("Failed to toggle microphone. See console.");
@@ -4779,4 +4958,4 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = ({
             </Dialog>
         </Box>
     );
-};
+});

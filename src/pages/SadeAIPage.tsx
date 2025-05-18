@@ -366,16 +366,33 @@ const SadeAIPage: React.FC = () => {
 
   // Load chat history from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem("sadeai_chat_history");
+    if (!currentUser) return; // Skip if no user is logged in
+    
+    // Use a user-specific key for localStorage
+    const storageKey = `sadeai_chat_history_${currentUser.uid}`;
+    const saved = localStorage.getItem(storageKey);
+    
     if (saved) {
-      setMessages(JSON.parse(saved));
+      try {
+        const parsedHistory = JSON.parse(saved);
+        setMessages(parsedHistory);
+        console.log(`[SadeAIPage] Loaded ${parsedHistory.length} messages from history for user ${currentUser.uid}`);
+      } catch (error) {
+        console.error('[SadeAIPage] Error parsing chat history:', error);
+        // If parsing fails, don't load corrupt data
+        localStorage.removeItem(storageKey);
+      }
     }
-  }, []);
+  }, [currentUser]); // Re-run when currentUser changes (login/logout)
 
   // Effect to save chat history to localStorage whenever messages change
   useEffect(() => {
-    localStorage.setItem("sadeai_chat_history", JSON.stringify(messages));
-  }, [messages]);
+    if (!currentUser) return; // Skip if no user is logged in
+    
+    // Use a user-specific key for localStorage
+    const storageKey = `sadeai_chat_history_${currentUser.uid}`;
+    localStorage.setItem(storageKey, JSON.stringify(messages));
+  }, [messages, currentUser?.uid]);
 
   // --- Breathing Exercise Logic ---
   // timerIntervalRef is already defined near the top
@@ -1448,7 +1465,11 @@ const SadeAIPage: React.FC = () => {
               color="secondary"
               onClick={() => {
                 setMessages([]);
-                localStorage.removeItem("sadeai_chat_history");
+                // Clear only the current user's chat history
+                if (currentUser?.uid) {
+                  localStorage.removeItem(`sadeai_chat_history_${currentUser.uid}`);
+                  console.log(`[SadeAIPage] Cleared chat history for user ${currentUser.uid}`);
+                }
                 setActiveGame(null);
                 setBreathingState(null); /* Clear all states on clear */
               }}
