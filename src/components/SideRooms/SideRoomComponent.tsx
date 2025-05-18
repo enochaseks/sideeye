@@ -101,6 +101,7 @@ import {
     FavoriteBorder as FavoriteBorderIcon,
     ScreenShare as ScreenShareIcon, // ADDED
     StopScreenShare as StopScreenShareIcon, // ADDED
+    Stop as StopIcon, // ADDED for recording
     // VolumeUp as VolumeUpIcon // REMOVE DUPLICATE
     PushPin as PushPinIcon,
     Videocam as VideocamIcon, // ADDED for camera toggle
@@ -515,10 +516,63 @@ const SideRoomComponent: React.FC = () => {
     const [isScreenSharing, setIsScreenSharing] = useState(false); // Local state to manage button appearance
     const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024); // Example breakpoint for desktop
     const [activeScreenSharerId, setActiveScreenSharerId] = useState<string | null>(null);
-
+    
+    // --- State for Screen Recording --- (NEW)
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
+    const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+    const recordedChunksRef = useRef<BlobPart[]>([]);
+    
+    // --- State for Camera --- (NEW)
+    const [isCameraEnabled, setIsCameraEnabled] = useState(false);
+    
     // --- State for YouTube Player ---
     const [youtubePlayer, setYoutubePlayer] = useState<YT.Player | null>(null);
     const youtubePlayerPlaceholderId = 'youtube-player-placeholder';
+    
+    // Camera toggle function for main component
+    const toggleCamera = useCallback(() => {
+        if (activeStreamCallInstance) {
+            // Log current state
+            console.log("Camera state before toggle:", activeStreamCallInstance.camera.state);
+            
+            // Force enable/disable camera based on current state
+            if (activeStreamCallInstance.camera.state.status !== 'enabled') {
+                // More aggressive camera enabling approach
+                toast.loading("Enabling camera...");
+                
+                // Try to get user media first to ensure permissions are granted
+                navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+                    .then(stream => {
+                        console.log("Camera access granted:", stream);
+                        // Stop the stream immediately as we just needed to check permissions
+                        stream.getTracks().forEach(track => track.stop());
+                        
+                        // Now enable camera in Stream SDK
+                        return activeStreamCallInstance.camera.enable();
+                    })
+                    .then(() => {
+                        setIsCameraEnabled(true);
+                        toast.dismiss();
+                        toast.success("Camera enabled");
+                    })
+                    .catch(err => {
+                        console.error("Error enabling camera:", err);
+                        toast.dismiss();
+                        toast.error("Could not enable camera. Please check camera permissions in your browser settings.");
+                    });
+            } else {
+                activeStreamCallInstance.camera.disable()
+                    .then(() => {
+                        setIsCameraEnabled(false);
+                        toast.success("Camera disabled");
+                    })
+                    .catch(err => {
+                        console.error("Error disabling camera:", err);
+                    });
+            }
+        }
+    }, [activeStreamCallInstance]);
 
     // --- Refs for updating active users count ---
     const lastActiveUsersCountRef = useRef<number>(0);
@@ -533,6 +587,40 @@ const SideRoomComponent: React.FC = () => {
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
     }, []);
+    
+    // --- Effect to sync camera state with Stream SDK
+    useEffect(() => {
+        if (activeStreamCallInstance) {
+            // Check if camera is already enabled in the call
+            const isVideoEnabled = activeStreamCallInstance.camera.state.status === 'enabled';
+            setIsCameraEnabled(isVideoEnabled);
+            
+            // Set up an interval to check camera state
+            const cameraCheckInterval = setInterval(() => {
+                const currentState = activeStreamCallInstance.camera.state.status === 'enabled';
+                setIsCameraEnabled(currentState);
+            }, 1000);
+            
+            return () => {
+                clearInterval(cameraCheckInterval);
+            };
+        }
+    }, [activeStreamCallInstance]);
+    
+    // --- Effect to request camera permissions on page load
+    useEffect(() => {
+        if (activeStreamCallInstance) {
+            // Request permissions early
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(() => {
+                    console.log("Camera permissions granted");
+                })
+                .catch(err => {
+                    console.error("Camera permission denied:", err);
+                    toast.error("Camera permissions denied. You won't be able to share video.");
+                });
+        }
+    }, [activeStreamCallInstance]);
 
     // --- Socket.IO Connection useEffect --- (NEW)
     useEffect(() => {
@@ -1895,6 +1983,30 @@ const SideRoomComponent: React.FC = () => {
                             }}
                         />
                     </Tooltip>
+                    {/* Only show recording button on desktop */}
+                    {isDesktop && (
+                        <Tooltip title={isRecording ? "Stop Recording" : "Record Room (Desktop Only)"}>
+                            <IconButton 
+                                onClick={isRecording ? stopRecording : startRecording}
+                                color={isRecording ? "error" : "inherit"}
+                                sx={{ color: isRecording ? theme.palette.error.main : room?.style?.accentColor || 'inherit' }}
+                            >
+                                {isRecording ? <StopIcon /> : <VideocamIcon />}
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                    
+                    {/* Camera toggle button for video calls */}
+                    {activeStreamCallInstance && (
+                        <Tooltip title={isCameraEnabled ? "Turn Camera Off" : "Turn Camera On"}>
+                            <IconButton 
+                                onClick={toggleCamera}
+                                sx={{ color: isCameraEnabled ? room?.style?.accentColor || theme.palette.primary.main : 'inherit' }}
+                            >
+                                {isCameraEnabled ? <VideocamIcon /> : <VideocamOffIcon />}
+                            </IconButton>
+                        </Tooltip>
+                    )}
                     {isRoomOwner && (
                         <>
                             <Tooltip title="Room Settings">
@@ -2825,6 +2937,127 @@ const SideRoomComponent: React.FC = () => {
         }
     };
 
+    // --- Screen Recording Functions ---
+    const startRecording = async () => {
+        // Check if on mobile device
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        if (isMobile) {
+            toast.error("Screen recording is not fully supported on mobile devices. Please use a desktop browser for this feature.");
+            return;
+        }
+        
+        try {
+            // Check if getDisplayMedia is supported
+            if (!navigator.mediaDevices?.getDisplayMedia) {
+                toast.error("Screen recording is not supported in your browser.");
+                return;
+            }
+            
+            // Request both screen and audio
+            const displayStream = await navigator.mediaDevices.getDisplayMedia({
+                video: true,
+                audio: true // Request audio from the screen content
+            });
+            
+            // Get microphone audio
+            const audioStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: true 
+            });
+            
+            // Combine the streams for both screen and audio
+            const combinedStream = new MediaStream();
+            
+            // Add all video tracks from the display stream
+            displayStream.getVideoTracks().forEach(track => {
+                combinedStream.addTrack(track);
+            });
+            
+            // Add all audio tracks from both streams
+            displayStream.getAudioTracks().forEach(track => {
+                combinedStream.addTrack(track);
+            });
+            
+            audioStream.getAudioTracks().forEach(track => {
+                combinedStream.addTrack(track);
+            });
+            
+            // Create media recorder with combined stream
+            const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm' });
+            
+            // Set up event handlers
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunksRef.current.push(event.data);
+                }
+            };
+            
+            recorder.onstop = () => {
+                // Create the final recording blob
+                const recordingBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+                
+                // Create download link
+                const url = URL.createObjectURL(recordingBlob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `sideeye-room-recording-${new Date().toISOString()}.webm`;
+                
+                // Add to document, click and cleanup
+                document.body.appendChild(a);
+                a.click();
+                
+                // Cleanup
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    recordedChunksRef.current = [];
+                }, 100);
+                
+                // Stop all tracks
+                combinedStream.getTracks().forEach(track => track.stop());
+                
+                // Update states
+                setRecordingStream(null);
+                setMediaRecorder(null);
+                setIsRecording(false);
+                
+                toast.success("Recording saved to your device");
+            };
+            
+            // Start recording
+            recorder.start();
+            
+            // Update state
+            setRecordingStream(combinedStream);
+            setMediaRecorder(recorder);
+            setIsRecording(true);
+            
+            toast.success("Screen recording started with audio");
+            
+            // Set up screen share ended listener
+            displayStream.getVideoTracks()[0].onended = () => {
+                if (recorder.state !== 'inactive') {
+                    recorder.stop();
+                }
+            };
+            
+        } catch (error) {
+            console.error("Error starting screen recording:", error);
+            toast.error("Could not start screen recording. Please make sure you've granted the necessary permissions.");
+        }
+    };
+    
+    const stopRecording = () => {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+        }
+        
+        if (recordingStream) {
+            recordingStream.getTracks().forEach(track => track.stop());
+        }
+    };
+
     // Main return for SideRoomComponent
     return (
         <>
@@ -3428,6 +3661,7 @@ const InsideStreamCallContent: React.FC<{
     // Add state to track PiP visibility separately from camera state
     const [isPipVisible, setIsPipVisible] = useState(true);
     const [isPipEnlarged, setIsPipEnlarged] = useState(false);
+    const [hiddenParticipantIds, setHiddenParticipantIds] = useState<string[]>([]);
 
     const [pinnedUserIds, setPinnedUserIds] = useState<string[]>([]);
     
@@ -3662,7 +3896,30 @@ const InsideStreamCallContent: React.FC<{
     // Toggle camera function that can be reused
     const toggleCamera = () => {
         if (call) {
-            call.camera.toggle();
+            // Force enable camera first to ensure permissions are requested properly
+            if (call.camera.state.status !== 'enabled') {
+                // First get direct access to camera to ensure permissions
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(stream => {
+                        // Stop this stream as we just needed to check permissions
+                        stream.getTracks().forEach(track => track.stop());
+                        
+                        // Now enable in Stream SDK
+                        return call.camera.enable();
+                    })
+                    .then(() => {
+                        // Force PiP to show for better visibility
+                        setIsPipVisible(true);
+                    })
+                    .catch(err => {
+                        console.error("Error enabling camera:", err);
+                        toast.error("Could not enable camera. Please check permissions.");
+                    });
+            } else {
+                call.camera.disable().catch(err => {
+                    console.error("Error disabling camera:", err);
+                });
+            }
         }
     };
 
@@ -3808,6 +4065,380 @@ const InsideStreamCallContent: React.FC<{
                 // Removing overflowY to fix double scrollbar issue
                 // overflowY: 'auto', 
             }}>
+                                 {/* TikTok-like video display for all participants */}
+                 {!screenSharingParticipant && (
+                     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                         <Typography variant="h6" align="center" sx={{ 
+                             mt: 2, 
+                             mb: 1, 
+                             fontWeight: 500,
+                             color: room?.style?.accentColor || theme.palette.primary.main
+                         }}>
+                             Live Video
+                         </Typography>
+                         
+                         {/* Main side-by-side video display */}
+                         <Box sx={{ 
+                             width: '100%',
+                             display: 'flex',
+                             flexDirection: 'row',
+                             justifyContent: 'center',
+                             alignItems: 'center',
+                             gap: 2,
+                             flexWrap: { xs: 'wrap', sm: 'nowrap' },
+                             mb: 2
+                         }}>
+                             {isCameraEnabled ? (
+                             /* Your video - only shown when camera is enabled */
+                             <Box sx={{ 
+                                 border: '3px solid',
+                                 borderColor: theme.palette.primary.main,
+                                 borderRadius: '16px',
+                                 backgroundColor: '#000',
+                                 position: 'relative',
+                                 display: 'flex',
+                                 flexDirection: 'column',
+                                 height: { xs: '40vh', sm: '60vh' },
+                                 maxHeight: '400px',
+                                 width: { xs: '90%', sm: '45%' },
+                                 maxWidth: '350px',
+                                 overflow: 'hidden',
+                                 boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
+                                 '& .str-video__participant-view': {
+                                     width: '100%',
+                                     height: '100%',
+                                     '& video': {
+                                         width: '100%',
+                                         height: '100%',
+                                         objectFit: 'cover',
+                                         background: '#000'
+                                     }
+                                 }
+                             }}>
+                                 {/* Close (X) button */}
+                                 <IconButton
+                                     onClick={toggleCamera}
+                                     sx={{
+                                         position: 'absolute',
+                                         top: 8,
+                                         right: 8,
+                                         backgroundColor: 'rgba(0,0,0,0.6)',
+                                         color: 'white',
+                                         width: 32,
+                                         height: 32,
+                                         zIndex: 10,
+                                         '&:hover': {
+                                             backgroundColor: 'rgba(255,0,0,0.8)'
+                                         }
+                                     }}
+                                 >
+                                     <CloseIcon fontSize="small" />
+                                 </IconButton>
+                                 
+                                 {localParticipant && (
+                                     <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                 )}
+                                 
+                                 {/* TikTok-style gradient overlay at bottom */}
+                                 <Box sx={{
+                                     position: 'absolute',
+                                     bottom: 0,
+                                     left: 0,
+                                     right: 0,
+                                     padding: '40px 16px 16px 16px',
+                                     background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                                     color: 'white',
+                                     zIndex: 2
+                                 }}>
+                                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                         <Avatar sx={{ width: 40, height: 40, mr: 1 }}>
+                                             {currentUser?.displayName?.[0] || 'U'}
+                                         </Avatar>
+                                         <Box>
+                                             <Typography variant="subtitle2" fontWeight="bold">
+                                                 {currentUser?.displayName || 'You'}
+                                             </Typography>
+                                             <Typography variant="caption">
+                                                 {room?.name || 'Live Room'}
+                                             </Typography>
+                                         </Box>
+                                     </Box>
+                                 </Box>
+                                 
+                                 {/* Control buttons */}
+                                 <Box sx={{
+                                     position: 'absolute',
+                                     right: 12,
+                                     bottom: 70,
+                                     display: 'flex',
+                                     flexDirection: 'column',
+                                     alignItems: 'center',
+                                     gap: 2
+                                 }}>                                      
+                                      <Tooltip title={localUserIsMute ? "Unmute" : "Mute"}>
+                                          <IconButton 
+                                              onClick={() => call?.microphone.toggle()}
+                                              sx={{
+                                                  backgroundColor: 'rgba(0,0,0,0.6)',
+                                                  color: 'white',
+                                                  width: 44,
+                                                  height: 44,
+                                                  '&:hover': {
+                                                      backgroundColor: 'rgba(0,0,0,0.8)'
+                                                  }
+                                              }}
+                                          >
+                                              {localUserIsMute ? <MicOff /> : <Mic />}
+                                          </IconButton>
+                                      </Tooltip>
+                                 </Box>
+                             </Box>
+                             ) : (
+                                 <Box sx={{
+                                     display: 'flex',
+                                     flexDirection: 'column',
+                                     justifyContent: 'center',
+                                     alignItems: 'center',
+                                     width: { xs: '90%', sm: '45%' },
+                                     maxWidth: '350px',
+                                 }}>
+                                     <Button 
+                                         variant="contained" 
+                                         color="primary" 
+                                         onClick={toggleCamera}
+                                         startIcon={<VideocamIcon />}
+                                     >
+                                         Enable Camera
+                                     </Button>
+                                 </Box>
+                             )}
+
+                             {/* Other participant's video (side by side) - prioritizing the host */}
+                             {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 0 && (
+                                 isPipVisible ? (
+                                     <Box sx={{ 
+                                         border: '3px solid',
+                                         borderColor: 'divider',
+                                         borderRadius: '16px',
+                                         backgroundColor: '#000',
+                                         position: 'relative',
+                                         display: 'flex',
+                                         flexDirection: 'column',
+                                         height: { xs: '40vh', sm: '60vh' },
+                                         maxHeight: '400px',
+                                         width: { xs: '90%', sm: '45%' },
+                                         maxWidth: '350px',
+                                         overflow: 'hidden',
+                                         boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
+                                         '& .str-video__participant-view': {
+                                             width: '100%',
+                                             height: '100%',
+                                             '& video': {
+                                                 width: '100%',
+                                                 height: '100%',
+                                                 objectFit: 'cover',
+                                                 background: '#000'
+                                             }
+                                         }
+                                     }}>
+                                         {(() => {
+                                             // Prioritize showing the host if present
+                                             const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
+                                             const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
+                                             const participantToShow = hostParticipant || otherParticipant;
+                                             
+                                             return participantToShow ? (
+                                                 <ParticipantView 
+                                                     participant={participantToShow} 
+                                                     trackType="videoTrack" 
+                                                 />
+                                             ) : null;
+                                         })()}
+
+                                         {/* Close (X) button for other participant */}
+                                         <IconButton
+                                             onClick={() => {
+                                                 // Hide the remote participant's view
+                                                 setIsPipVisible(false);
+                                                 toast.success("Video view closed");
+                                             }}
+                                             sx={{
+                                                 position: 'absolute',
+                                                 top: 8,
+                                                 right: 8,
+                                                 backgroundColor: 'rgba(0,0,0,0.6)',
+                                                 color: 'white',
+                                                 width: 32,
+                                                 height: 32,
+                                                 zIndex: 10,
+                                                 '&:hover': {
+                                                     backgroundColor: 'rgba(255,0,0,0.8)'
+                                                 }
+                                             }}
+                                         >
+                                             <CloseIcon fontSize="small" />
+                                         </IconButton>
+
+                                         {/* Name overlay for other participant */}
+                                         <Box sx={{
+                                             position: 'absolute',
+                                             bottom: 0,
+                                             left: 0,
+                                             right: 0,
+                                             padding: '40px 16px 16px 16px',
+                                             background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                                             color: 'white',
+                                             zIndex: 2
+                                         }}>
+                                                                                      {(() => {
+                                             // Use the same logic to get the prioritized participant
+                                             const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
+                                             const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
+                                             const participantToShow = hostParticipant || otherParticipant;
+                                             
+                                             return participantToShow && (
+                                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                     <Avatar sx={{ width: 40, height: 40, mr: 1 }}>
+                                                         {participantToShow?.name?.[0] || 'U'}
+                                                     </Avatar>
+                                                     <Box>
+                                                         <Typography variant="subtitle2" fontWeight="bold">
+                                                             {participantToShow?.name || 'User'}
+                                                             {participantToShow.userId === room.ownerId && " (Host)"}
+                                                         </Typography>
+                                                     </Box>
+                                                 </Box>
+                                             );
+                                         })()}
+                                         </Box>
+                                     </Box>
+                                 ) : (
+                                     <Box sx={{
+                                         display: 'flex',
+                                         flexDirection: 'column',
+                                         justifyContent: 'center',
+                                         alignItems: 'center',
+                                         width: { xs: '90%', sm: '45%' },
+                                         maxWidth: '350px',
+                                     }}>
+                                         <Button 
+                                             variant="outlined" 
+                                             color="primary" 
+                                             onClick={() => setIsPipVisible(true)}
+                                             startIcon={<VideocamIcon />}
+                                         >
+                                             Show Partner Video
+                                         </Button>
+                                     </Box>
+                                 )
+                             )}
+                         </Box>
+
+                         {/* Show additional participants if more than one other participant */}
+                         {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 1 && (
+                             <Box sx={{
+                                 display: 'flex',
+                                 flexWrap: 'wrap',
+                                 justifyContent: 'center',
+                                 gap: 1,
+                                 mt: 2,
+                                 width: '100%',
+                                 maxWidth: '600px'
+                             }}>
+                                 {participants
+                                    .filter(p => p.userId !== currentUser?.uid)
+                                    // Get the host participant to exclude from this list if shown in main view
+                                    .filter(p => {
+                                        const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
+                                        // If this is the host AND the host is shown in the main view (not this one), skip
+                                        return !(p.userId === room.ownerId && hostParticipant === participants.filter(p => p.userId !== currentUser?.uid)[0]);
+                                    })
+                                    .filter(p => !hiddenParticipantIds.includes(p.userId))
+                                    .map((participant) => (
+                                     <Box 
+                                         key={participant.userId}
+                                         sx={{
+                                             width: '100px',
+                                             height: '150px',
+                                             borderRadius: '10px',
+                                             overflow: 'hidden',
+                                             position: 'relative',
+                                             border: '2px solid',
+                                             borderColor: 'divider',
+                                             backgroundColor: '#000',
+                                             '& .str-video__participant-view': {
+                                                 width: '100%',
+                                                 height: '100%',
+                                                 '& video': {
+                                                     width: '100%',
+                                                     height: '100%',
+                                                     objectFit: 'cover'
+                                                 }
+                                             }
+                                         }}
+                                     >
+                                         <ParticipantView participant={participant} trackType="videoTrack" />
+                                         {/* Close (X) button for additional participants */}
+                                         <IconButton
+                                             onClick={() => {
+                                                 // Toggle the visibility of this participant in a state
+                                                 const hiddenIds = [...(hiddenParticipantIds || [])];
+                                                 if (hiddenIds.includes(participant.userId)) {
+                                                     // Remove from hidden list
+                                                     const index = hiddenIds.indexOf(participant.userId);
+                                                     if (index > -1) {
+                                                         hiddenIds.splice(index, 1);
+                                                     }
+                                                 } else {
+                                                     // Add to hidden list
+                                                     hiddenIds.push(participant.userId);
+                                                 }
+                                                 setHiddenParticipantIds(hiddenIds);
+                                                 toast.success("Video view toggled");
+                                             }}
+                                             sx={{
+                                                 position: 'absolute',
+                                                 top: 2,
+                                                 right: 2,
+                                                 backgroundColor: 'rgba(0,0,0,0.6)',
+                                                 color: 'white',
+                                                 width: 20,
+                                                 height: 20,
+                                                 zIndex: 10,
+                                                 padding: '2px',
+                                                 '& .MuiSvgIcon-root': {
+                                                     fontSize: '14px'
+                                                 },
+                                                 '&:hover': {
+                                                     backgroundColor: 'rgba(255,0,0,0.8)'
+                                                 }
+                                             }}
+                                         >
+                                             <CloseIcon />
+                                         </IconButton>
+                                         <Box sx={{
+                                             position: 'absolute',
+                                             bottom: 0,
+                                             left: 0,
+                                             right: 0,
+                                             padding: '2px 4px',
+                                             background: 'rgba(0,0,0,0.7)',
+                                             color: 'white',
+                                             fontSize: '10px',
+                                             textAlign: 'center',
+                                             overflow: 'hidden',
+                                             textOverflow: 'ellipsis',
+                                             whiteSpace: 'nowrap'
+                                         }}>
+                                             {participant.name || `User ${participant.userId.substring(0, 5)}`}
+                                         </Box>
+                                     </Box>
+                                 ))}
+                             </Box>
+                         )}
+                     </Box>
+                 )}
+                
                  {screenSharingParticipant && (
                     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                         <Typography variant="h6" align="center" sx={{ 
