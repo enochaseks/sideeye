@@ -96,6 +96,17 @@ service firebase.storage {
       allow delete: if request.auth != null;
     }
 
+    // Rules for Room Chat Media
+    match /chat-media/rooms/{roomId}/{fileName} {
+      // Allow all authenticated users to read and write room chat media
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+                    request.resource.size < 10 * 1024 * 1024 && // 10MB limit
+                    (request.resource.contentType.matches('image/.*') || 
+                     request.resource.contentType.matches('video/.*'));
+      allow delete: if request.auth != null;
+    }
+
     // Default deny all other access
     match /{allPaths=**} {
       allow read, write: if false;

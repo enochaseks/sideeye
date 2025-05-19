@@ -25,7 +25,11 @@ import {
   Button,
   useTheme,
   useMediaQuery,
-  ListItemSecondaryAction
+  ListItemSecondaryAction,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import { 
   TrendingUp as TrendingIcon,
@@ -146,6 +150,9 @@ const Discover: React.FC = () => {
   const searchRef = React.useRef<HTMLDivElement>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [showPeopleTab, setShowPeopleTab] = useState<boolean>(false);
+  const [showJoinRoomChatDialog, setShowJoinRoomChatDialog] = useState<boolean>(false);
+  const [serverChatRoom, setServerChatRoom] = useState<{id: string, name: string} | null>(null);
+  const [ownerData, setOwnerData] = useState<{username?: string} | null>(null);
 
   const categories = [
     'ASMR',
@@ -445,6 +452,58 @@ const Discover: React.FC = () => {
     }
   };
 
+  // Check if room owner has a server chat room
+  const checkForServerChatRoom = async (ownerId: string) => {
+    if (!db || !ownerId) return null;
+    
+    try {
+      // Query for public rooms created by the owner
+      const roomsRef = collection(db, 'rooms');
+      const q = firestoreQuery(
+        roomsRef,
+        where('createdBy', '==', ownerId),
+        where('type', '==', 'public')
+      );
+      
+      const roomsSnapshot = await getDocs(q);
+      if (!roomsSnapshot.empty) {
+        // Owner has at least one server chat room
+        const roomDoc = roomsSnapshot.docs[0]; // Take the first one
+        
+        // Get owner data for the dialog
+        const ownerRef = doc(db, 'users', ownerId);
+        const ownerDoc = await getDoc(ownerRef);
+        if (ownerDoc.exists()) {
+          setOwnerData({
+            username: ownerDoc.data().username || ownerDoc.data().name
+          });
+        }
+        
+        return {
+          id: roomDoc.id,
+          name: roomDoc.data().name || 'Chat Room'
+        };
+      }
+      return null;
+    } catch (error) {
+      console.error('[Discover] Error checking for server chat room:', error);
+      return null;
+    }
+  };
+
+  // Handle joining the server chat room
+  const handleJoinServerChat = () => {
+    if (serverChatRoom) {
+      navigate(`/chat/room/${serverChatRoom.id}`);
+    }
+    setShowJoinRoomChatDialog(false);
+  };
+
+  // Handle declining to join the server chat room
+  const handleDeclineServerChat = () => {
+    setShowJoinRoomChatDialog(false);
+  };
+
   const handleFollow = async (userId: string) => {
     if (!currentUser || userId === currentUser.uid) return;
     
@@ -477,6 +536,8 @@ const Discover: React.FC = () => {
           // Update pending requests state
           setPendingRequests(prev => new Set(prev).add(userId));
           toast.success('Follow request sent');
+          
+          // We don't check for server chat room here since it's just a request
         } else {
           // Direct follow for public accounts
           await setDoc(followingRef, {
@@ -499,6 +560,13 @@ const Discover: React.FC = () => {
             isRead: false
           };
           await addDoc(collection(db, 'notifications'), notificationData);
+
+          // Check if the user has a server chat room
+          const chatRoom = await checkForServerChatRoom(userId);
+          if (chatRoom) {
+            setServerChatRoom(chatRoom);
+            setShowJoinRoomChatDialog(true);
+          }
 
           toast.success('Followed user');
         }
@@ -917,6 +985,42 @@ const Discover: React.FC = () => {
       fetchDefaultUsers();
     }
   };
+
+  // Effect to listen for follow request acceptance for private profiles
+  useEffect(() => {
+    if (!currentUser?.uid || !db) return;
+    
+    // Set up a listener for the user's following collection
+    const userFollowingsRef = collection(db, "users", currentUser.uid, "following");
+    const unsubscribe = onSnapshot(userFollowingsRef, async (snapshot) => {
+      // When a new follow relationship is established (request accepted)
+      snapshot.docChanges().forEach(async (change) => {
+        if (change.type === 'added') {
+          const targetUserId = change.doc.id;
+          
+          // Check if this was a follow request (private account)
+          // by checking if it was in the pendingRequests set
+          if (pendingRequests.has(targetUserId)) {
+            // Check if the user has a server chat room
+            const chatRoom = await checkForServerChatRoom(targetUserId);
+            if (chatRoom) {
+              setServerChatRoom(chatRoom);
+              setShowJoinRoomChatDialog(true);
+              
+              // Remove from pending requests
+              setPendingRequests(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(targetUserId);
+                return newSet;
+              });
+            }
+          }
+        }
+      });
+    });
+    
+    return () => unsubscribe();
+  }, [currentUser?.uid, db, pendingRequests]);
 
   if (loading && !isSearchView) {
     return (
@@ -1688,6 +1792,24 @@ const Discover: React.FC = () => {
           )
         )}
       </Container>
+
+      {/* Join Server Chat Room Dialog */}
+      <Dialog
+        open={showJoinRoomChatDialog}
+        onClose={handleDeclineServerChat}
+        aria-labelledby="join-room-chat-dialog-title"
+      >
+        <DialogTitle id="join-room-chat-dialog-title">Join Room Chat?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {ownerData?.username || "This creator"} has a server chat room: "{serverChatRoom?.name}". Would you like to join it to receive updates and connect with other followers?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeclineServerChat}>Not Now</Button>
+          <Button onClick={handleJoinServerChat} variant="contained" color="primary">Join</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

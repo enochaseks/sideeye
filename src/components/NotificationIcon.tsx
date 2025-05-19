@@ -15,7 +15,12 @@ import {
   Avatar,
   Link as MuiLink,
   useTheme,
-  CircularProgress
+  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions
 } from '@mui/material';
 import { Notifications as NotificationsIcon } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
@@ -31,6 +36,8 @@ export const NotificationIcon: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
   const { isDarkMode } = useThemeContext();
+  const [showJoinDialog, setShowJoinDialog] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<{id: string, name: string} | null>(null);
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -43,6 +50,18 @@ export const NotificationIcon: React.FC = () => {
   const handleNotificationClick = async (notification: Notification) => {
     if (!notification.isRead) {
       await markAsRead(notification.id);
+    }
+
+    handleClose(); // Close the menu first
+
+    // Handle room_created notifications differently
+    if (notification.type === 'room_created' && notification.roomId) {
+      setSelectedRoom({
+        id: notification.roomId,
+        name: notification.roomName || 'Room'
+      });
+      setShowJoinDialog(true);
+      return;
     }
 
     let navigateTo = '/notifications'; // Default fallback
@@ -81,9 +100,19 @@ export const NotificationIcon: React.FC = () => {
         // Keep default navigateTo = '/notifications'
     }
 
-    handleClose(); // Close the menu first
     console.log(`Navigating to: ${navigateTo} from icon for type: ${notification.type}`);
     navigate(navigateTo);
+  };
+
+  const handleJoinRoom = () => {
+    if (selectedRoom) {
+      navigate(`/chat/room/${selectedRoom.id}`);
+    }
+    setShowJoinDialog(false);
+  };
+
+  const handleDeclineJoin = () => {
+    setShowJoinDialog(false);
   };
 
   const handleMarkAllRead = async () => {
@@ -157,13 +186,6 @@ export const NotificationIcon: React.FC = () => {
                   whiteSpace: 'normal',
                   py: 1.5
                 }}
-                component={Link}
-                to={
-                  notification.postId ? `/vibit/${notification.postId}` :
-                  notification.roomId ? `/side-room/${notification.roomId}` :
-                  notification.type === 'follow' ? `/profile/${notification.senderId}` :
-                  '#'
-                }
               >
                 <Box>
                   <Typography variant="body2">{notification.content}</Typography>
@@ -180,6 +202,26 @@ export const NotificationIcon: React.FC = () => {
           <Typography sx={{ textAlign: 'center', width: '100%' }}>View All Notifications</Typography>
         </MenuItem>
       </Menu>
+
+      {/* Join Room Dialog */}
+      <Dialog
+        open={showJoinDialog}
+        onClose={handleDeclineJoin}
+        aria-labelledby="join-room-dialog-title"
+      >
+        <DialogTitle id="join-room-dialog-title">Join Room?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Would you like to join the room "{selectedRoom?.name}"?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeclineJoin}>Not Now</Button>
+          <Button onClick={handleJoinRoom} variant="contained" color="primary">
+            Join Room
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }; 

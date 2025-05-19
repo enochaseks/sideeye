@@ -40,6 +40,7 @@ const Messages = lazy(() => import('./pages/Messages'));
 const SadeAIPage = lazy(() => import('./pages/SadeAIPage'));
 const SideRoomComponent = lazy(() => import('./components/SideRooms/SideRoomComponent'));
 const Chat = lazy(() => import('./pages/Chat'));
+const RoomChat = lazy(() => import('./pages/RoomChat'));
 const SafetyPage = lazy(() => import('./pages/SafetyPage'));
 const SecurityPage = lazy(() => import('./pages/SecurityPage'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -179,6 +180,11 @@ const AppContent: React.FC = () => {
               <Route path="/chat/user/:userId" element={
                 <ProtectedRoute>
                   <Chat />
+                </ProtectedRoute>
+              } />
+              <Route path="/chat/room/:roomId" element={
+                <ProtectedRoute>
+                  <RoomChat />
                 </ProtectedRoute>
               } />
               <Route path="/trash" element={

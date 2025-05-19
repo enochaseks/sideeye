@@ -19,6 +19,7 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
+  DialogContentText,
   DialogActions,
   Badge,
   Menu,
@@ -43,7 +44,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, getDoc, getDocs, collection, query, where, orderBy, limit, onSnapshot, setDoc, serverTimestamp, deleteDoc, writeBatch, arrayUnion, arrayRemove, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, query, where, orderBy, limit, onSnapshot, setDoc, serverTimestamp, deleteDoc, writeBatch, arrayUnion, arrayRemove, updateDoc, DocumentData, addDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
 
@@ -69,9 +70,11 @@ interface UserProfile {
 }
 
 interface UserData {
+  id?: string;
   username?: string;
   name?: string;
   profilePic?: string;
+  photoURL?: string;
   following?: string[];
   followers?: string[];
   blockedUsers?: string[];
@@ -121,6 +124,11 @@ const Messages: React.FC = () => {
   const [userFollowers, setUserFollowers] = useState<string[]>([]);
   const [snackbarMessage, setSnackbarMessage] = useState<string>('');
   const [snackbarOpen, setSnackbarOpen] = useState<boolean>(false);
+  const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false);
+  const [roomName, setRoomName] = useState('');
+  const [roomDescription, setRoomDescription] = useState('');
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [rooms, setRooms] = useState<any[]>([]);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -232,6 +240,86 @@ const Messages: React.FC = () => {
     });
     
     return () => unsubscribe();
+  }, [currentUser, db]);
+  
+  useEffect(() => {
+    if (!currentUser || !db) return;
+    
+    // Fetch rooms where the user is a member and public rooms from other users
+    const fetchRooms = async () => {
+      try {
+        // First get user's rooms (where they are a member)
+        const userRoomsRef = collection(db, 'rooms');
+        const userRoomsQuery = query(
+          userRoomsRef,
+          where('members', 'array-contains', currentUser.uid)
+        );
+        
+        // Get all public rooms
+        const publicRoomsRef = collection(db, 'rooms');
+        const publicRoomsQuery = query(
+          publicRoomsRef,
+          where('type', '==', 'public')
+        );
+        
+        // Combine both queries with onSnapshot
+        const unsubscribe = onSnapshot(userRoomsQuery, async (userRoomsSnapshot) => {
+          // Process user's rooms first
+          const userRoomIds = userRoomsSnapshot.docs.map(doc => doc.id);
+          
+          // Then get public rooms
+          const publicRoomsSnapshot = await getDocs(publicRoomsQuery);
+          
+          // Combine and process all rooms
+          const allRoomDocs = [
+            ...userRoomsSnapshot.docs,
+            ...publicRoomsSnapshot.docs.filter(doc => !userRoomIds.includes(doc.id)) // Filter out duplicates
+          ];
+          
+          const roomsData = await Promise.all(
+            allRoomDocs.map(async (roomDoc) => {
+              const data = roomDoc.data();
+              
+              // Get creator user info
+              let creatorName = 'Unknown';
+              let creatorPhoto = '';
+              
+              try {
+                // Create a reference to the user document
+                const creatorRef = doc(db, 'users', data.createdBy);
+                // Get the user document
+                const creatorSnapshot = await getDoc(creatorRef);
+                
+                if (creatorSnapshot.exists()) {
+                  const userData = creatorSnapshot.data() as UserData;
+                  creatorName = userData.name || userData.username || 'Unknown';
+                  creatorPhoto = userData.profilePic || userData.photoURL || '';
+                }
+              } catch (error) {
+                console.error('Error fetching creator data:', error);
+              }
+              
+              return {
+                id: roomDoc.id,
+                ...data,
+                creatorName,
+                creatorPhoto,
+                isOwner: data.createdBy === currentUser.uid,
+                isMember: userRoomIds.includes(roomDoc.id)
+              };
+            })
+          );
+          
+          setRooms(roomsData);
+        });
+        
+        return unsubscribe;
+      } catch (error) {
+        console.error('Error fetching rooms:', error);
+      }
+    };
+    
+    fetchRooms();
   }, [currentUser, db]);
   
   const handleSearch = async () => {
@@ -618,6 +706,76 @@ const Messages: React.FC = () => {
     );
   };
 
+  const handleCreateRoom = async () => {
+    if (!currentUser?.uid || !roomName.trim()) return;
+    
+    setCreatingRoom(true);
+    try {
+      // Create a new room in Firestore
+      const roomRef = doc(collection(db, 'rooms'));
+      await setDoc(roomRef, {
+        name: roomName.trim(),
+        description: roomDescription.trim(),
+        createdBy: currentUser.uid,
+        createdAt: serverTimestamp(),
+        members: [currentUser.uid],
+        type: 'public',
+        lastMessage: null
+      });
+      
+      // Notify creator's followers about the new room
+      try {
+        // Get current user data
+        const creatorRef = doc(db, 'users', currentUser.uid);
+        const creatorSnap = await getDoc(creatorRef);
+        const creatorData = creatorSnap.exists() ? creatorSnap.data() : null;
+        
+        if (creatorData && creatorData.followers && Array.isArray(creatorData.followers)) {
+          // Get creator's followers
+          const followers = creatorData.followers;
+          
+          // Create batch notifications to all followers
+          const notificationsCollection = collection(db, 'notifications');
+          const notificationPromises = followers.map(followerId => 
+            addDoc(notificationsCollection, {
+              type: 'room_created',
+              senderId: currentUser.uid,
+              senderName: creatorData.name || creatorData.username || currentUser.displayName || 'User',
+              senderAvatar: creatorData.profilePic || currentUser.photoURL || '',
+              recipientId: followerId,
+              content: `${creatorData.name || creatorData.username || 'User'} created a new room: ${roomName.trim()}`,
+              roomId: roomRef.id,
+              roomName: roomName.trim(),
+              isRead: false,
+              createdAt: serverTimestamp()
+            })
+          );
+          
+          await Promise.all(notificationPromises);
+          console.log(`Sent room creation notifications to ${followers.length} followers`);
+        }
+      } catch (notifError) {
+        console.error('Error sending room creation notifications:', notifError);
+        // Don't block room creation if notifications fail
+      }
+      
+      setRoomName('');
+      setRoomDescription('');
+      setShowCreateRoomDialog(false);
+      
+      // Navigate to the new room
+      navigate(`/chat/room/${roomRef.id}`);
+      
+      setSnackbarMessage('Room created successfully');
+      setSnackbarOpen(true);
+    } catch (error) {
+      console.error('Error creating room:', error);
+      toast.error('Failed to create room');
+    } finally {
+      setCreatingRoom(false);
+    }
+  };
+
   return (
     <Container maxWidth="md" sx={{ mt: 2, mb: 8 }}>
       <Paper elevation={0} sx={{ p: 2, mb: 2 }}>
@@ -682,6 +840,13 @@ const Messages: React.FC = () => {
               icon={pendingRequests.length > 0 ? <RequestsIcon fontSize="small" /> : undefined}
               iconPosition="end"
             />
+             <Tab
+                    label= "Rooms +"
+                    id= "messages-tab-1"
+                    aria-controls= "messages-tabpanel-1"
+                    icon= {pendingRequests.length > 0 ? <RequestsIcon fontSize="small" /> : undefined}
+                    iconPosition= "end"
+                    />
           </Tabs>
         </Box>
       </Paper>
@@ -702,6 +867,130 @@ const Messages: React.FC = () => {
               </Alert>
             )}
             {renderConversationList(pendingRequests)}
+          </TabPanel>
+          <TabPanel value={tabValue} index={2}>
+            <Box sx={{ p: 2, mb: 3, bgcolor: 'background.paper', borderRadius: 1 }}>
+              <Typography variant="h6" gutterBottom>
+                Server Chat Rooms
+              </Typography>
+              <Typography variant="body2" color="text.secondary" paragraph>
+                Create a room to share announcements, live updates, and polls with your followers. Great for creators who want to engage with their audience.
+              </Typography>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => setShowCreateRoomDialog(true)}
+                sx={{ mt: 1 }}
+              >
+                Create a Room
+              </Button>
+            </Box>
+            
+            {rooms.length === 0 ? (
+              <Box sx={{ textAlign: 'center', mt: 4, p: 3 }}>
+                <Typography variant="body1" color="text.secondary" gutterBottom>
+                  No rooms available. Create a room or join someone else's room.
+                </Typography>
+              </Box>
+            ) : (
+              <List sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
+                {rooms.map((room, index) => (
+                  <React.Fragment key={room.id}>
+                    <ListItem 
+                      alignItems="flex-start" 
+                      button
+                      onClick={() => navigate(`/chat/room/${room.id}`)}
+                      sx={{ py: 2 }}
+                    >
+                      <ListItemAvatar>
+                        <Badge
+                          color="secondary"
+                          variant="dot"
+                          invisible={!room.isOwner}
+                        >
+                          <Avatar 
+                            alt={room.name} 
+                            src={room.creatorPhoto}
+                            sx={{ bgcolor: !room.creatorPhoto ? 'secondary.main' : undefined }}
+                          >
+                            {!room.creatorPhoto && room.name?.charAt(0).toUpperCase()}
+                          </Avatar>
+                        </Badge>
+                      </ListItemAvatar>
+                      <ListItemText
+                        primary={
+                          <Box display="flex" alignItems="center">
+                            <Typography variant="subtitle1" component="span">
+                              {room.name}
+                            </Typography>
+                            {room.isOwner && (
+                              <Typography 
+                                variant="caption" 
+                                component="span" 
+                                sx={{ ml: 1, bgcolor: 'secondary.main', px: 1, py: 0.5, borderRadius: 1, color: 'white' }}
+                              >
+                                Owner
+                              </Typography>
+                            )}
+                            {!room.isOwner && room.isMember && (
+                              <Typography 
+                                variant="caption" 
+                                component="span" 
+                                sx={{ ml: 1, bgcolor: 'success.light', px: 1, py: 0.5, borderRadius: 1, color: 'white' }}
+                              >
+                                Joined
+                              </Typography>
+                            )}
+                          </Box>
+                        }
+                        secondary={
+                          <React.Fragment>
+                            <Typography
+                              component="div"
+                              variant="body2"
+                              color="text.primary"
+                              sx={{ display: 'block' }}
+                            >
+                              {room.description?.substring(0, 60)}
+                              {room.description?.length > 60 ? '...' : ''}
+                            </Typography>
+                            <Box 
+                              display="flex" 
+                              alignItems="center" 
+                              justifyContent="space-between"
+                              sx={{ mt: 0.5 }}
+                            >
+                              <Typography
+                                component="span"
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                Created by {room.creatorName} • {room.members?.length || 0} members
+                              </Typography>
+                              {!room.isMember && (
+                                <Button 
+                                  size="small" 
+                                  variant="outlined" 
+                                  color="primary"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/chat/room/${room.id}`);
+                                  }}
+                                  sx={{ minWidth: '60px', ml: 1 }}
+                                >
+                                  Join
+                                </Button>
+                              )}
+                            </Box>
+                          </React.Fragment>
+                        }
+                      />
+                    </ListItem>
+                    {index < rooms.length - 1 && <Divider component="li" />}
+                  </React.Fragment>
+                ))}
+              </List>
+            )}
           </TabPanel>
         </>
       )}
@@ -811,6 +1100,58 @@ const Messages: React.FC = () => {
             </Box>
           )}
         </DialogContent>
+      </Dialog>
+
+      {/* Room Creation Dialog */}
+      <Dialog 
+        open={showCreateRoomDialog}
+        onClose={() => setShowCreateRoomDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Create Server Chat Room</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            Server chat rooms allow you to broadcast updates to your followers, share announcements, and create polls. Your followers can join these rooms to stay updated with your content.
+          </DialogContentText>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Room Name"
+            fullWidth
+            variant="outlined"
+            value={roomName}
+            onChange={(e) => setRoomName(e.target.value)}
+            required
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            margin="dense"
+            label="Description"
+            fullWidth
+            variant="outlined"
+            value={roomDescription}
+            onChange={(e) => setRoomDescription(e.target.value)}
+            multiline
+            rows={3}
+            placeholder="What is this room about? Who should join?"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => setShowCreateRoomDialog(false)}
+            disabled={creatingRoom}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleCreateRoom}
+            variant="contained"
+            disabled={!roomName.trim() || creatingRoom}
+          >
+            {creatingRoom ? <CircularProgress size={24} /> : "Create Room"}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       {/* Snackbar for feedback messages */}

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Container,
   List,
@@ -11,8 +11,14 @@ import {
   Box,
   CircularProgress,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Button
 } from '@mui/material';
-import { Close as CloseIcon, Favorite as FavoriteIcon, Comment as CommentIcon, PersonAdd as PersonAddIcon, Notifications as NotificationsIcon, Message as MessageIcon, Videocam as VideocamIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Favorite as FavoriteIcon, Comment as CommentIcon, PersonAdd as PersonAddIcon, Notifications as NotificationsIcon, Message as MessageIcon, Videocam as VideocamIcon, Group as GroupIcon } from '@mui/icons-material';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
@@ -30,6 +36,8 @@ const NotificationsPage: React.FC = () => {
   const { notifications, unreadCount, markAllAsRead, markAsRead, deleteNotification, loading } = useNotifications();
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  const [showJoinDialog, setShowJoinDialog] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<{id: string, name: string} | null>(null);
 
   useEffect(() => {
   }, [unreadCount]);
@@ -43,6 +51,16 @@ const NotificationsPage: React.FC = () => {
   const handleNotificationClick = (notification: Notification) => {
     if (!notification.isRead) {
       markAsRead(notification.id);
+    }
+
+    // Handle room_created notifications differently
+    if (notification.type === 'room_created' && notification.roomId) {
+      setSelectedRoom({
+        id: notification.roomId,
+        name: notification.roomName || 'Room'
+      });
+      setShowJoinDialog(true);
+      return;
     }
 
     let navigateTo = '/notifications'; // Default fallback
@@ -105,6 +123,17 @@ const NotificationsPage: React.FC = () => {
     navigate(navigateTo);
   };
 
+  const handleJoinRoom = () => {
+    if (selectedRoom) {
+      navigate(`/chat/room/${selectedRoom.id}`);
+    }
+    setShowJoinDialog(false);
+  };
+
+  const handleDeclineJoin = () => {
+    setShowJoinDialog(false);
+  };
+
   const handleDelete = (event: React.MouseEvent, notificationId: string) => {
     event.stopPropagation(); // Prevent ListItem click
     deleteNotification(notificationId);
@@ -119,82 +148,105 @@ const NotificationsPage: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="sm" sx={{ mt: 4, mb: 4 }}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h5" component="h1">
-          Notifications
-        </Typography>
-        {notifications.length > 0 && unreadCount > 0 && (
-           <Typography variant="caption" color="textSecondary" onClick={handleMarkAllReadClick} sx={{cursor: 'pointer', '&:hover': {textDecoration: 'underline'}}}>
-             Mark all as read
-           </Typography>
-        )}
-      </Box>
-      {notifications.length === 0 ? (
-        <Typography textAlign="center" color="textSecondary">
-          No notifications yet.
-        </Typography>
-      ) : (
-        <List sx={{ bgcolor: 'background.paper', borderRadius: 2 }}>
-          {notifications.map((notification, index) => (
-            <React.Fragment key={notification.id}>
-              <ListItem
-                alignItems="flex-start"
-                onClick={() => handleNotificationClick(notification)}
-                sx={{
-                  cursor: 'pointer',
-                  backgroundColor: notification.isRead ? 'transparent' : 'action.hover',
-                  '&:hover': {
-                    backgroundColor: 'action.selected',
-                  },
-                }}
-                secondaryAction={
-                  <IconButton edge="end" aria-label="delete" onClick={(e) => handleDelete(e, notification.id)}>
-                    <CloseIcon fontSize="small" />
-                  </IconButton>
-                }
-              >
-                <ListItemAvatar sx={{ mr: 1 }}>
-                  <Link 
-                    to={`/profile/${notification.senderId}`} 
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ textDecoration: 'none' }} 
-                  >
-                    <Avatar
-                      alt={notification.senderName || 'User'}
-                      src={notification.senderAvatar || undefined}
-                      sx={{ bgcolor: !notification.senderAvatar ? 'primary.main' : undefined, width: 40, height: 40 }}
+    <>
+      <Container maxWidth="sm" sx={{ mt: 4, mb: 4 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="h5" component="h1">
+            Notifications
+          </Typography>
+          {notifications.length > 0 && unreadCount > 0 && (
+             <Typography variant="caption" color="textSecondary" onClick={handleMarkAllReadClick} sx={{cursor: 'pointer', '&:hover': {textDecoration: 'underline'}}}>
+               Mark all as read
+             </Typography>
+          )}
+        </Box>
+        {notifications.length === 0 ? (
+          <Typography textAlign="center" color="textSecondary">
+            No notifications yet.
+          </Typography>
+        ) : (
+          <List sx={{ bgcolor: 'background.paper', borderRadius: 2 }}>
+            {notifications.map((notification, index) => (
+              <React.Fragment key={notification.id}>
+                <ListItem
+                  alignItems="flex-start"
+                  onClick={() => handleNotificationClick(notification)}
+                  sx={{
+                    cursor: 'pointer',
+                    backgroundColor: notification.isRead ? 'transparent' : 'action.hover',
+                    '&:hover': {
+                      backgroundColor: 'action.selected',
+                    },
+                  }}
+                  secondaryAction={
+                    <IconButton edge="end" aria-label="delete" onClick={(e) => handleDelete(e, notification.id)}>
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  }
+                >
+                  <ListItemAvatar sx={{ mr: 1 }}>
+                    <Link 
+                      to={`/profile/${notification.senderId}`} 
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ textDecoration: 'none' }} 
                     >
-                      {!notification.senderAvatar && notification.senderName ? notification.senderName.charAt(0).toUpperCase() : null}
-                    </Avatar>
-                  </Link>
-                </ListItemAvatar>
-                <ListItemText
-                  primary={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      {notification.type === 'like' && <FavoriteIcon fontSize="small" color="error" />}
-                      {notification.type === 'comment' && <CommentIcon fontSize="small" color="primary" />}
-                      {notification.type === 'follow' && <PersonAddIcon fontSize="small" color="primary" />}
-                      {notification.type === 'message' && <MessageIcon fontSize="small" color="primary" />}
-                      {notification.type === 'live_stream' && <VideocamIcon fontSize="small" color="error" />}
-                      <Typography component="span" variant="body2" color="text.primary">
-                        {notification.content || 'Notification content missing.'}
+                      <Avatar
+                        alt={notification.senderName || 'User'}
+                        src={notification.senderAvatar || undefined}
+                        sx={{ bgcolor: !notification.senderAvatar ? 'primary.main' : undefined, width: 40, height: 40 }}
+                      >
+                        {!notification.senderAvatar && notification.senderName ? notification.senderName.charAt(0).toUpperCase() : null}
+                      </Avatar>
+                    </Link>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {notification.type === 'like' && <FavoriteIcon fontSize="small" color="error" />}
+                        {notification.type === 'comment' && <CommentIcon fontSize="small" color="primary" />}
+                        {notification.type === 'follow' && <PersonAddIcon fontSize="small" color="primary" />}
+                        {notification.type === 'message' && <MessageIcon fontSize="small" color="primary" />}
+                        {notification.type === 'live_stream' && <VideocamIcon fontSize="small" color="error" />}
+                        {notification.type === 'room_created' && <GroupIcon fontSize="small" color="primary" />}
+                        <Typography component="span" variant="body2" color="text.primary">
+                          {notification.content || 'Notification content missing.'}
+                        </Typography>
+                      </Box>
+                    }
+                    secondary={
+                      <Typography component="span" variant="caption" color="text.secondary">
+                        {formatTimestamp(notification.createdAt)}
                       </Typography>
-                    </Box>
-                  }
-                  secondary={
-                    <Typography component="span" variant="caption" color="text.secondary">
-                      {formatTimestamp(notification.createdAt)}
-                    </Typography>
-                  }
-                />
-              </ListItem>
-              {index < notifications.length - 1 && <Divider variant="inset" component="li" />}
-            </React.Fragment>
-          ))}
-        </List>
-      )}
-    </Container>
+                    }
+                  />
+                </ListItem>
+                {index < notifications.length - 1 && <Divider variant="inset" component="li" />}
+              </React.Fragment>
+            ))}
+          </List>
+        )}
+      </Container>
+
+      {/* Join Room Dialog */}
+      <Dialog
+        open={showJoinDialog}
+        onClose={handleDeclineJoin}
+        aria-labelledby="join-room-dialog-title"
+      >
+        <DialogTitle id="join-room-dialog-title">Join Room?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Would you like to join the room "{selectedRoom?.name}"?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeclineJoin}>Not Now</Button>
+          <Button onClick={handleJoinRoom} variant="contained" color="primary">
+            Join Room
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 };
 

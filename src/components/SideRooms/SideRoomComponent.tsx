@@ -35,6 +35,7 @@ import {
     Dialog,
     DialogTitle,
     DialogContent,
+    DialogContentText,
     DialogActions,
     TextField,
     Alert,
@@ -530,6 +531,13 @@ const SideRoomComponent: React.FC = () => {
     const [youtubePlayer, setYoutubePlayer] = useState<YT.Player | null>(null);
     const youtubePlayerPlaceholderId = 'youtube-player-placeholder';
     
+    // --- State variables and imports ---
+    // ... existing code ...
+    const [showJoinRoomChatDialog, setShowJoinRoomChatDialog] = useState(false);
+    const [serverChatRoom, setServerChatRoom] = useState<{id: string, name: string} | null>(null);
+    
+    // ... existing code ...
+
     // Camera toggle function for main component
     const toggleCamera = useCallback(() => {
         if (activeStreamCallInstance) {
@@ -1292,6 +1300,93 @@ const SideRoomComponent: React.FC = () => {
         };
     }, [roomId, currentUser]);
 
+    // Check if room owner has a server chat room
+    const checkForServerChatRoom = async (ownerId: string) => {
+        if (!db || !ownerId) return null;
+        
+        try {
+            // Query for public rooms created by the owner
+            const roomsRef = collection(db, 'rooms');
+            const q = query(
+                roomsRef,
+                where('createdBy', '==', ownerId),
+                where('type', '==', 'public')
+            );
+            
+            const roomsSnapshot = await getDocs(q);
+            if (!roomsSnapshot.empty) {
+                // Owner has at least one server chat room
+                const roomDoc = roomsSnapshot.docs[0]; // Take the first one
+                return {
+                    id: roomDoc.id,
+                    name: roomDoc.data().name || 'Chat Room'
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('[SideRoomComponent] Error checking for server chat room:', error);
+            return null;
+        }
+    };
+
+    // --- Follow Request Acceptance Listener (for private profiles) ---
+    useEffect(() => {
+        if (!currentUser?.uid || !room?.ownerId) return;
+        
+        // Only set up this listener if the room owner is not the current user
+        const checkFollowStatus = async () => {
+            try {
+                // Get the host's data to check if account is private
+                const hostRef = doc(db, "users", room.ownerId);
+                const hostDoc = await getDoc(hostRef);
+                const isHostPrivate = hostDoc.exists() && hostDoc.data().isPrivate === true;
+                
+                if (!isHostPrivate) return; // Only continue for private profiles
+                
+                // Check if user is now following the host (follow request accepted)
+                const userFollowingRef = doc(db, "users", currentUser.uid, "following", room.ownerId);
+                const followRequestRef = doc(db, "users", room.ownerId, "followRequests", currentUser.uid);
+                
+                const [userFollowingDoc, followRequestDoc] = await Promise.all([
+                    getDoc(userFollowingRef),
+                    getDoc(followRequestRef)
+                ]);
+                
+                // If user is now following and there was a request (which means it was accepted)
+                if (userFollowingDoc.exists() && !followRequestDoc.exists()) {
+                    // Check if the room owner has a server chat room
+                    const ownerChatRoom = await checkForServerChatRoom(room.ownerId);
+                    if (ownerChatRoom) {
+                        setServerChatRoom(ownerChatRoom);
+                        setShowJoinRoomChatDialog(true);
+                    }
+                }
+            } catch (error) {
+                console.error("Error checking follow status:", error);
+            }
+        };
+        
+        // Run the check once
+        checkFollowStatus();
+        
+        // Set up a listener for the user's following collection
+        const userFollowingRef = doc(db, "users", currentUser.uid, "following", room.ownerId);
+        const unsubscribe = onSnapshot(userFollowingRef, (docSnapshot) => {
+            if (docSnapshot.exists()) {
+                // The user is now following the room owner (request was accepted)
+                // Check for server chat room
+                checkForServerChatRoom(room.ownerId).then(chatRoom => {
+                    if (chatRoom) {
+                        setServerChatRoom(chatRoom);
+                        setShowJoinRoomChatDialog(true);
+                    }
+                });
+            }
+        });
+        
+        return () => unsubscribe();
+    }, [currentUser, room, db, navigate, checkForServerChatRoom]);
+
     // --- Presence Listener (Effect 1: Reading other users' presence) ---
     useEffect(() => {
         console.log(`[Presence Listener - Others] Initializing. RoomId: ${roomId}, HasAccess: ${hasRoomAccess}, CurrentUserUID: ${currentUser?.uid}`);
@@ -1922,6 +2017,13 @@ const SideRoomComponent: React.FC = () => {
                                                 timestamp: serverTimestamp() 
                                             });
                                             toast.success(`Following ${ownerData.username}`);
+                                            
+                                            // Check if the room owner has a server chat room
+                                            const ownerChatRoom = await checkForServerChatRoom(room.ownerId);
+                                            if (ownerChatRoom) {
+                                                setServerChatRoom(ownerChatRoom);
+                                                setShowJoinRoomChatDialog(true);
+                                            }
                                         }
                                     } catch (error) {
                                         console.error("Error toggling follow:", error);
@@ -3058,6 +3160,23 @@ const SideRoomComponent: React.FC = () => {
         }
     };
 
+    // Function moved to the top level to avoid being used before declaration
+
+    // Handle joining the server chat room
+    const handleJoinServerChat = () => {
+        if (serverChatRoom) {
+            navigate(`/chat/room/${serverChatRoom.id}`);
+        }
+        setShowJoinRoomChatDialog(false);
+    };
+
+    // Handle declining to join the server chat room
+    const handleDeclineServerChat = () => {
+        setShowJoinRoomChatDialog(false);
+    };
+
+
+
     // Main return for SideRoomComponent
     return (
         <>
@@ -3624,6 +3743,25 @@ const SideRoomComponent: React.FC = () => {
                     </DialogActions>
                 </Dialog>
 
+                {/* Join Server Chat Room Dialog */}
+                <Dialog
+                    open={showJoinRoomChatDialog}
+                    onClose={handleDeclineServerChat}
+                    aria-labelledby="join-room-chat-dialog-title"
+                >
+                    <DialogTitle id="join-room-chat-dialog-title">Join Room Chat?</DialogTitle>
+                    <DialogContent>
+                        <Typography variant="body1">
+                            {ownerData?.username || "This creator"} has a server chat room: "{serverChatRoom?.name}". Would you like to join it to receive updates and connect with other followers?
+                        </Typography>
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={handleDeclineServerChat}>Not Now</Button>
+                        <Button onClick={handleJoinServerChat} variant="contained" color="primary">
+                            Join Chat Room
+                        </Button>
+                    </DialogActions>
+                </Dialog>
                         </Box>
         </>
     );

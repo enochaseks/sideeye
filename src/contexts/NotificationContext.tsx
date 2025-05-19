@@ -6,7 +6,7 @@ import { useAuth } from './AuthContext';
 // Define the structure of a notification
 export interface Notification {
   id: string;
-  type: 'like' | 'comment' | 'follow' | 'mention' | 'tag' | 'room_invite' | string; // Allow custom types
+  type: 'like' | 'comment' | 'follow' | 'mention' | 'tag' | 'room_invite' | 'room_created' | string; // Allow custom types
   senderId: string;
   senderName?: string; // Optional: Store sender's name directly
   senderAvatar?: string; // Optional: Store sender's avatar URL directly
@@ -15,6 +15,7 @@ export interface Notification {
   postId?: string; // Link to the relevant post/vibit
   commentId?: string; // Link to the relevant comment
   roomId?: string; // Link to the relevant side-room
+  roomName?: string; // Name of the room (for room notifications)
   isRead: boolean;
   createdAt: Date; // Use Firestore Timestamp, convert on fetch
 }
