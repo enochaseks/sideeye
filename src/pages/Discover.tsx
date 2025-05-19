@@ -1471,7 +1471,8 @@ const Discover: React.FC = () => {
             <Tabs
               value={activeTab}
               onChange={handleMainTabChange}
-              variant="standard"
+              variant={isMobile ? "scrollable" : "standard"}
+              scrollButtons={isMobile ? "auto" : false}
               sx={{
                 mb: 2,
                 '& .MuiTabs-indicator': {
