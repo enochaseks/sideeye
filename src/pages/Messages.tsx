@@ -871,10 +871,11 @@ const Messages: React.FC = () => {
           <TabPanel value={tabValue} index={2}>
             <Box sx={{ p: 2, mb: 3, bgcolor: 'background.paper', borderRadius: 1 }}>
               <Typography variant="h6" gutterBottom>
-                Server Chat Rooms
+                Rooms + Server Chat
               </Typography>
               <Typography variant="body2" color="text.secondary" paragraph>
-                Create a room to share announcements, live updates, and polls with your followers. Great for creators who want to engage with their audience.
+                Create a room to share announcements, live updates, and polls with your followers. Great for creators who want to engage with their audience, 
+                or for anyone who wants to create a community, you can also join other rooms inside the rooms + section.
               </Typography>
               <Button
                 variant="contained"

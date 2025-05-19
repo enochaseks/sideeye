@@ -27,6 +27,10 @@
 - Improved the padding in the chat messages 
 - Removed the auto reply glitch
 - Fixed the search function in the discover page
+- New Rooms + Server for users to keep their followers updated
+- Live Video added in the sideroom component
+- New tabs added in the discover page 
+- Updated the Rooms + tab
 
 ## Version 1.0.0
 - Initial release of SideEye 

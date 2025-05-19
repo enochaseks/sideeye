@@ -40,7 +40,9 @@ import {
   Message as MessageIcon,
   People as PeopleIcon,
   Public as PublicIcon,
-  VerifiedUser as VerifiedUserIcon
+  VerifiedUser as VerifiedUserIcon,
+  EmojiEvents as TrophyIcon,
+  VisibilityOutlined as EyeIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -84,6 +86,9 @@ interface UserProfile {
   isActive?: boolean;
   isVerified?: boolean;
   email?: string;
+  isTopHost?: boolean;
+  totalViews?: number;
+  activeRooms?: number;
 }
 
 interface Room {
@@ -103,6 +108,7 @@ interface Room {
   activeUsers: number;
   isLive: boolean;
   thumbnailUrl?: string; // Add thumbnailUrl
+  isPopular?: boolean;
 }
 
 interface FirestoreUser extends DocumentData {
@@ -153,6 +159,16 @@ const Discover: React.FC = () => {
   const [showJoinRoomChatDialog, setShowJoinRoomChatDialog] = useState<boolean>(false);
   const [serverChatRoom, setServerChatRoom] = useState<{id: string, name: string} | null>(null);
   const [ownerData, setOwnerData] = useState<{username?: string} | null>(null);
+  const [topHosts, setTopHosts] = useState<UserProfile[]>([]);
+  const [filteredTopHosts, setFilteredTopHosts] = useState<UserProfile[]>([]);
+  const [topHostSearchQuery, setTopHostSearchQuery] = useState('');
+  const [selectedTopHostCategory, setSelectedTopHostCategory] = useState<string>('All');
+  const [isSearchingTopHosts, setIsSearchingTopHosts] = useState(false);
+  const [popularRooms, setPopularRooms] = useState<Room[]>([]);
+  const [filteredPopularRooms, setFilteredPopularRooms] = useState<Room[]>([]);
+  const [popularRoomSearchQuery, setPopularRoomSearchQuery] = useState('');
+  const [selectedPopularRoomCategory, setSelectedPopularRoomCategory] = useState<string>('All');
+  const [isSearchingPopularRooms, setIsSearchingPopularRooms] = useState(false);
 
   const categories = [
     'ASMR',
@@ -285,7 +301,8 @@ const Discover: React.FC = () => {
               maxMembers: room.maxMembers || 100,
               activeUsers: room.activeUsers || 0,
               isLive: room.isLive || false,
-              thumbnailUrl: room.thumbnailUrl || ''
+              thumbnailUrl: room.thumbnailUrl || '',
+              isPopular: (room.activeUsers || 0) >= 200
             } as Room;
           } catch (error) {
             console.error(`Error fetching owner data for room ${room.id}:`, error);
@@ -294,8 +311,18 @@ const Discover: React.FC = () => {
         })
       );
 
-      // Filter out any null rooms from failed owner fetches
-      setRooms(roomsWithOwnerData.filter(room => room !== null) as Room[]);
+      // Filter out any null rooms from failed owner fetches and sort by popularity
+      const validRooms = roomsWithOwnerData
+        .filter((room): room is Room => room !== null)
+        .sort((a, b) => {
+          // First sort by popularity
+          if (a.isPopular && !b.isPopular) return -1;
+          if (!a.isPopular && b.isPopular) return 1;
+          // Then sort by active users
+          return (b.activeUsers || 0) - (a.activeUsers || 0);
+        });
+
+      setRooms(validRooms);
     } catch (error) {
       console.error('Error fetching rooms:', error);
     } finally {
@@ -303,10 +330,138 @@ const Discover: React.FC = () => {
     }
   };
 
-  // Refresh follow status whenever the component is displayed or focused
+  // Add new function to fetch top hosts
+  const fetchTopHosts = async () => {
+    try {
+      const roomsRef = collection(db, 'sideRooms');
+      const roomsSnapshot = await getDocs(roomsRef);
+      
+      // Create a map to track host stats
+      const hostStats = new Map<string, { totalViews: number, activeRooms: number }>();
+      
+      // Process all rooms to get host statistics
+      roomsSnapshot.docs.forEach(doc => {
+        const roomData = doc.data();
+        const ownerId = roomData.ownerId;
+        const views = roomData.activeUsers || 0;
+        
+        if (hostStats.has(ownerId)) {
+          const stats = hostStats.get(ownerId)!;
+          stats.totalViews += views;
+          stats.activeRooms += 1;
+        } else {
+          hostStats.set(ownerId, { totalViews: views, activeRooms: 1 });
+        }
+      });
+      
+      // Filter hosts with 200+ views
+      const topHostIds = Array.from(hostStats.entries())
+        .filter(([_, stats]) => stats.totalViews >= 200)
+        .map(([id]) => id);
+      
+      // Fetch user data for top hosts
+      const topHostsData = await Promise.all(
+        topHostIds.map(async (hostId) => {
+          const userRef = doc(db, 'users', hostId);
+          const userSnap = await getDoc(userRef);
+          
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            const stats = hostStats.get(hostId)!;
+            
+            return {
+              id: hostId,
+              username: userData.username || '',
+              name: userData.name || '',
+              profilePic: userData.profilePic,
+              bio: userData.bio,
+              isPublic: userData.isPublic ?? true,
+              isAuthenticated: userData.isAuthenticated,
+              createdAt: userData.createdAt,
+              isActive: userData.isActive,
+              isVerified: true,
+              isTopHost: true,
+              totalViews: stats.totalViews,
+              activeRooms: stats.activeRooms
+            } as UserProfile;
+          }
+          return null;
+        })
+      );
+      
+      setTopHosts(topHostsData.filter(Boolean) as UserProfile[]);
+    } catch (error) {
+      console.error('Error fetching top hosts:', error);
+    }
+  };
+
+  // Add new function to fetch popular rooms
+  const fetchPopularRooms = async () => {
+    try {
+      const roomsRef = collection(db, 'sideRooms');
+      const q = firestoreQuery(
+        roomsRef,
+        where('deleted', '!=', true)
+      );
+      const querySnapshot = await getDocs(q);
+
+      const roomsData = querySnapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data
+          } as FirestoreRoom;
+        })
+        .filter(room => (room.activeUsers || 0) >= 200);
+
+      // Process the filtered rooms
+      const roomsWithOwnerData = await Promise.all(
+        roomsData.map(async room => {
+          try {
+            const ownerDoc = await getDoc(doc(db, 'users', room.ownerId));
+            const ownerData = ownerDoc.exists() ? ownerDoc.data() : null;
+
+            return {
+              id: room.id,
+              name: room.name || '',
+              description: room.description || '',
+              memberCount: room.memberCount || 0,
+              shareCount: 0,
+              isPrivate: room.isPrivate || false,
+              createdAt: room.createdAt?.toDate() || new Date(),
+              creatorName: ownerData?.username || 'Unknown',
+              creatorId: room.ownerId,
+              creatorAvatar: ownerData?.profilePic || '',
+              tags: room.tags || [],
+              lastActive: room.lastActive?.toDate() || new Date(),
+              maxMembers: room.maxMembers || 100,
+              activeUsers: room.activeUsers || 0,
+              isLive: room.isLive || false,
+              thumbnailUrl: room.thumbnailUrl || '',
+              isPopular: true
+            } as Room;
+          } catch (error) {
+            console.error(`Error fetching owner data for room ${room.id}:`, error);
+            return null;
+          }
+        })
+      );
+
+      const validRooms = roomsWithOwnerData.filter(room => room !== null) as Room[];
+      setPopularRooms(validRooms);
+      setFilteredPopularRooms(validRooms);
+    } catch (error) {
+      console.error('Error fetching popular rooms:', error);
+    }
+  };
+
+  // Update useEffect to include fetchTopHosts and fetchPopularRooms
   useEffect(() => {
     fetchDefaultUsers();
     fetchRooms();
+    fetchTopHosts();
+    fetchPopularRooms();
     
     // Update following status and pending requests
     const updateFollowStatus = async () => {
@@ -1022,6 +1177,106 @@ const Discover: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser?.uid, db, pendingRequests]);
 
+  // Add new function to search top hosts
+  const searchTopHosts = async (query: string) => {
+    if (!query.trim()) {
+      setFilteredTopHosts(topHosts);
+      return;
+    }
+
+    setIsSearchingTopHosts(true);
+    try {
+      const searchTerm = query.toLowerCase();
+      const usersRef = collection(db, 'users');
+      
+      // Search by username or name
+      const q = firestoreQuery(
+        usersRef,
+        where('username_lower', '>=', searchTerm),
+        where('username_lower', '<=', searchTerm + '\uf8ff'),
+        limit(20)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const searchResults = querySnapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }))
+        .filter(user => topHosts.some(host => host.id === user.id));
+
+      setFilteredTopHosts(searchResults as UserProfile[]);
+    } catch (error) {
+      console.error('Error searching top hosts:', error);
+      setFilteredTopHosts([]);
+    } finally {
+      setIsSearchingTopHosts(false);
+    }
+  };
+
+  // Add function to filter top hosts by category
+  const filterTopHostsByCategory = (category: string) => {
+    setSelectedTopHostCategory(category);
+    
+    if (category === 'All') {
+      setFilteredTopHosts(topHosts);
+      return;
+    }
+
+    const filtered = topHosts.filter(host => {
+      // Get the host's rooms and check if any match the category
+      const hostRooms = rooms.filter(room => room.creatorId === host.id);
+      return hostRooms.some(room => room.tags?.includes(category));
+    });
+
+    setFilteredTopHosts(filtered);
+  };
+
+  // Update useEffect to initialize filteredTopHosts
+  useEffect(() => {
+    setFilteredTopHosts(topHosts);
+  }, [topHosts]);
+
+  // Add function to search popular rooms
+  const searchPopularRooms = async (query: string) => {
+    if (!query.trim()) {
+      setFilteredPopularRooms(popularRooms);
+      return;
+    }
+
+    setIsSearchingPopularRooms(true);
+    try {
+      const searchTerm = query.toLowerCase();
+      const filtered = popularRooms.filter(room => 
+        room.name.toLowerCase().includes(searchTerm) ||
+        room.description.toLowerCase().includes(searchTerm) ||
+        room.creatorName.toLowerCase().includes(searchTerm)
+      );
+      setFilteredPopularRooms(filtered);
+    } catch (error) {
+      console.error('Error searching popular rooms:', error);
+      setFilteredPopularRooms([]);
+    } finally {
+      setIsSearchingPopularRooms(false);
+    }
+  };
+
+  // Add function to filter popular rooms by category
+  const filterPopularRoomsByCategory = (category: string) => {
+    setSelectedPopularRoomCategory(category);
+    
+    if (category === 'All') {
+      setFilteredPopularRooms(popularRooms);
+      return;
+    }
+
+    const filtered = popularRooms.filter(room => 
+      room.tags?.includes(category)
+    );
+
+    setFilteredPopularRooms(filtered);
+  };
+
   if (loading && !isSearchView) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
@@ -1211,7 +1466,7 @@ const Discover: React.FC = () => {
             </ClickAwayListener>
           </Box>
 
-          {/* Main Tabs - Rooms vs People */}
+          {/* Main Tabs - Rooms vs People vs Top Hosts vs Popular Rooms */}
           {!isSearchView && (
             <Tabs
               value={activeTab}
@@ -1226,6 +1481,8 @@ const Discover: React.FC = () => {
             >
               <Tab icon={<PublicIcon />} label="ROOMS" iconPosition="start" />
               <Tab icon={<PeopleIcon />} label="PEOPLE" iconPosition="start" />
+              <Tab icon={<TrophyIcon />} label="TOP HOSTS" iconPosition="start" />
+              <Tab icon={<WhatshotIcon />} label="POPULAR" iconPosition="start" />
             </Tabs>
           )}
 
@@ -1407,22 +1664,41 @@ const Discover: React.FC = () => {
                               width: '100%'
                             }}
                           />
-                          {room.isLive && (
-                            <Chip
-                              label="LIVE"
-                              color="error"
-                              size="small"
-                              sx={{ 
-                                position: 'absolute',
-                                top: 12,
-                                right: 12,
-                                fontWeight: 'bold',
-                                fontSize: isMobile ? '0.75rem' : '0.875rem',
-                                height: 'auto',
-                                padding: '6px 12px'
-                              }}
-                            />
-                          )}
+                          <Box sx={{ 
+                            position: 'absolute',
+                            top: 12,
+                            right: 12,
+                            display: 'flex',
+                            gap: 1
+                          }}>
+                            {room.isPopular && (
+                              <Chip
+                                label="Popular"
+                                color="warning"
+                                size="small"
+                                icon={<WhatshotIcon />}
+                                sx={{ 
+                                  fontWeight: 'bold',
+                                  fontSize: isMobile ? '0.75rem' : '0.875rem',
+                                  height: 'auto',
+                                  padding: '6px 12px'
+                                }}
+                              />
+                            )}
+                            {room.isLive && (
+                              <Chip
+                                label="LIVE"
+                                color="error"
+                                size="small"
+                                sx={{ 
+                                  fontWeight: 'bold',
+                                  fontSize: isMobile ? '0.75rem' : '0.875rem',
+                                  height: 'auto',
+                                  padding: '6px 12px'
+                                }}
+                              />
+                            )}
+                          </Box>
                         </Box>
                         <CardContent sx={{ 
                           flexGrow: 1,
@@ -1465,7 +1741,7 @@ const Discover: React.FC = () => {
                             flexWrap: 'wrap'
                           }}>
                             <Chip
-                              icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
+                              icon={<EyeIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
                               label={`${room.activeUsers || 0} viewing`}
                               color="primary"
                               variant="outlined"
@@ -1525,7 +1801,7 @@ const Discover: React.FC = () => {
             )}
           </Box>
         ) : (
-          // Show either Rooms (activeTab === 0) or People (activeTab === 1)
+          // Show either Rooms (activeTab === 0), People (activeTab === 1), Top Hosts (activeTab === 2), or Popular Rooms (activeTab === 3)
           activeTab === 0 ? (
             // Rooms tab content
             <Grid container spacing={3}>
@@ -1563,22 +1839,41 @@ const Discover: React.FC = () => {
                           width: '100%'
                         }}
                       />
-                      {room.isLive && (
-                        <Chip
-                          label="LIVE"
-                          color="error"
-                          size="small"
-                          sx={{ 
-                            position: 'absolute',
-                            top: 12,
-                            right: 12,
-                            fontWeight: 'bold',
-                            fontSize: isMobile ? '0.75rem' : '0.875rem',
-                            height: 'auto',
-                            padding: '6px 12px'
-                          }}
-                        />
-                      )}
+                      <Box sx={{ 
+                        position: 'absolute',
+                        top: 12,
+                        right: 12,
+                        display: 'flex',
+                        gap: 1
+                      }}>
+                        {room.isPopular && (
+                          <Chip
+                            label="Popular"
+                            color="warning"
+                            size="small"
+                            icon={<WhatshotIcon />}
+                            sx={{ 
+                              fontWeight: 'bold',
+                              fontSize: isMobile ? '0.75rem' : '0.875rem',
+                              height: 'auto',
+                              padding: '6px 12px'
+                            }}
+                          />
+                        )}
+                        {room.isLive && (
+                          <Chip
+                            label="LIVE"
+                            color="error"
+                            size="small"
+                            sx={{ 
+                              fontWeight: 'bold',
+                              fontSize: isMobile ? '0.75rem' : '0.875rem',
+                              height: 'auto',
+                              padding: '6px 12px'
+                            }}
+                          />
+                        )}
+                      </Box>
                     </Box>
                     <CardContent sx={{ 
                       flexGrow: 1,
@@ -1621,7 +1916,7 @@ const Discover: React.FC = () => {
                         flexWrap: 'wrap'
                       }}>
                         <Chip
-                          icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
+                          icon={<EyeIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
                           label={`${room.activeUsers || 0} viewing`}
                           color="primary"
                           variant="outlined"
@@ -1629,7 +1924,7 @@ const Discover: React.FC = () => {
                             height: 'auto',
                             padding: '8px 12px',
                             '& .MuiChip-label': {
-                              padding: '0 4px',
+                              padding: '1 4px',
                               fontSize: isMobile ? '0.875rem' : '1rem'
                             }
                           }}
@@ -1666,7 +1961,7 @@ const Discover: React.FC = () => {
                 </Grid>
               ))}
             </Grid>
-          ) : (
+          ) : activeTab === 1 ? (
             // People tab content
             <Box sx={{ mt: 2 }}>
               {loading ? (
@@ -1786,6 +2081,419 @@ const Discover: React.FC = () => {
                   <Typography variant="h6" color="text.secondary">
                     No users found
                   </Typography>
+                </Box>
+              )}
+            </Box>
+          ) : activeTab === 2 ? (
+            // Top Hosts tab content
+            <Box sx={{ mt: 2 }}>
+              {/* Search and Filter Section */}
+              <Box sx={{ mb: 3 }}>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      placeholder="Search top hosts..."
+                      value={topHostSearchQuery}
+                      onChange={(e) => {
+                        setTopHostSearchQuery(e.target.value);
+                        searchTopHosts(e.target.value);
+                      }}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon />
+                          </InputAdornment>
+                        ),
+                      }}
+                      sx={{ 
+                        backgroundColor: 'background.paper',
+                        borderRadius: 1,
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 1,
+                        }
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Tabs
+                      value={selectedTopHostCategory}
+                      onChange={(_, newValue) => filterTopHostsByCategory(newValue)}
+                      variant="scrollable"
+                      scrollButtons="auto"
+                      aria-label="top host categories"
+                      sx={{
+                        borderBottom: 1,
+                        borderColor: 'divider'
+                      }}
+                    >
+                      <Tab label="All" value="All" />
+                      {categories.map((category) => (
+                        <Tab key={category} label={category} value={category} />
+                      ))}
+                    </Tabs>
+                  </Grid>
+                </Grid>
+              </Box>
+
+              {loading || isSearchingTopHosts ? (
+                <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
+                  <CircularProgress />
+                </Box>
+              ) : filteredTopHosts.length > 0 ? (
+                <List>
+                  {filteredTopHosts.map((host, index) => (
+                    <React.Fragment key={host.id}>
+                      <ListItem 
+                        sx={{ 
+                          py: 3,
+                          px: 2,
+                          cursor: 'pointer',
+                          '&:hover': {
+                            backgroundColor: 'action.hover'
+                          },
+                          borderRadius: 1,
+                          mb: 1,
+                          position: 'relative'
+                        }}
+                      >
+                        <ListItemAvatar>
+                          <Avatar 
+                            src={host.isActive === false ? undefined : host.profilePic}
+                            alt={host.name}
+                            sx={{ 
+                              width: 60, 
+                              height: 60, 
+                              mr: 2,
+                              cursor: 'pointer',
+                              '&:hover': {
+                                opacity: 0.8
+                              }
+                            }}
+                            onClick={() => navigate(`/profile/${host.id}`)}
+                          >
+                            {(host.isActive !== false && !host.profilePic) ? host.name?.[0]?.toUpperCase() : null}
+                          </Avatar>
+                        </ListItemAvatar>
+                        <ListItemText
+                          primary={
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Typography variant="subtitle1" component="div" sx={{ fontWeight: 600 }}>
+                                {host.name}
+                                {host.isVerified && (
+                                  <VerifiedUserIcon 
+                                    sx={{ 
+                                      ml: 0.5, 
+                                      color: 'primary.main',
+                                      fontSize: '1rem',
+                                      verticalAlign: 'middle'
+                                    }} 
+                                  />
+                                )}
+                              </Typography>
+                              <Chip
+                                label="Top Host"
+                                color="warning"
+                                size="small"
+                                icon={<TrophyIcon />}
+                                sx={{ 
+                                  height: 'auto',
+                                  '& .MuiChip-label': {
+                                    px: 1
+                                  }
+                                }}
+                              />
+                            </Box>
+                          }
+                          secondary={
+                            <>
+                              <Typography variant="body2" component="span" color="text.secondary">
+                                @{host.username}
+                              </Typography>
+                              <Box sx={{ mt: 1, display: 'flex', gap: 2 }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  {host.totalViews?.toLocaleString()} total views
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                  {host.activeRooms} active rooms
+                                </Typography>
+                              </Box>
+                              {host.bio && (
+                                <Typography 
+                                  variant="body2" 
+                                  component="span"
+                                  color="text.secondary"
+                                  sx={{
+                                    mt: 0.5,
+                                    display: 'block',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden'
+                                  }}
+                                >
+                                  {host.bio}
+                                </Typography>
+                              )}
+                            </>
+                          }
+                          sx={{ ml: 2 }}
+                        />
+                        {currentUser && host.id !== currentUser.uid && (
+                          <ListItemSecondaryAction sx={{ right: 16 }}>
+                            <Button
+                              variant={following.has(host.id) ? "contained" : pendingRequests.has(host.id) ? "contained" : "outlined"}
+                              size="small"
+                              startIcon={following.has(host.id) || pendingRequests.has(host.id) ? null : <PersonAddIcon />}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!pendingRequests.has(host.id)) {
+                                  handleFollow(host.id);
+                                }
+                              }}
+                              color={pendingRequests.has(host.id) ? "secondary" : "primary"}
+                              disabled={pendingRequests.has(host.id)}
+                            >
+                              {following.has(host.id) ? "Following" : pendingRequests.has(host.id) ? "Requested" : "Follow"}
+                            </Button>
+                          </ListItemSecondaryAction>
+                        )}
+                      </ListItem>
+                      {index < filteredTopHosts.length - 1 && <Divider sx={{ my: 1 }} />}
+                    </React.Fragment>
+                  ))}
+                </List>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <Typography variant="h6" color="text.secondary">
+                    {topHostSearchQuery ? 'No matching top hosts found' : 'No top hosts found'}
+                  </Typography>
+                  {topHostSearchQuery && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      Try different keywords or check your spelling
+                    </Typography>
+                  )}
+                </Box>
+              )}
+            </Box>
+          ) : (
+            // Popular Rooms tab content
+            <Box sx={{ mt: 2 }}>
+              {/* Search and Filter Section */}
+              <Box sx={{ mb: 3 }}>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      placeholder="Search popular rooms..."
+                      value={popularRoomSearchQuery}
+                      onChange={(e) => {
+                        setPopularRoomSearchQuery(e.target.value);
+                        searchPopularRooms(e.target.value);
+                      }}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon />
+                          </InputAdornment>
+                        ),
+                      }}
+                      sx={{ 
+                        backgroundColor: 'background.paper',
+                        borderRadius: 1,
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 1,
+                        }
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Tabs
+                      value={selectedPopularRoomCategory}
+                      onChange={(_, newValue) => filterPopularRoomsByCategory(newValue)}
+                      variant="scrollable"
+                      scrollButtons="auto"
+                      aria-label="popular room categories"
+                      sx={{
+                        borderBottom: 1,
+                        borderColor: 'divider'
+                      }}
+                    >
+                      <Tab label="All" value="All" />
+                      {categories.map((category) => (
+                        <Tab key={category} label={category} value={category} />
+                      ))}
+                    </Tabs>
+                  </Grid>
+                </Grid>
+              </Box>
+
+              {loading || isSearchingPopularRooms ? (
+                <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
+                  <CircularProgress />
+                </Box>
+              ) : filteredPopularRooms.length > 0 ? (
+                <Grid container spacing={3}>
+                  {filteredPopularRooms.map((room) => (
+                    <Grid item xs={12} sm={6} md={4} key={room.id}>
+                      <Card 
+                        sx={{ 
+                          display: 'flex',
+                          flexDirection: 'column',
+                          cursor: 'pointer',
+                          borderRadius: 2,
+                          overflow: 'hidden',
+                          boxShadow: theme.shadows[3],
+                          '&:hover': {
+                            transform: 'translateY(-4px)',
+                            transition: 'transform 0.2s ease-in-out',
+                            boxShadow: theme.shadows[6]
+                          }
+                        }}
+                        onClick={() => handleRoomClick(room.id)}
+                      >
+                        <Box sx={{ position: 'relative' }}>
+                          <CardMedia
+                            component="img"
+                            height={isMobile ? "220" : "280"}
+                            image={room.thumbnailUrl || room.creatorAvatar || 'https://placehold.co/600x400/333/666?text=Room'}
+                            alt={room.name}
+                            sx={{ 
+                              objectFit: 'cover',
+                              width: '100%'
+                            }}
+                          />
+                          <Box sx={{ 
+                            position: 'absolute',
+                            top: 12,
+                            right: 12,
+                            display: 'flex',
+                            gap: 1
+                          }}>
+                            <Chip
+                              label="Popular"
+                              color="warning"
+                              size="small"
+                              icon={<WhatshotIcon />}
+                              sx={{ 
+                                fontWeight: 'bold',
+                                fontSize: isMobile ? '0.75rem' : '0.875rem',
+                                height: 'auto',
+                                padding: '6px 12px'
+                              }}
+                            />
+                            {room.isLive && (
+                              <Chip
+                                label="LIVE"
+                                color="error"
+                                size="small"
+                                sx={{ 
+                                  fontWeight: 'bold',
+                                  fontSize: isMobile ? '0.75rem' : '0.875rem',
+                                  height: 'auto',
+                                  padding: '6px 12px'
+                                }}
+                              />
+                            )}
+                          </Box>
+                        </Box>
+                        <CardContent sx={{ 
+                          flexGrow: 1,
+                          p: 3,
+                          '&:last-child': { pb: 3 }
+                        }}>
+                          <Box sx={{ mb: 2 }}>
+                            <Typography 
+                              gutterBottom 
+                              variant={isMobile ? "h6" : "h5"} 
+                              component="h2" 
+                              noWrap
+                              sx={{ 
+                                fontWeight: 600,
+                                mb: 1
+                              }}
+                            >
+                              {room.name}
+                            </Typography>
+                            <Typography 
+                              variant="body1" 
+                              color="text.secondary" 
+                              sx={{ 
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                                mb: 2,
+                                lineHeight: 1.5
+                              }}
+                            >
+                              {room.description}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 1.5, 
+                            mb: 2,
+                            flexWrap: 'wrap'
+                          }}>
+                            <Chip
+                              icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
+                              label={`${room.activeUsers || 0} viewing`}
+                              color="primary"
+                              variant="outlined"
+                              sx={{ 
+                                height: 'auto',
+                                padding: '8px 12px',
+                                '& .MuiChip-label': {
+                                  padding: '0 4px',
+                                  fontSize: isMobile ? '0.875rem' : '1rem'
+                                }
+                              }}
+                            />
+                            {room.isPrivate && (
+                              <Chip
+                                label="Private"
+                                color="secondary"
+                                sx={{ 
+                                  height: 'auto',
+                                  padding: '8px 12px',
+                                  '& .MuiChip-label': {
+                                    padding: '0 4px',
+                                    fontSize: isMobile ? '0.875rem' : '1rem'
+                                  }
+                                }}
+                              />
+                            )}
+                          </Box>
+                          <Typography 
+                            variant="body2" 
+                            color="text.secondary"
+                            sx={{ 
+                              fontSize: isMobile ? '0.75rem' : '0.875rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 0.5
+                            }}
+                          >
+                            Created by {room.creatorName || 'Anonymous'} • {formatTimestamp(room.lastActive)}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <Typography variant="h6" color="text.secondary">
+                    {popularRoomSearchQuery ? 'No matching popular rooms found' : 'No popular rooms found'}
+                  </Typography>
+                  {popularRoomSearchQuery && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      Try different keywords or check your spelling
+                    </Typography>
+                  )}
                 </Box>
               )}
             </Box>

@@ -22,10 +22,11 @@ const PrivacyPolicy: React.FC = () => {
           <ul>
             <li>Account information (username, email, display name)</li>
             <li>Profile information (bio, profile picture, custom avatars)</li>
-            <li>Audio content from Side Rooms</li>
+            <li>Audio and video content from Side Rooms</li>
             <li>Connection data (followers, following relationships)</li>
             <li>Messages and communications between users</li>
             <li>Sade AI chat history and interactions</li>
+            <li>Server chat history and interactions</li>
             <li>Usage information and interaction with the platform</li>
           </ul>
         </Box>
@@ -60,6 +61,7 @@ const PrivacyPolicy: React.FC = () => {
           <ul>
             <li><strong>With Other Users:</strong> Your profile information, Side Rooms activity, and messages are shared with other users according to your privacy settings.</li>
             <li><strong>Service Providers:</strong> We may share information with third-party vendors who provide services on our behalf, including audio processing and AI functionality.</li>
+            <li><strong>Server Chat:</strong> We may share your server chat history and interactions with other users in the server.</li>
             <li><strong>AI Development:</strong> We may use anonymized Sade AI interactions to improve our AI systems and services.</li>
             <li><strong>Legal Requirements:</strong> We may disclose information if required by law or to protect rights, safety, and security.</li>
             <li><strong>Business Transfers:</strong> In connection with a merger, acquisition, or sale of assets.</li>
@@ -87,8 +89,10 @@ const PrivacyPolicy: React.FC = () => {
             <li>Correct inaccurate information</li>
             <li>Delete your account and associated data</li>
             <li>Delete audio content from Side Rooms</li>
+            <li>Delete server chat history and interactions</li>
             <li>Request deletion of message history</li>
             <li>Request deletion of Sade AI chat history</li>
+            <li>Request deletion of server chat history</li>
             <li>Control your privacy settings and follower relationships</li>
             <li>Restrict processing of your information</li>
             <li>Request a data export of your content</li>
@@ -101,7 +105,7 @@ const PrivacyPolicy: React.FC = () => {
             6. Content Removal and Retention
           </Typography>
           <Typography variant="body1" paragraph>
-            When you delete content such as Side Room audio, messages, or Sade AI interactions, it may remain in our backup systems for a limited time. Deleted content is moved to a temporary storage for 24 hours before permanent deletion, allowing for potential recovery if accidentally deleted. For audio content and AI interactions, we may retain non-personally identifiable analytics data even after deletion to improve our services.
+            When you delete content such as Side Room audio/video, messages, or Sade AI interactions, it may remain in our backup systems for a limited time. Deleted content is moved to a temporary storage for 24 hours before permanent deletion, allowing for potential recovery if accidentally deleted. For audio/video content and AI interactions, we may retain non-personally identifiable analytics data even after deletion to improve our services.
           </Typography>
         </Box>
 
@@ -125,13 +129,14 @@ const PrivacyPolicy: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            9. Audio Content Information
+            9. Audio and Video Content Information
           </Typography>
           <Typography variant="body1" paragraph>
             When you participate in Side Rooms, we collect:
           </Typography>
           <ul>
             <li><strong>Audio Content:</strong> The audio data from your participation</li>
+            <li><strong>Video Content:</strong> The video data from your participation</li>
             <li><strong>Metadata:</strong> Information such as duration, timestamps, and participant information</li>
             <li><strong>User Association:</strong> Connection between your account and the audio session</li>
             <li><strong>Engagement Data:</strong> Participation statistics and interaction data</li>

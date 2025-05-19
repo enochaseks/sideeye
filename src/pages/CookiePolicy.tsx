@@ -19,7 +19,7 @@ const CookiePolicy: React.FC = () => {
           <Typography variant="body1" paragraph>
             We use cookies and similar technologies to provide, improve, and secure our services. This Cookie Policy explains 
             how we use cookies, what types we use, their purposes, and how you can control them. These technologies help us 
-            deliver our audio-based features, including Side Rooms, and ensure a smooth user experience.
+            deliver our audio and video-based features, including Side Rooms, Rooms + Server Chat and ensure a smooth user experience.
           </Typography>
         </Box>
 
@@ -67,6 +67,9 @@ const CookiePolicy: React.FC = () => {
             <li>Load balancing cookies to distribute traffic to our servers</li>
             <li>Audio quality monitoring cookies to ensure optimal performance</li>
             <li>Audio processing cookies to process audio content</li>
+            <li>Video processing cookies to process video content</li>
+            <li>Server chat processing cookies to process server chat content</li>
+            <li>Rooms processing cookies to process rooms content</li>
             <li>Sade AI cookies to process chat history and allow our team to monitor AI interactions for safety, quality assurance, and improvement purposes</li>
           </ul>
           
@@ -107,6 +110,10 @@ const CookiePolicy: React.FC = () => {
             <li><strong>sideeye_auth</strong>: Maintains login state and authentication details</li>
             <li><strong>sideeye_analytics</strong>: Collects anonymous usage data to improve our services</li>
             <li><strong>sideeye_audio</strong>: Stores audio quality preferences and device settings</li>
+            <li><strong>sideeye_video</strong>: Stores video quality preferences and device settings</li>
+            <li><strong>sideeye_server_chat</strong>: Stores server chat history and device settings</li>
+            <li><strong>sideeye_rooms</strong>: Stores rooms history and device settings</li>
+            <li><strong>sideeye_sade_ai</strong>: Stores Sade AI chat history and device settings</li>
           </ul>
         </Box>
 

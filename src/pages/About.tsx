@@ -83,8 +83,8 @@ const About: React.FC = () => {
                   fontSize: { xs: '1.25rem', md: '1.5rem' }
                 }}
               >
-                Create or join audio-based discussion rooms where you can connect with other users in real-time. 
-                Side Rooms provide a space for meaningful conversations and community building through voice interactions. 
+                Create or join audio/video-based discussion rooms where you can connect with other users in real-time. 
+                Side Rooms provide a space for meaningful conversations and community building through voice/video interactions. 
                 These rooms can be public or private, with customizable settings for membership and moderation. 
                 Each room serves as a dedicated space for focused discussions around specific topics or interests, 
                 allowing users to engage in authentic conversations with like-minded individuals.
@@ -110,10 +110,14 @@ const About: React.FC = () => {
                   fontSize: { xs: '1.25rem', md: '1.5rem' }
                 }}
               >
-                Explore new content, find interesting users to follow, and discover trending Side Rooms through 
-                our Discover feature. This curated exploration space helps you find content aligned with your 
-                interests and introduces you to new communities within the platform. Discover makes it easy to 
-                expand your network and find engaging discussions to join.
+                Discover is your gateway to exploring the SideEye community. Find trending Side Rooms, interesting users, Top Hosts, and Popular Rooms all in one place. The Discover page features:
+                <ul style={{marginTop: '1em', marginBottom: '1em'}}>
+                  <li><b>Trending Side Rooms:</b> Explore rooms that are currently active and popular, tailored to your interests.</li>
+                  <li><b>People:</b> Find and connect with new users, follow interesting profiles, and grow your network.</li>
+                  <li><b>Top Hosts:</b> See a curated list of the most active and engaging hosts, ranked by their total views and community participation.</li>
+                  <li><b>Popular Rooms:</b> Join rooms with the highest activity and engagement, perfect for lively discussions and meeting new people.</li>
+                </ul>
+                The Discover feature makes it easy to expand your network, join engaging conversations, and become part of new communities within the platform.
               </Typography>
             </Box>
             <Box>
@@ -152,6 +156,17 @@ const About: React.FC = () => {
                   color: 'primary.main'
                 }}
               >
+                Rooms +
+              </Typography>
+              <Typography 
+                variant="h4" 
+                sx={{ 
+                  lineHeight: 1.8,
+                  color: 'text.secondary',
+                  fontSize: { xs: '1.25rem', md: '1.5rem' }
+                }}
+              >
+                Rooms + is an advanced server chat feature that allows you to create dedicated chat rooms for your followers and community. With Rooms +, you can share updates, post announcements, and create interactive polls to keep your audience engaged and informed. Followers can join your server to participate in discussions, receive notifications about live sessions, and connect with other members who share similar interests. You can also join other servers to expand your network and foster meaningful interactions across the platform. Rooms + is designed to help you build and manage a vibrant, interactive community on SideEye.
               </Typography>
             </Box>
             <Box>

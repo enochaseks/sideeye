@@ -178,7 +178,7 @@ const SafetyInfo: React.FC = () => {
         </AccordionSummary>
         <AccordionDetails>
           <Typography paragraph>
-            Our Side Room audio feature has specific guidelines to ensure a safe and enjoyable experience for all users:
+            Our Side Room audio and video features have specific guidelines to ensure a safe and enjoyable experience for all users:
           </Typography>
           <List>
             <ListItem>
@@ -187,7 +187,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Content Ownership"
-                secondary="Only share audio content that you've created or have permission to use. Respect copyright and intellectual property rights"
+                secondary="Only share audio and video content that you've created or have permission to use. Respect copyright and intellectual property rights"
               />
             </ListItem>
             <ListItem>
@@ -196,7 +196,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Appropriate Content"
-                secondary="Audio content must not contain hate speech, violent language, dangerous activities promotion, or references to illegal substances"
+                secondary="Audio and video content must not contain hate speech, violent language, dangerous activities promotion, or references to illegal substances"
               />
             </ListItem>
             <ListItem>
@@ -222,13 +222,13 @@ const SafetyInfo: React.FC = () => {
                 <ShieldIcon />
               </ListItemIcon>
               <ListItemText
-                primary="Music & Audio"
-                secondary="Only use music and audio that you have rights to use or that is available through our platform's licensed library"
+                primary="Music, Audio and Video"
+                secondary="Only use music, audio and video that you have rights to use or that is available through our platform's licensed library"
               />
             </ListItem>
           </List>
           <Typography paragraph>
-            Side Room content is subject to both human and AI-powered moderation. Audio that violates these guidelines may be removed,
+            Side Room content is subject to both human and AI-powered moderation. Audio and video content that violates these guidelines may be removed,
             and repeated violations may result in account restrictions or termination.
           </Typography>
         </AccordionDetails>
@@ -452,11 +452,70 @@ const SafetyInfo: React.FC = () => {
 
       <Accordion>
         <AccordionSummary expandIcon={<SecurityIcon />}>
+          <Typography> Room + Server Chat</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography paragraph>
+            Our Room + Server Chat features have specific guidelines to ensure a safe and enjoyable experience for all users:
+          </Typography>
+          <List>
+            <ListItem>
+              <ListItemIcon>
+                <ShieldIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Content Ownership"
+                secondary="You are responsible for the content you post in Room + Server Chat. We do not claim ownership of your content."
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <ShieldIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Prohibited Content"
+                secondary="You may not post any content that violates our community guidelines, including hate speech, harassment, or harmful content."
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <ShieldIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Privacy & Consent"
+                secondary="Do not share personal information without consent. Respect user privacy and consent when sharing content."
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <ShieldIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Copyright Infringement"
+                secondary="Do not post content that infringes on copyright laws. Respect intellectual property rights."
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemIcon>
+                <ShieldIcon />
+              </ListItemIcon>
+              <ListItemText
+                primary="Reporting & Moderation"
+                secondary="If you see content that violates our guidelines, please report it immediately."
+              />
+            </ListItem>
+          </List>
+        </AccordionDetails>
+      </Accordion>
+
+
+      <Accordion>
+        <AccordionSummary expandIcon={<SecurityIcon />}>
           <Typography>Side Room Security & Privacy</Typography>
         </AccordionSummary>
         <AccordionDetails>
           <Typography paragraph>
-            We take the security and privacy of your Side Room audio seriously. Here's how we protect your content:
+            We take the security and privacy of your Side Room audio and video content seriously. Here's how we protect your content:
           </Typography>
           <List>
             <ListItem>
@@ -465,7 +524,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Control Over Your Content"
-                secondary="You can delete your audio content at any time, and you control who can listen, join, and engage with your content"
+                secondary="You can delete your audio and video content at any time, and you control who can listen, join, and engage with your content"
               />
             </ListItem>
             <ListItem>
@@ -474,7 +533,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Privacy Controls"
-                secondary="You can set privacy settings for your audio content to control who can access it"
+                secondary="You can set privacy settings for your audio and video content to control who can access it"
               />
             </ListItem>
             <ListItem>
@@ -483,7 +542,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Content Protection"
-                secondary="We implement measures to prevent unauthorized downloading and redistribution of your audio content"
+                secondary="We implement measures to prevent unauthorized downloading and redistribution of your audio and video content"
               />
             </ListItem>
             <ListItem>
@@ -492,7 +551,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Metadata Stripping"
-                secondary="We remove sensitive metadata from audio content that could reveal your location or device information"
+                secondary="We remove sensitive metadata from audio and video content that could reveal your location or device information"
               />
             </ListItem>
             <ListItem>
@@ -501,7 +560,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Report & Remove"
-                secondary="We provide tools to report audio content that violates our guidelines, and we respond quickly to removal requests"
+                secondary="We provide tools to report audio and video content that violates our guidelines, and we respond quickly to removal requests"
               />
             </ListItem>
           </List>
@@ -510,7 +569,7 @@ const SafetyInfo: React.FC = () => {
           </Typography>
           <Box component="ul" sx={{ pl: 2 }}>
             <li>Use private Side Rooms for sensitive discussions</li>
-            <li>Review your audio settings before starting a room to ensure you're comfortable with all content</li>
+            <li>Review your audio and video settings before starting a room to ensure you're comfortable with all content</li>
             <li>Be cautious about sharing personal information in public Side Rooms</li>
             <li>Familiarize yourself with room moderation controls to manage who can speak</li>
             <li>Report any concerns about privacy violations to our support team</li>

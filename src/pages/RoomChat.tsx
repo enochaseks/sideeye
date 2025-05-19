@@ -50,7 +50,8 @@ import {
   Edit as EditIcon,
   Lock as LockIcon,
   LockOpen as LockOpenIcon,
-  PersonAdd as PersonAddIcon
+  PersonAdd as PersonAddIcon,
+  Block as BlockIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -192,6 +193,19 @@ const RoomChat: React.FC = () => {
   const [showDeletePollDialog, setShowDeletePollDialog] = useState(false);
   const [showPendingRequestsDialog, setShowPendingRequestsDialog] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<Array<{id: string, username: string, profilePic?: string}>>([]);
+  
+  // Add new state for members management
+  const [showMembersDialog, setShowMembersDialog] = useState(false);
+  const [roomMembers, setRoomMembers] = useState<Array<{id: string, username: string, name?: string, profilePic?: string}>>([]);
+  const [memberMenuAnchorEl, setMemberMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [selectedMember, setSelectedMember] = useState<{id: string, username: string} | null>(null);
+  
+  // Add new state for user profiles and blocked users
+  const [showProfileDialog, setShowProfileDialog] = useState(false);
+  const [selectedProfile, setSelectedProfile] = useState<{id: string, username: string, name?: string, profilePic?: string} | null>(null);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
+  const [showBlockedUserAlert, setShowBlockedUserAlert] = useState(false);
+  const [blockedUserInRoom, setBlockedUserInRoom] = useState<{id: string, username: string} | null>(null);
   
   // Common emojis for the scrollbar/picker
   const commonEmojis = [
@@ -1399,6 +1413,206 @@ const handleDeletePoll = async () => {
     }
   };
 
+  // Add new functions for member management
+  const fetchRoomMembers = async () => {
+    if (!room || !room.members) return;
+    
+    try {
+      const membersData = await Promise.all(
+        room.members.map(async (memberId) => {
+          const userRef = doc(db, 'users', memberId);
+          const userSnap = await getDoc(userRef);
+          
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            return {
+              id: memberId,
+              username: userData.username || 'Unknown user',
+              name: userData.name,
+              profilePic: userData.profilePic
+            };
+          }
+          return null;
+        })
+      );
+      
+      setRoomMembers(membersData.filter(Boolean) as Array<{id: string, username: string, name?: string, profilePic?: string}>);
+    } catch (error) {
+      console.error('Error fetching room members:', error);
+      setSnackbarMessage('Failed to load room members');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleMemberMenuOpen = (event: React.MouseEvent<HTMLElement>, member: {id: string, username: string}) => {
+    event.stopPropagation();
+    setMemberMenuAnchorEl(event.currentTarget);
+    setSelectedMember(member);
+  };
+
+  const handleMemberMenuClose = () => {
+    setMemberMenuAnchorEl(null);
+    setSelectedMember(null);
+  };
+
+  const handleRemoveMember = async () => {
+    if (!selectedMember || !room || !isOwner) return;
+    
+    try {
+      const roomRef = doc(db, 'rooms', roomId!);
+      
+      // Remove member from room
+      const updatedMembers = room.members.filter(id => id !== selectedMember.id);
+      
+      await updateDoc(roomRef, {
+        members: updatedMembers
+      });
+      
+      // Update local state
+      setRoom({
+        ...room,
+        members: updatedMembers
+      });
+      
+      // Remove from UI
+      setRoomMembers(prev => prev.filter(member => member.id !== selectedMember.id));
+      
+      // Create notification for the removed user
+      const notificationRef = collection(db, 'notifications');
+      await addDoc(notificationRef, {
+        type: 'room_removed',
+        senderId: currentUser?.uid,
+        senderName: currentUserData.name || currentUserData.username || currentUser?.displayName || 'Room owner',
+        senderAvatar: currentUserData.profilePic || currentUser?.photoURL || '',
+        recipientId: selectedMember.id,
+        content: `You have been removed from "${room.name}"`,
+        roomId: roomId,
+        roomName: room.name,
+        isRead: false,
+        createdAt: serverTimestamp()
+      });
+      
+      setSnackbarMessage('Member removed from room');
+      setSnackbarSeverity('success');
+      setSnackbarOpen(true);
+      handleMemberMenuClose();
+    } catch (error) {
+      console.error('Error removing member:', error);
+      setSnackbarMessage('Failed to remove member');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleReportMember = () => {
+    if (!selectedMember) return;
+    
+    // Implement report functionality
+    setSnackbarMessage(`Reported ${selectedMember.username}`);
+    setSnackbarSeverity('info');
+    setSnackbarOpen(true);
+    handleMemberMenuClose();
+  };
+
+  // Add new functions for user profiles and blocked users
+  const fetchBlockedUsers = async () => {
+    if (!currentUser) return;
+    
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        setBlockedUsers(userData.blockedUsers || []);
+      }
+    } catch (error) {
+      console.error('Error fetching blocked users:', error);
+    }
+  };
+
+  const checkForBlockedUsersInRoom = () => {
+    if (!room || !blockedUsers.length) return;
+    
+    const blockedUser = roomMembers.find(member => blockedUsers.includes(member.id));
+    if (blockedUser) {
+      setBlockedUserInRoom(blockedUser);
+      setShowBlockedUserAlert(true);
+    }
+  };
+
+  const handleViewProfile = (member: {id: string, username: string}) => {
+    navigate(`/profile/${member.id}`);
+  };
+
+  const handleBlockUser = async () => {
+    if (!currentUser || !selectedProfile) return;
+    
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const updatedBlockedUsers = [...blockedUsers, selectedProfile.id];
+      
+      await updateDoc(userRef, {
+        blockedUsers: updatedBlockedUsers
+      });
+      
+      setBlockedUsers(updatedBlockedUsers);
+      setSnackbarMessage(`Blocked ${selectedProfile.username}`);
+      setSnackbarSeverity('success');
+      setSnackbarOpen(true);
+      setShowProfileDialog(false);
+      
+      // If blocked user is in the room, show alert
+      if (room?.members.includes(selectedProfile.id)) {
+        setBlockedUserInRoom(selectedProfile);
+        setShowBlockedUserAlert(true);
+      }
+    } catch (error) {
+      console.error('Error blocking user:', error);
+      setSnackbarMessage('Failed to block user');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleUnblockUser = async () => {
+    if (!currentUser || !selectedProfile) return;
+    
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const updatedBlockedUsers = blockedUsers.filter(id => id !== selectedProfile.id);
+      
+      await updateDoc(userRef, {
+        blockedUsers: updatedBlockedUsers
+      });
+      
+      setBlockedUsers(updatedBlockedUsers);
+      setSnackbarMessage(`Unblocked ${selectedProfile.username}`);
+      setSnackbarSeverity('success');
+      setSnackbarOpen(true);
+      setShowProfileDialog(false);
+    } catch (error) {
+      console.error('Error unblocking user:', error);
+      setSnackbarMessage('Failed to unblock user');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+
+  // Add useEffect to fetch blocked users and check for blocked users in room
+  useEffect(() => {
+    if (currentUser) {
+      fetchBlockedUsers();
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (roomMembers.length > 0) {
+      checkForBlockedUsersInRoom();
+    }
+  }, [roomMembers, blockedUsers]);
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -1508,8 +1722,13 @@ const handleDeletePoll = async () => {
                           sx={{ 
                             width: 40, 
                             height: 40,
-                            bgcolor: !msg.senderPhoto ? (isCurrentUser ? 'primary.main' : 'secondary.main') : undefined
+                            bgcolor: !msg.senderPhoto ? (isCurrentUser ? 'primary.main' : 'secondary.main') : undefined,
+                            cursor: 'pointer',
+                            '&:hover': {
+                              opacity: 0.8
+                            }
                           }}
+                          onClick={() => navigate(`/profile/${msg.sender}`)}
                         >
                           {!msg.senderPhoto && msg.senderName?.charAt(0)?.toUpperCase()}
                         </Avatar>
@@ -1525,7 +1744,14 @@ const handleDeletePoll = async () => {
                         <Typography 
                           variant="caption" 
                           color="text.secondary"
-                          sx={{ mb: 0.5 }}
+                          sx={{ 
+                            mb: 0.5,
+                            cursor: 'pointer',
+                            '&:hover': {
+                              textDecoration: 'underline'
+                            }
+                          }}
+                          onClick={() => navigate(`/profile/${msg.sender}`)}
                         >
                           {isCurrentUser ? 'You' : msg.senderName}
                         </Typography>
@@ -1907,6 +2133,12 @@ const handleDeletePoll = async () => {
                 <InviteIcon fontSize="small" />
               </ListItemIcon>
               Invite People
+            </MenuItem>
+            <MenuItem onClick={() => { setShowMembersDialog(true); fetchRoomMembers(); handleMenuClose(); }}>
+              <ListItemIcon>
+                <PersonAddIcon fontSize="small" />
+              </ListItemIcon>
+              Members
             </MenuItem>
             <MenuItem onClick={toggleRoomLock}>
               <ListItemIcon>
@@ -2502,6 +2734,169 @@ const handleDeletePoll = async () => {
           <Button onClick={() => setShowPendingRequestsDialog(false)}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Add Members Dialog */}
+      <Dialog
+        open={showMembersDialog}
+        onClose={() => setShowMembersDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Room Members</DialogTitle>
+        <DialogContent>
+          {roomMembers.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+              No members found
+            </Typography>
+          ) : (
+            <List>
+              {roomMembers.map((member) => (
+                <ListItem
+                  key={member.id}
+                  secondaryAction={
+                    member.id !== currentUser?.uid && (
+                      <IconButton
+                        edge="end"
+                        onClick={(e) => handleMemberMenuOpen(e, member)}
+                      >
+                        <MoreVertIcon />
+                      </IconButton>
+                    )
+                  }
+                  sx={{
+                    cursor: 'pointer',
+                    opacity: blockedUsers.includes(member.id) ? 0.5 : 1,
+                    '&:hover': {
+                      backgroundColor: 'action.hover'
+                    }
+                  }}
+                  onClick={() => handleViewProfile(member)}
+                >
+                  <ListItemAvatar>
+                    <Avatar alt={member.username} src={member.profilePic} />
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {member.name || member.username}
+                        {blockedUsers.includes(member.id) && (
+                          <Chip
+                            label="Blocked"
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                            sx={{ height: 20, fontSize: '0.7rem' }}
+                          />
+                        )}
+                      </Box>
+                    }
+                    secondary={`@${member.username}`}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowMembersDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Member Menu */}
+      <Menu
+        anchorEl={memberMenuAnchorEl}
+        open={Boolean(memberMenuAnchorEl)}
+        onClose={handleMemberMenuClose}
+      >
+        {isOwner && selectedMember && selectedMember.id !== currentUser?.uid && (
+          <MenuItem onClick={handleRemoveMember} sx={{ color: 'error.main' }}>
+            <ListItemIcon>
+              <DeleteIcon fontSize="small" color="error" />
+            </ListItemIcon>
+            Remove from Room
+          </MenuItem>
+        )}
+        {selectedMember && selectedMember.id !== currentUser?.uid && (
+          <MenuItem onClick={handleReportMember} sx={{ color: 'warning.main' }}>
+            <ListItemIcon>
+              <ReportIcon fontSize="small" color="warning" />
+            </ListItemIcon>
+            Report User
+          </MenuItem>
+        )}
+      </Menu>
+
+      {/* Profile Dialog */}
+      <Dialog
+        open={showProfileDialog}
+        onClose={() => setShowProfileDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Avatar
+              src={selectedProfile?.profilePic}
+              alt={selectedProfile?.username}
+              sx={{ width: 64, height: 64 }}
+            />
+            <Box>
+              <Typography variant="h6">{selectedProfile?.name || selectedProfile?.username}</Typography>
+              <Typography variant="subtitle2" color="text.secondary">
+                @{selectedProfile?.username}
+              </Typography>
+            </Box>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            {selectedProfile && blockedUsers.includes(selectedProfile.id) ? (
+              <Button
+                variant="outlined"
+                color="primary"
+                fullWidth
+                onClick={handleUnblockUser}
+                startIcon={<PersonAddIcon />}
+              >
+                Unblock User
+              </Button>
+            ) : (
+              <Button
+                variant="outlined"
+                color="error"
+                fullWidth
+                onClick={handleBlockUser}
+                startIcon={<BlockIcon />}
+              >
+                Block User
+              </Button>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowProfileDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Blocked User Alert */}
+      <Snackbar
+        open={showBlockedUserAlert}
+        autoHideDuration={6000}
+        onClose={() => setShowBlockedUserAlert(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={() => setShowBlockedUserAlert(false)} 
+          severity="warning" 
+          sx={{ width: '100%' }}
+        >
+          {blockedUserInRoom && (
+            <>
+              You have blocked {blockedUserInRoom.username}. You can unblock them from their profile.
+            </>
+          )}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 };
