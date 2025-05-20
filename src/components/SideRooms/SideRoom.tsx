@@ -18,7 +18,7 @@ import {
   TextField,
   Alert
 } from '@mui/material';
-import { ExitToApp, Lock, Group, LiveTv } from '@mui/icons-material';
+import { ExitToApp, Lock, Group, LiveTv, LocalFireDepartment } from '@mui/icons-material';
 import type { RoomMember } from '../../types';
 
 // Define SideRoom type locally to ensure it has all the properties we need
@@ -39,6 +39,7 @@ interface SideRoom {
   isLive?: boolean;
   activeUsers?: number; // Number of users currently viewing
   viewerCount?: number; // Number of users currently viewing (alternative field)
+  totalViews?: number; // Total view count over time
 }
 
 interface SideRoomProps {
@@ -80,7 +81,9 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
             maxMembers: data.maxMembers || 50,
             bannedUsers: data.bannedUsers || [],
             isLive: data.isLive || false,
-            activeUsers: data.activeUsers || 0
+            activeUsers: data.activeUsers || 0,
+            viewerCount: data.viewerCount || 0,
+            totalViews: data.totalViews || 0
           };
           setRoom(roomData);
           setLoading(false);
@@ -107,6 +110,41 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
       setLoading(false);
     }
   }, [roomId, currentUser]);
+
+  // Update active viewers count when component mounts/unmounts
+  useEffect(() => {
+    if (!db || !currentUser || !room) return;
+
+    const roomRef = doc(db, 'sideRooms', roomId);
+    
+    // Increment viewer count when entering room
+    const updateViewerCount = async () => {
+      try {
+        await updateDoc(roomRef, {
+          activeUsers: increment(1),
+          lastActive: serverTimestamp()
+        });
+      } catch (error) {
+        console.error('Error updating viewer count:', error);
+      }
+    };
+
+    updateViewerCount();
+
+    // Decrement viewer count when leaving room
+    return () => {
+      const decrementViewers = async () => {
+        try {
+          await updateDoc(roomRef, {
+            activeUsers: increment(-1)
+          });
+        } catch (error) {
+          console.error('Error decreasing viewer count:', error);
+        }
+      };
+      decrementViewers();
+    };
+  }, [db, currentUser, roomId, room]);
 
   const handleJoinRoom = async () => {
     if (!db || !currentUser || !room) return;
@@ -147,7 +185,9 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
 
       await updateDoc(roomRef, {
         viewers: arrayUnion(viewerData),
-        memberCount: increment(1)
+        memberCount: increment(1),
+        totalViews: increment(1),
+        lastActive: serverTimestamp()
       });
 
       toast.success('Joined room successfully');
@@ -247,6 +287,7 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
 
   const isViewer = room.viewers?.some(viewer => viewer.userId === currentUser?.uid);
   const owner = room.viewers?.find(viewer => viewer.role === 'owner');
+  const isPopular = (room.totalViews || 0) > 200;
 
   return (
     <Box sx={{ p: 3 }}>
@@ -275,6 +316,25 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
                 LIVE
               </Box>
             )}
+            {isPopular && (
+              <Box
+                sx={{
+                  bgcolor: 'warning.main',
+                  color: 'warning.contrastText',
+                  fontWeight: 'bold',
+                  fontSize: '0.875rem',
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5
+                }}
+              >
+                <LocalFireDepartment fontSize="small" />
+                POPULAR
+              </Box>
+            )}
           </Box>
           <Typography variant="subtitle1" color="text.secondary">
             Created by {owner?.username || 'Anonymous'}
@@ -297,10 +357,6 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
           {room.description}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-          <Chip
-            icon={<Group />}
-            label={`${room.activeUsers || room.viewerCount || 0} viewing`}
-          />
           {room.isPrivate && (
             <Chip
               icon={<Lock />}
@@ -313,6 +369,19 @@ const SideRoom: React.FC<SideRoomProps> = ({ roomId }) => {
               icon={<LiveTv />}
               label="LIVE"
               color="error"
+            />
+          )}
+          {isPopular && (
+            <Chip
+              icon={<LocalFireDepartment />}
+              label="POPULAR"
+              color="warning"
+            />
+          )}
+          {room.totalViews !== undefined && (
+            <Chip
+              label={`${room.totalViews} total views`}
+              variant="outlined"
             />
           )}
         </Box>

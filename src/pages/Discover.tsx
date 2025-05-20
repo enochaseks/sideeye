@@ -1743,7 +1743,7 @@ const Discover: React.FC = () => {
                           }}>
                             <Chip
                               icon={<EyeIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
-                              label={`${room.activeUsers || 0} viewing`}
+                              label={`${room.activeUsers || 0} views`}
                               color="primary"
                               variant="outlined"
                               sx={{ 
@@ -1918,7 +1918,7 @@ const Discover: React.FC = () => {
                       }}>
                         <Chip
                           icon={<EyeIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
-                          label={`${room.activeUsers || 0} viewing`}
+                          label={`${room.activeUsers || 0} views`}
                           color="primary"
                           variant="outlined"
                           sx={{ 
@@ -2440,15 +2440,15 @@ const Discover: React.FC = () => {
                             flexWrap: 'wrap'
                           }}>
                             <Chip
-                              icon={<PeopleIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
-                              label={`${room.activeUsers || 0} viewing`}
+                              icon={<EyeIcon sx={{ fontSize: isMobile ? '1.1rem' : '1.25rem' }} />}
+                              label={`${room.activeUsers || 0} views`}
                               color="primary"
                               variant="outlined"
                               sx={{ 
                                 height: 'auto',
                                 padding: '8px 12px',
                                 '& .MuiChip-label': {
-                                  padding: '0 4px',
+                                  padding: '1 4px',
                                   fontSize: isMobile ? '0.875rem' : '1rem'
                                 }
                               }}

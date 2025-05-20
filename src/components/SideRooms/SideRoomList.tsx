@@ -32,12 +32,10 @@ import {
 import {
   LocalFireDepartment,
   Schedule,
-  Group,
   Add,
   Lock,
   Search as SearchIcon,
   FilterList as FilterIcon,
-  Visibility as VisibilityIcon,
   AccessTime as AccessTimeIcon,
   CleaningServices as CleanupIcon,
   Equalizer as EqualizerIcon
@@ -60,7 +58,7 @@ interface SideRoomData {
   description: string;
   createdAt: Timestamp;
   lastActive: Timestamp;
-  viewerCount: number;
+  viewerCount: number | null;
   maxViewers: number;
   viewers: SideRoomMember[] | undefined;
   isPrivate: boolean;
@@ -71,6 +69,9 @@ interface SideRoomData {
   thumbnailUrl?: string;
   ownerId: string;
   isLive?: boolean;
+  totalViews?: number;
+  activeUsers?: number;
+  isPopular?: boolean;
 }
 
 const GENRES = [
@@ -172,13 +173,16 @@ const SideRoomList: React.FC = () => {
         async (snapshot) => {
           const roomsData = snapshot.docs.map(doc => {
             const data = doc.data();
+            // Determine if room is popular based on the same logic as Discover page
+            const isPopular = (data.totalViews || 0) > 200 || (data.activeUsers || 0) >= 200;
+            
             return {
               id: doc.id,
               name: data.name || '',
               description: data.description,
               createdAt: data.createdAt as Timestamp,
               lastActive: data.lastActive as Timestamp,
-              viewerCount: data.viewerCount || 0,
+              viewerCount: null,
               maxViewers: data.maxViewers || 100,
               viewers: data.viewers as SideRoomMember[] | undefined,
               isPrivate: data.isPrivate,
@@ -188,7 +192,10 @@ const SideRoomList: React.FC = () => {
               category: data.category,
               thumbnailUrl: data.thumbnailUrl,
               ownerId: data.ownerId,
-              isLive: data.isLive
+              isLive: data.isLive,
+              totalViews: data.totalViews,
+              activeUsers: (data.activeUsers === 0) ? null : data.activeUsers,
+              isPopular: isPopular
             } as SideRoomData;
           });
           
@@ -392,7 +399,7 @@ const SideRoomList: React.FC = () => {
           };
           transaction.update(roomRef, {
             viewers: arrayUnion(newViewer),
-            viewerCount: increment(1)
+            activeUsers: increment(1)
           });
         }
       });
@@ -439,7 +446,7 @@ const SideRoomList: React.FC = () => {
           };
           transaction.update(roomRef, {
             viewers: arrayUnion(newViewer),
-            viewerCount: increment(1)
+            activeUsers: increment(1)
           });
         }
       });
@@ -525,6 +532,57 @@ const SideRoomList: React.FC = () => {
       setIsAdminCleanupRunning(false);
     }
   };
+
+  // Update the sorting logic to prioritize popular rooms
+  const sortRooms = (rooms: SideRoomData[]) => {
+    const sorted = [...rooms];
+    
+    // Apply filtering based on user selection
+    let filtered = sorted;
+    
+    if (searchQuery) {
+      filtered = filtered.filter(room => 
+        room.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (room.description && room.description.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
+    }
+
+    if (selectedGenre !== 'All') {
+      filtered = filtered.filter(room => 
+        room.category === selectedGenre ||
+        room.genre === selectedGenre ||
+        (room.tags && room.tags.includes(selectedGenre))
+      );
+    }
+
+    // Apply sorting with popular rooms first
+    filtered.sort((a, b) => {
+      // First sort by popularity
+      if (a.isPopular && !b.isPopular) return -1;
+      if (!a.isPopular && b.isPopular) return 1;
+      
+      // Then by the selected sort criteria
+      switch (sortBy) {
+        case 'newest':
+          return b.createdAt.toMillis() - a.createdAt.toMillis();
+        case 'oldest':
+          return a.createdAt.toMillis() - b.createdAt.toMillis();
+        case 'members':
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
+        case 'activity':
+          return b.lastActive.toMillis() - a.lastActive.toMillis();
+        default:
+          return 0;
+      }
+    });
+    
+    return filtered;
+  };
+
+  // Now call this function to update filteredRooms whenever relevant state changes
+  useEffect(() => {
+    setFilteredRooms(sortRooms(rooms));
+  }, [rooms, searchQuery, selectedGenre, sortBy]);
 
   if (loading) {
     return (
@@ -629,20 +687,37 @@ const SideRoomList: React.FC = () => {
                     alt={room.name}
                     sx={{ objectFit: 'cover' }}
                   />
-                  {room.isLive && (
-                    <Chip 
-                      label="LIVE" 
-                      color="error"
-                      size="small"
-                      sx={{ 
-                        position: 'absolute', 
-                        top: 10, 
-                        right: 10, 
-                        fontWeight: 'bold',
-                        fontSize: '0.75rem'
-                      }}
-                    />
-                  )}
+                  <Box sx={{ 
+                    position: 'absolute', 
+                    top: 10, 
+                    right: 10, 
+                    display: 'flex', 
+                    gap: 1
+                  }}>
+                    {((room.totalViews && room.totalViews > 200) || (room.activeUsers && room.activeUsers >= 200)) && (
+                      <Chip 
+                        label="POPULAR" 
+                        color="warning"
+                        size="small"
+                        icon={<LocalFireDepartment fontSize="small" />}
+                        sx={{ 
+                          fontWeight: 'bold',
+                          fontSize: '0.75rem'
+                        }}
+                      />
+                    )}
+                    {room.isLive && (
+                      <Chip 
+                        label="LIVE" 
+                        color="error"
+                        size="small"
+                        sx={{ 
+                          fontWeight: 'bold',
+                          fontSize: '0.75rem'
+                        }}
+                      />
+                    )}
+                  </Box>
                 </Box>
                 <CardContent sx={{ flexGrow: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
@@ -659,10 +734,18 @@ const SideRoomList: React.FC = () => {
                     {room.description}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-                    <Chip icon={<VisibilityIcon fontSize='small' />} label={`${room.viewerCount || 0} Viewing`} size="small" variant="outlined" />
                     <Chip icon={<AccessTimeIcon fontSize='small' />} label={`Active: ${formatTimestamp(room.lastActive)}`} size="small" variant="outlined" />
                     {room.category && <Chip label={room.category} size="small" variant="outlined" color="primary" />}
                     {room.isLive && <Chip icon={<EqualizerIcon fontSize='small' />} label="Stream Live" size="small" color="error" variant="outlined" />}
+                    {((room.totalViews && room.totalViews > 200) || (room.activeUsers && room.activeUsers >= 200)) && (
+                      <Chip 
+                        icon={<LocalFireDepartment fontSize='small' />} 
+                        label="POPULAR" 
+                        size="small" 
+                        color="warning" 
+                        variant="outlined" 
+                      />
+                    )}
                   </Box>
                 </CardContent>
                 <CardActions sx={{ justifyContent: 'flex-end', p: 2, borderTop: '1px solid', borderColor: 'divider' }}>

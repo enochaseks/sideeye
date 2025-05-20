@@ -117,7 +117,9 @@ import {
     VolumeDown as VolumeDownIcon,
     PersonAdd as PersonAddIcon,
     Report as ReportIcon, // Added ReportIcon
-    VerifiedUser as VerifiedUserIcon // Added VerifiedUserIcon
+    VerifiedUser as VerifiedUserIcon, // Added VerifiedUserIcon
+    HeartBroken as HeartBrokenIcon,
+    HeartBrokenOutlined as HeartBrokenOutlinedIcon,
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -425,6 +427,166 @@ const AVAILABLE_FONTS = [
 const AVAILABLE_TEXT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32]; // in pixels
 // --- End Room Theme Definitions & Constants ---
 
+// --- Added FloatingHearts Component ---
+interface FloatingIconProps {
+    icon: React.ReactNode;
+    color: string;
+}
+
+const FloatingIcon: React.FC<FloatingIconProps> = ({ icon, color }) => {
+    const [style, setStyle] = useState({
+        left: `${Math.random() * 80 + 10}%`,
+        top: `${Math.random() * 20 + 40}%`, // Start in middle area of the page
+        animationDuration: `${Math.random() * 3 + 2}s`,
+        opacity: 1
+    });
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setStyle(prev => ({ ...prev, opacity: 0 }));
+        }, 2000);
+        return () => clearTimeout(timer);
+    }, []);
+
+    return (
+        <Box
+            sx={{
+                position: 'fixed',
+                fontSize: '28px',
+                color: color,
+                pointerEvents: 'none',
+                zIndex: 1000,
+                transition: 'opacity 1s ease-out',
+                animation: 'float-around 3s ease-out forwards',
+                '@keyframes float-around': {
+                    '0%': { 
+                        transform: 'scale(0.5) rotate(0deg) translate(0, 0)' 
+                    },
+                    '25%': { 
+                        transform: 'scale(1.2) rotate(10deg) translate(20px, -30px)' 
+                    },
+                    '50%': { 
+                        transform: 'scale(1.4) rotate(-5deg) translate(-15px, -60px)' 
+                    },
+                    '75%': { 
+                        transform: 'scale(1.1) rotate(15deg) translate(25px, -90px)' 
+                    },
+                    '100%': { 
+                        transform: 'scale(0.8) rotate(-10deg) translate(0, -120px)' 
+                    }
+                },
+                ...style
+            }}
+        >
+            {icon}
+        </Box>
+    );
+};
+
+// Floating reactions panel component
+const FloatingReactionsPanel: React.FC<{
+    handleHeartRoom: () => void;
+    handleHeartbreakRoom: () => void;
+    currentUserHearted: boolean;
+    currentUserHeartbroken: boolean;
+    roomHeartCount: number;
+    roomHeartbreakCount: number;
+    isHearting: boolean;
+    isHeartbreaking: boolean;
+    accentColor?: string;
+    textColor?: string;
+}> = ({ 
+    handleHeartRoom, 
+    handleHeartbreakRoom, 
+    currentUserHearted, 
+    currentUserHeartbroken,
+    roomHeartCount,
+    roomHeartbreakCount,
+    isHearting,
+    isHeartbreaking,
+    accentColor,
+    textColor
+}) => {
+    const theme = useTheme();
+    
+    return (
+        <Box
+            sx={{
+                position: 'fixed',
+                right: 20,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1,
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                backdropFilter: 'blur(5px)',
+                borderRadius: 2,
+                padding: 1,
+                zIndex: 100,
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+                border: '1px solid rgba(255, 255, 255, 0.2)'
+            }}
+        >
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <Tooltip title={currentUserHearted ? "Unheart Room" : "Heart Room"}>
+                    <IconButton 
+                        onClick={handleHeartRoom} 
+                        color={currentUserHearted ? "error" : "inherit"}
+                        sx={{ 
+                            color: currentUserHearted ? theme.palette.error.main : accentColor || 'inherit',
+                            backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                            '&:hover': {
+                                backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                            }
+                        }}
+                        disabled={isHearting}
+                    >
+                        {currentUserHearted ? <FavoriteIcon /> : <FavoriteBorderIcon />}
+                    </IconButton>
+                </Tooltip>
+                <Typography 
+                    variant="body2" 
+                    sx={{ 
+                        color: textColor || 'inherit',
+                        fontWeight: 'bold'
+                    }}
+                >
+                    {roomHeartCount || 0}
+                </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <Tooltip title={currentUserHeartbroken ? "Remove Heartbreak" : "Heartbreak Room"}>
+                    <IconButton 
+                        onClick={handleHeartbreakRoom} 
+                        color={currentUserHeartbroken ? "error" : "inherit"}
+                        sx={{ 
+                            color: currentUserHeartbroken ? theme.palette.error.main : accentColor || 'inherit',
+                            backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                            '&:hover': {
+                                backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                            }
+                        }}
+                        disabled={isHeartbreaking}
+                    >
+                        {currentUserHeartbroken ? <HeartBrokenIcon /> : <HeartBrokenOutlinedIcon />}
+                    </IconButton>
+                </Tooltip>
+                <Typography 
+                    variant="body2" 
+                    sx={{ 
+                        color: textColor || 'inherit',
+                        fontWeight: 'bold'
+                    }}
+                >
+                    {roomHeartbreakCount || 0}
+                </Typography>
+            </Box>
+        </Box>
+    );
+};
+
 const SideRoomComponent: React.FC = () => {
     const { roomId } = useParams<{ roomId: string }>();
     const navigate = useNavigate();
@@ -459,6 +621,11 @@ const SideRoomComponent: React.FC = () => {
     const [currentUserHearted, setCurrentUserHearted] = useState<boolean>(false);
     const [latestHeartNotification, setLatestHeartNotification] = useState<string | null>(null);
     const notificationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // --- State for Heartbreak Feature ---
+    const [roomHeartbreakCount, setRoomHeartbreakCount] = useState<number>(0);
+    const [currentUserHeartbroken, setCurrentUserHeartbroken] = useState<boolean>(false);
+    const [isHeartbreaking, setIsHeartbreaking] = useState(false);
 
     // --- State for Video Sharing ---
     const [showShareVideoDialog, setShowShareVideoDialog] = useState(false);
@@ -535,6 +702,12 @@ const SideRoomComponent: React.FC = () => {
     // ... existing code ...
     const [showJoinRoomChatDialog, setShowJoinRoomChatDialog] = useState(false);
     const [serverChatRoom, setServerChatRoom] = useState<{id: string, name: string} | null>(null);
+    
+    // ... existing code ...
+
+    // --- State for Heart and Heartbreak Animations ---
+    const [floatingHearts, setFloatingHearts] = useState<number[]>([]);
+    const [floatingHeartbreaks, setFloatingHeartbreaks] = useState<number[]>([]);
     
     // ... existing code ...
 
@@ -1266,6 +1439,8 @@ const SideRoomComponent: React.FC = () => {
             });
         }
 
+        
+
         // Listener for new hearts (for pop-up)
         const heartsQuery = query(
             collection(db, 'sideRooms', roomId, 'heartedBy'),
@@ -1299,6 +1474,50 @@ const SideRoomComponent: React.FC = () => {
             }
         };
     }, [roomId, currentUser]);
+
+    // Listen for heartbreak changes
+    useEffect(() => {
+        if (!roomId || !db || !currentUser?.uid) return;
+
+        // Listen for heartbreak count changes
+        const roomRef = doc(db, 'sideRooms', roomId);
+        const heartbreakByRef = doc(db, 'sideRooms', roomId, 'heartbrokenBy', currentUser.uid);
+
+        const unsubscribeRoom = onSnapshot(roomRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const roomData = docSnap.data();
+                setRoomHeartbreakCount(roomData.heartbreakCount || 0);
+            }
+        });
+
+        const unsubscribeHeartbreak = onSnapshot(heartbreakByRef, (docSnap) => {
+            setCurrentUserHeartbroken(docSnap.exists());
+        });
+
+        return () => {
+            unsubscribeRoom();
+            unsubscribeHeartbreak();
+        };
+    }, [roomId, db, currentUser?.uid]);
+    
+    // Clean up floating icons after animation completes
+    useEffect(() => {
+        if (floatingHearts.length > 0) {
+            const timer = setTimeout(() => {
+                setFloatingHearts(prev => prev.slice(1));
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [floatingHearts]);
+
+    useEffect(() => {
+        if (floatingHeartbreaks.length > 0) {
+            const timer = setTimeout(() => {
+                setFloatingHeartbreaks(prev => prev.slice(1));
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [floatingHeartbreaks]);
 
     // Check if room owner has a server chat room
     const checkForServerChatRoom = async (ownerId: string) => {
@@ -2036,28 +2255,7 @@ const SideRoomComponent: React.FC = () => {
                             </IconButton>
                         </Tooltip>
                     )}
-                    {/* Existing buttons */}
-                    <Tooltip title={currentUserHearted ? "Unheart Room" : "Heart Room"}>
-                        <IconButton 
-                            onClick={handleHeartRoom} 
-                            color={currentUserHearted ? "error" : "inherit"} 
-                            sx={{ color: currentUserHearted ? theme.palette.error.main : room?.style?.accentColor || 'inherit' }}
-                            disabled={isHearting}
-                        >
-                            {currentUserHearted ? <FavoriteIcon /> : <FavoriteBorderIcon />}
-                        </IconButton>
-                    </Tooltip>
-                    <Badge 
-                        badgeContent={roomHeartCount > 0 ? roomHeartCount : "0"} 
-                        sx={{ 
-                            mr: 1,
-                            '& .MuiBadge-badge': {
-                                backgroundColor: room?.style?.accentColor || theme.palette.primary.main,
-                                color: room?.style?.textColor && room?.style?.accentColor ? theme.palette.getContrastText(room.style.accentColor) : theme.palette.primary.contrastText 
-                            }
-                        }} 
-                    >
-                    </Badge>
+                    {/* Heart and Heartbreak buttons removed from here */}
                     <Tooltip title="Share">
                         <IconButton onClick={handleShareRoom} sx={{ color: room?.style?.accentColor || 'inherit' }}>
                             <ShareIcon />
@@ -2711,12 +2909,18 @@ const SideRoomComponent: React.FC = () => {
     const handleHeartRoom = async () => {
         if (!currentUser || !currentUser.uid || !roomId || !room) return;
 
+        // Add floating heart animation
+        setFloatingHearts(prev => [...prev, Date.now()]);
+
+        setIsHearting(true);
         const heartRef = doc(db, 'sideRooms', roomId, 'heartedBy', currentUser.uid);
+        const heartbreakRef = doc(db, 'sideRooms', roomId, 'heartbrokenBy', currentUser.uid);
         const roomRef = doc(db, 'sideRooms', roomId);
 
         try {
             await runTransaction(db, async (transaction) => {
                 const heartDoc = await transaction.get(heartRef);
+                const heartbreakDoc = await transaction.get(heartbreakRef);
                 const roomDoc = await transaction.get(roomRef);
 
                 if (!roomDoc.exists()) {
@@ -2726,6 +2930,15 @@ const SideRoomComponent: React.FC = () => {
                 const userProfile = await getDoc(doc(db, 'users', currentUser.uid));
                 const username = userProfile.exists() ? userProfile.data()?.username || currentUser.displayName : 'Someone';
 
+                // Check if user has heartbroken the room and remove it if so
+                if (heartbreakDoc.exists()) {
+                    transaction.delete(heartbreakRef);
+                    transaction.update(roomRef, { heartbreakCount: increment(-1) });
+                    // Update local state to reflect change
+                    setCurrentUserHeartbroken(false);
+                }
+
+                // Toggle heart status
                 if (heartDoc.exists()) {
                     transaction.delete(heartRef);
                     transaction.update(roomRef, { heartCount: increment(-1) });
@@ -2741,6 +2954,62 @@ const SideRoomComponent: React.FC = () => {
         } catch (error) {
             console.error("Error hearting room:", error);
             toast.error("Failed to update heart status.");
+        } finally {
+            setIsHearting(false);
+        }
+    };
+
+    // --- Heartbreak Feature Handler ---
+    const handleHeartbreakRoom = async () => {
+        if (!currentUser || !currentUser.uid || !roomId || !room) return;
+
+        // Add floating heartbreak animation
+        setFloatingHeartbreaks(prev => [...prev, Date.now()]);
+
+        setIsHeartbreaking(true);
+        const heartbreakRef = doc(db, 'sideRooms', roomId, 'heartbrokenBy', currentUser.uid);
+        const heartRef = doc(db, 'sideRooms', roomId, 'heartedBy', currentUser.uid);
+        const roomRef = doc(db, 'sideRooms', roomId);
+
+        try {
+            await runTransaction(db, async (transaction) => {
+                const heartbreakDoc = await transaction.get(heartbreakRef);
+                const heartDoc = await transaction.get(heartRef);
+                const roomDoc = await transaction.get(roomRef);
+
+                if (!roomDoc.exists()) {
+                    throw "Room does not exist!";
+                }
+
+                const userProfile = await getDoc(doc(db, 'users', currentUser.uid));
+                const username = userProfile.exists() ? userProfile.data()?.username || currentUser.displayName : 'Someone';
+
+                // Check if user has hearted the room and remove it if so
+                if (heartDoc.exists()) {
+                    transaction.delete(heartRef);
+                    transaction.update(roomRef, { heartCount: increment(-1) });
+                    // Update local state to reflect change
+                    setCurrentUserHearted(false);
+                }
+
+                // Toggle heartbreak status
+                if (heartbreakDoc.exists()) {
+                    transaction.delete(heartbreakRef);
+                    transaction.update(roomRef, { heartbreakCount: increment(-1) });
+                } else {
+                    transaction.set(heartbreakRef, {
+                        userId: currentUser.uid,
+                        username: username,
+                        timestamp: serverTimestamp()
+                    });
+                    transaction.update(roomRef, { heartbreakCount: increment(1) });
+                }
+            });
+        } catch (error) {
+            console.error("Error heartbreaking room:", error);
+            toast.error("Failed to update heartbreak status.");
+        } finally {
+            setIsHeartbreaking(false);
         }
     };
 
@@ -3175,11 +3444,41 @@ const SideRoomComponent: React.FC = () => {
         setShowJoinRoomChatDialog(false);
     };
 
-
-
     // Main return for SideRoomComponent
     return (
         <>
+            {/* Floating hearts and heartbreaks */}
+            {floatingHearts.map((id) => (
+                <FloatingIcon 
+                    key={`heart-${id}`} 
+                    icon={<FavoriteIcon />} 
+                    color={theme.palette.error.main} 
+                />
+            ))}
+            {floatingHeartbreaks.map((id) => (
+                <FloatingIcon 
+                    key={`heartbreak-${id}`} 
+                    icon={<HeartBrokenIcon />} 
+                    color={theme.palette.error.main} 
+                />
+            ))}
+            
+            {/* Floating reactions panel on the right side of the page */}
+            {room && (
+                <FloatingReactionsPanel
+                    handleHeartRoom={handleHeartRoom}
+                    handleHeartbreakRoom={handleHeartbreakRoom}
+                    currentUserHearted={currentUserHearted}
+                    currentUserHeartbroken={currentUserHeartbroken}
+                    roomHeartCount={roomHeartCount}
+                    roomHeartbreakCount={roomHeartbreakCount}
+                    isHearting={isHearting}
+                    isHeartbreaking={isHeartbreaking}
+                    accentColor={room?.style?.accentColor}
+                    textColor={room?.style?.textColor}
+                />
+            )}
+            
             <Helmet>
                 <title>{pageTitle}</title>
                 <meta name="description" content={pageDescription} />
@@ -3790,6 +4089,15 @@ const InsideStreamCallContent: React.FC<{
     const { localParticipant } = useCallState(); 
     const { isMute: localUserIsMute } = useMicrophoneState(); 
     const { isEnabled: isCameraEnabled, isTogglePending } = useCameraState(); 
+
+    // Initialize camera as disabled
+    useEffect(() => {
+        if (call) {
+            call.camera.disable().catch(err => {
+                console.error("Error disabling camera:", err);
+            });
+        }
+    }, [call]);
 
     const { currentUser } = useAuth();
 
@@ -4436,9 +4744,7 @@ const InsideStreamCallContent: React.FC<{
                                              
                                              return participantToShow && (
                                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                                     <Avatar sx={{ width: 40, height: 40, mr: 1 }}>
-                                                         {participantToShow?.name?.[0] || 'U'}
-                                                     </Avatar>
+                                                     <Avatar src={firestoreUserData[participantToShow.userId]?.avatar} sx={{ width: 40, height: 40, mr: 1 }} />
                                                      <Box>
                                                          <Typography variant="subtitle2" fontWeight="bold">
                                                              {participantToShow?.name || 'User'}
