@@ -566,6 +566,13 @@ const Settings: React.FC = () => {
       isSetting: true
     },
     {
+      title: 'About The Founder',
+      icon: <InfoIcon />,
+      path: '/about-founder',
+      description: 'Learn about Enoch Asekomhe, the founder and developer of SideEye',
+      isSetting: true
+    },
+    {
       title: 'View Source Code',
       icon: <CodeIcon />,
       description: 'View your unique source code for new devices',

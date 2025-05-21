@@ -67,15 +67,6 @@ const SafetyInfo: React.FC = () => {
             </ListItem>
             <ListItem>
               <ListItemIcon>
-                <PsychologyIcon />
-              </ListItemIcon>
-              <ListItemText
-                primary="Mental Health Support"
-                secondary="We provide resources and tools to support users' wellbeing"
-              />
-            </ListItem>
-            <ListItem>
-              <ListItemIcon>
                 <PublicIcon />
               </ListItemIcon>
               <ListItemText
@@ -336,7 +327,7 @@ const SafetyInfo: React.FC = () => {
           </Typography>
           <Typography paragraph>
             If you believe a strike was issued in error, you can appeal through your account settings 
-            or by contacting support@sideeye.com.
+            or by contacting support@sideeye.uk.
           </Typography>
           
           <Typography variant="h6" gutterBottom>
@@ -381,7 +372,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Appeals Process"
-                secondary="If you believe a moderation decision was made in error, you can appeal through your account settings or by contacting support@sideeye.com"
+                secondary="If you believe a moderation decision was made in error, you can appeal through your account settings or by contacting support@sideeye.uk"
               />
             </ListItem>
             <ListItem>
@@ -411,15 +402,6 @@ const SafetyInfo: React.FC = () => {
                 <HelpIcon />
               </ListItemIcon>
               <ListItemText
-                primary="Support Resources"
-                secondary="Access to mental health resources, crisis helplines, and support services through our Help Center"
-              />
-            </ListItem>
-            <ListItem>
-              <ListItemIcon>
-                <HelpIcon />
-              </ListItemIcon>
-              <ListItemText
                 primary="Safety Tips"
                 secondary="Guidelines for protecting your privacy, recognizing potential scams, and staying safe online"
               />
@@ -430,7 +412,7 @@ const SafetyInfo: React.FC = () => {
               </ListItemIcon>
               <ListItemText
                 primary="Contact Us"
-                secondary="Reach out to our support team at support@sideeye.com for assistance with safety concerns"
+                secondary="Reach out to our support team at support@sideeye.uk for assistance with safety concerns"
               />
             </ListItem>
             <ListItem>

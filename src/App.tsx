@@ -45,6 +45,7 @@ const SafetyPage = lazy(() => import('./pages/SafetyPage'));
 const SecurityPage = lazy(() => import('./pages/SecurityPage'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const About = lazy(() => import('./pages/About'));
+const AboutFounder = lazy(() => import('./pages/AboutFounder'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const CookiePolicy = lazy(() => import('./pages/CookiePolicy'));
 const EmailVerification = lazy(() => import('./pages/EmailVerification'));
@@ -127,6 +128,7 @@ const AppContent: React.FC = () => {
               <Route path="/safety" element={<SafetyPage />} />
               <Route path="/privacy-policy" element={<PrivacyPolicy />} />
               <Route path="/about" element={<About />} />
+              <Route path="/about-founder" element={<AboutFounder />} />
               <Route path="/terms" element={<TermsOfService />} />
               <Route path="/cookies" element={<CookiePolicy />} />
               <Route path="/faq" element={<FAQPage />} />

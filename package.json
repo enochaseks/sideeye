@@ -1,7 +1,7 @@
 {
   "name": "side-eye",
   "homepage": "https://www.sideeye.uk",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "proxy": "http://localhost:3001",
   "dependencies": {

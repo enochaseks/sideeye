@@ -66,6 +66,7 @@ import {
     CardMedia,
     useTheme,
     useMediaQuery,
+    Divider,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
@@ -149,6 +150,8 @@ import { Helmet } from 'react-helmet-async';
 import { debounce } from 'lodash';
 import { io, Socket } from 'socket.io-client'; // Import socket.io-client
 import SearchSourceLinks, { SourceLink } from '../SearchSourceLinks';
+import ReportContent from '../ReportContent/ReportContent';
+import ShareRoomViaMessageDialog from './ShareRoomViaMessageDialog'; // Import the new dialog
 
 // --- YouTube Iframe Player API Types (Basic) ---
 declare global {
@@ -595,6 +598,7 @@ const SideRoomComponent: React.FC = () => {
 
     // --- State ---
     const [room, setRoom] = useState<SideRoom | null>(null);
+    const [showShareViaMessageDialog, setShowShareViaMessageDialog] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -708,6 +712,9 @@ const SideRoomComponent: React.FC = () => {
     // --- State for Heart and Heartbreak Animations ---
     const [floatingHearts, setFloatingHearts] = useState<number[]>([]);
     const [floatingHeartbreaks, setFloatingHeartbreaks] = useState<number[]>([]);
+    
+    // --- State for Room Reporting ---
+    const [reportRoomDialogOpen, setReportRoomDialogOpen] = useState(false);
     
     // ... existing code ...
 
@@ -2261,6 +2268,17 @@ const SideRoomComponent: React.FC = () => {
                             <ShareIcon />
                         </IconButton>
                     </Tooltip>
+                    {/* Report Room button - only visible to viewers/participants, not room owners */}
+                    {currentUser?.uid && room?.ownerId && currentUser.uid !== room.ownerId && (
+                        <Tooltip title="Report Room">
+                            <IconButton 
+                                onClick={handleOpenReportRoom} 
+                                sx={{ color: room?.style?.accentColor || 'inherit' }}
+                            >
+                                <ReportIcon />
+                            </IconButton>
+                        </Tooltip>
+                    )}
                     {isRoomOwner && (
                      <Tooltip title="Share Video Link">
                          <IconButton 
@@ -2503,7 +2521,7 @@ const SideRoomComponent: React.FC = () => {
              console.error(`Error toggling mute for ${targetUserId}:`, error);
              toast.error('Failed to update mute status.');
         }
-    }, [isRoomOwner, roomId, currentUser?.uid, db]); // Added db dependency
+    }, [isRoomOwner, roomId, currentUser?.uid, db]);
 
     const handleForceRemove = useCallback((targetUserId: string, targetUsername?: string) => {
         if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid || !socket) return;
@@ -3444,6 +3462,124 @@ const SideRoomComponent: React.FC = () => {
         setShowJoinRoomChatDialog(false);
     };
 
+    const handleOpenReportRoom = () => {
+        setReportRoomDialogOpen(true);
+    };
+
+    const handleCloseReportRoom = () => {
+        setReportRoomDialogOpen(false);
+    };
+
+    
+
+    const handleOpenShareViaMessageDialog = () => {
+        setShowShareDialog(false); // Close the main share dialog
+        setShowShareViaMessageDialog(true);
+    };
+
+    const handleCloseShareViaMessageDialog = () => {
+        setShowShareViaMessageDialog(false);
+    };
+
+    const handleSendMessage = async (recipientId: string, message: string) => {
+        if (!currentUser?.uid || !db) {
+            toast.error("Cannot send message: User not authenticated.");
+            return;
+        }
+
+        try {
+            // Check if this is a server chat room message
+            const roomRef = doc(db, 'rooms', recipientId);
+            const roomDoc = await getDoc(roomRef);
+            
+            if (roomDoc.exists()) {
+                // This is a server chat room message
+                const messagesRef = collection(db, 'rooms', recipientId, 'messages');
+                await addDoc(messagesRef, {
+                    text: message,
+                    sender: currentUser.uid,
+                    senderName: currentUser.displayName || 'Unknown User',
+                    senderPhoto: currentUser.photoURL,
+                    timestamp: serverTimestamp(),
+                    type: 'chat'
+                });
+                return;
+            }
+
+            // If not a room, proceed with direct message logic
+            const conversationsRef = collection(db, 'conversations');
+            const q = query(
+                conversationsRef,
+                where('participants', 'array-contains', currentUser.uid)
+            );
+            
+            const snapshot = await getDocs(q);
+            let conversationId: string | null = null;
+            
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                if (data.participants.includes(recipientId)) {
+                    conversationId = doc.id;
+                }
+            });
+
+            // If no conversation exists, create one
+            if (!conversationId) {
+                // Get recipient's user data to check if they follow the current user
+                const recipientUserRef = doc(db, 'users', recipientId);
+                const recipientUserDoc = await getDoc(recipientUserRef);
+                
+                if (!recipientUserDoc.exists()) {
+                    throw new Error('Recipient user not found');
+                }
+                
+                const recipientData = recipientUserDoc.data();
+                const recipientFollowsCurrentUser = recipientData.following?.includes(currentUser.uid) || false;
+                
+                // Create new conversation
+                const newConversationRef = doc(collection(db, 'conversations'));
+                await setDoc(newConversationRef, {
+                    participants: [currentUser.uid, recipientId],
+                    createdAt: serverTimestamp(),
+                    lastUpdated: serverTimestamp(),
+                    unreadCount: {
+                        [currentUser.uid]: 0,
+                        [recipientId]: 1
+                    },
+                    status: recipientFollowsCurrentUser ? 'accepted' : 'pending'
+                });
+                
+                conversationId = newConversationRef.id;
+            }
+
+            // Add the message to the conversation
+            const messagesRef = collection(db, 'conversations', conversationId, 'messages');
+            await addDoc(messagesRef, {
+                text: message,
+                sender: currentUser.uid,
+                timestamp: serverTimestamp(),
+                read: false,
+                reactions: []
+            });
+
+            // Update conversation with last message
+            const conversationRef = doc(db, 'conversations', conversationId);
+            await updateDoc(conversationRef, {
+                lastMessage: {
+                    text: message,
+                    sender: currentUser.uid,
+                    timestamp: serverTimestamp()
+                },
+                lastUpdated: serverTimestamp(),
+                [`unreadCount.${recipientId}`]: increment(1)
+            });
+
+        } catch (error) {
+            console.error("Error sending message:", error);
+            throw error;
+        }
+    };
+
     // Main return for SideRoomComponent
     return (
         <>
@@ -3616,7 +3752,7 @@ const SideRoomComponent: React.FC = () => {
                         <TextField
                             fullWidth
                             variant="outlined"
-                            value={pageUrl} // pageUrl is already defined
+                            value={`${window.location.origin}/side-room/${roomId}`} // pageUrl is already defined
                             InputProps={{
                                 readOnly: true,
                             }}
@@ -3626,34 +3762,55 @@ const SideRoomComponent: React.FC = () => {
                             variant="contained" 
                             startIcon={<ContentCopyIcon />}
                                         onClick={() => {
-                                navigator.clipboard.writeText(pageUrl);
+                                navigator.clipboard.writeText(`${window.location.origin}/side-room/${roomId}`);
                                 toast.success("Room link copied to clipboard!");
                                         }}
                             sx={{ mb: 2 }}
                         >
                             Copy Link
                         </Button>
-                        <Typography variant="subtitle2" gutterBottom>
-                            Or share on:
+
+                        <Divider sx={{ my: 2 }}>
+                            <Chip label="OR" />
+                        </Divider>
+
+                        <Typography variant="subtitle2" gutterBottom sx={{ mb: 1}}>
+                            Share via Direct Message:
+                        </Typography>
+                        <Button 
+                            variant="outlined" 
+                            startIcon={<ChatIcon />} // Or another appropriate icon
+                            onClick={handleOpenShareViaMessageDialog}
+                            sx={{ mb: 2, width: '100%' }} // Make it full width for emphasis
+                        >
+                            Send to a Friend
+                        </Button>
+
+                        <Divider sx={{ my: 2 }}>
+                            <Chip label="OR" />
+                        </Divider>
+
+                        <Typography variant="subtitle2" gutterBottom sx={{ mb: 1}}>
+                            Share on social media:
                         </Typography>
                         <Box sx={{ display: 'flex', justifyContent: 'space-around', mt: 1 }}>
                                     <IconButton
                                 color="primary" 
-                                onClick={() => window.open(`https://twitter.com/intent/tweet?url=${encodeURIComponent(pageUrl)}&text=${encodeURIComponent(room?.name || 'Join my SideEye Room!')}`, '_blank')}
+                                onClick={() => window.open(`https://twitter.com/intent/tweet?url=${encodeURIComponent(`${window.location.origin}/side-room/${roomId}`)}&text=${encodeURIComponent(room?.name || 'Join my SideEye Room!')}`, '_blank')}
                                 title="Share on Twitter"
                                     >
                                 <TwitterIcon />
                                     </IconButton>
                                     <IconButton
                                 color="primary" 
-                                onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(pageUrl)}`, '_blank')}
+                                onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(`${window.location.origin}/side-room/${roomId}`)}`, '_blank')}
                                 title="Share on Facebook"
                                   >
                                 <FacebookIcon />
                                     </IconButton>
                             <IconButton
                                 color="primary"
-                                onClick={() => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent((room?.name || 'Join my SideEye Room!') + ' ' + pageUrl)}`, '_blank')}
+                                onClick={() => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent((room?.name || 'Join my SideEye Room!') + ' ' + `${window.location.origin}/side-room/${roomId}`)}`, '_blank')}
                                 title="Share on WhatsApp"
                             >
                                 <WhatsAppIcon />
@@ -3662,7 +3819,7 @@ const SideRoomComponent: React.FC = () => {
                             <IconButton
                                 color="primary" 
                                 onClick={() => {
-                                    navigator.clipboard.writeText(pageUrl);
+                                    navigator.clipboard.writeText(`${window.location.origin}/side-room/${roomId}`);
                                     toast.success("Room link copied! Paste it on Instagram.");
                                     window.open('https://www.instagram.com', '_blank'); // Open Instagram in new tab
                                 }}
@@ -3670,6 +3827,7 @@ const SideRoomComponent: React.FC = () => {
                             >
                                 <InstagramIcon />
                             </IconButton>
+                    
                         </Box>
                     </DialogContent>
                     <DialogActions>
@@ -4061,6 +4219,26 @@ const SideRoomComponent: React.FC = () => {
                         </Button>
                     </DialogActions>
                 </Dialog>
+
+                {/* Report Room Dialog */}
+                {room && (
+                    <ReportContent
+                        contentId={room.id}
+                        contentType="sideRoom"
+                        onClose={handleCloseReportRoom}
+                        open={reportRoomDialogOpen}
+                        ownerUsername={ownerData?.username}
+                    />
+                )}
+
+                <ShareRoomViaMessageDialog
+                    open={showShareViaMessageDialog}
+                    onClose={handleCloseShareViaMessageDialog}
+                    roomName={room?.name}
+                    roomLink={pageUrl} // Assuming pageUrl holds the current room link
+                    onSend={handleSendMessage}
+                    currentUserId={currentUser?.uid}
+                />
                         </Box>
         </>
     );
@@ -4103,6 +4281,7 @@ const InsideStreamCallContent: React.FC<{
 
     // Add state for desktop detection
     const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024);
+    
 
     // Add state to track PiP visibility separately from camera state
     const [isPipVisible, setIsPipVisible] = useState(true);

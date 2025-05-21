@@ -1,6 +1,6 @@
 # Release Notes
 
-## Version 1.2.1
+## Version 1.2.2
 - New message requests system: Messages from users you don't follow appear in a separate requests tab
 - Enhanced breathing exercises with a ready button
 - Connect 4 game improvements
@@ -31,6 +31,10 @@
 - Live Video added in the sideroom component
 - New tabs added in the discover page 
 - Updated the Rooms + tab
+- Updated the share functionality inside the sideroom components.
+- Added a heart and heartbreak floating functionality
+- About the founder is now located in the settings page
+- Updated the discover page, popular tab and main side room page.
 
 ## Version 1.0.0
 - Initial release of SideEye 

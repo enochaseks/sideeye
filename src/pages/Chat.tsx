@@ -30,7 +30,8 @@ import {
   MenuItem,
   Popover,
   useMediaQuery,
-  useTheme
+  useTheme,
+  Link
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -1127,6 +1128,47 @@ const Chat: React.FC = () => {
     }
   };
 
+  const renderMessageContent = (text: string) => {
+    // Regular expression to match room links and extract room ID
+    const roomLinkRegex = /(https?:\/\/[^\s]+\/side-room\/[^\s]+)/g;
+    const parts = text.split(roomLinkRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(roomLinkRegex)) {
+        // Extract the room ID from the URL
+        const url = new URL(part);
+        const pathSegments = url.pathname.split('/');
+        const roomId = pathSegments[pathSegments.length - 1];
+
+        return (
+          <Link
+            key={index}
+            component="button"
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent reaction menu from opening
+              navigate(`/side-room/${roomId}`);
+            }}
+            sx={{
+              color: 'inherit',
+              textDecoration: 'underline',
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              font: 'inherit',
+              cursor: 'pointer',
+              '&:hover': {
+                opacity: 0.8
+              }
+            }}
+          >
+            {part}
+          </Link>
+        );
+      }
+      return <span key={index}>{part}</span>;
+    });
+  };
+
   const renderMessage = (message: Message) => {
     const isCurrentUser = message.sender === currentUser?.uid;
     
@@ -1214,7 +1256,7 @@ const Chat: React.FC = () => {
             </Box>
           )}
           
-          <Typography variant="body1">{message.text}</Typography>
+          <Typography variant="body1">{renderMessageContent(message.text)}</Typography>
           <Typography variant="caption" className="timestamp">
             {formatTime(message.timestamp)}
           </Typography>

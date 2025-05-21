@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   Container,
   Paper,
@@ -1007,6 +1007,8 @@ const RoomChat: React.FC = () => {
     handleAnnouncementMenuClose();
   };
 
+  
+
   const handleEditAnnouncement = async () => {
     if (!selectedAnnouncement || !currentUser || !isOwner || !editedAnnouncementText.trim()) return;
 
@@ -1613,6 +1615,51 @@ const handleDeletePoll = async () => {
     }
   }, [roomMembers, blockedUsers]);
 
+  const handleRoomLinkClick = (roomId: string) => {
+    navigate(`/side-room/${roomId}`);
+  };
+
+  const renderMessageContent = (text: string) => {
+    // Regular expression to match room links and extract room ID
+    const roomLinkRegex = /(https?:\/\/[^\s]+\/side-room\/[^\s]+)/g;
+    const parts = text.split(roomLinkRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(roomLinkRegex)) {
+        // Extract the room ID from the URL
+        const url = new URL(part);
+        const pathSegments = url.pathname.split('/');
+        const roomId = pathSegments[pathSegments.length - 1];
+
+        return (
+          <Box
+            key={index}
+            component="button"
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+              e.stopPropagation(); // Prevent reaction menu from opening
+              handleRoomLinkClick(roomId);
+            }}
+            sx={{
+              color: 'inherit',
+              textDecoration: 'underline',
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              font: 'inherit',
+              cursor: 'pointer',
+              '&:hover': {
+                opacity: 0.8
+              }
+            }}
+          >
+            {part}
+          </Box>
+        );
+      }
+      return <span key={index}>{part}</span>;
+    });
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -1805,7 +1852,7 @@ const handleDeletePoll = async () => {
                           )}
 
                           <Typography variant="body1">
-                            {msg.text}
+                            {renderMessageContent(msg.text)}
                           </Typography>
                           <Typography 
                             variant="caption" 

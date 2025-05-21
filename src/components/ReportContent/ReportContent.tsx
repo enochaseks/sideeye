@@ -24,6 +24,7 @@ interface ReportContentProps {
   contentType: 'sideRoom' | 'message' | 'chatRoom' | 'sadeAI' | 'user';
   onClose: () => void;
   open: boolean;
+  ownerUsername?: string;
 }
 
 interface ContentPreview {
@@ -49,6 +50,7 @@ const ReportContent: React.FC<ReportContentProps> = ({
   contentType,
   onClose,
   open,
+  ownerUsername,
 }) => {
   const { currentUser } = useAuth();
   const [preview, setPreview] = useState<ContentPreview | null>(null);
@@ -102,8 +104,8 @@ const ReportContent: React.FC<ReportContentProps> = ({
         setPreview({
           title: previewData?.title || previewData?.name || previewData?.username,
           content: previewData?.content || previewData?.text || previewData?.description,
-          author: previewData?.authorName || previewData?.username || 'Unknown',
-          timestamp: previewData?.timestamp?.toDate().toISOString() || previewData?.createdAt?.toDate().toISOString() || new Date().toISOString()
+          author: ownerUsername || previewData?.authorName || previewData?.username || 'Unknown',
+          timestamp: previewData?.timestamp?.toDate?.() ? previewData.timestamp.toDate().toISOString() : (previewData?.createdAt?.toDate?.() ? previewData.createdAt.toDate().toISOString() : new Date().toISOString())
         });
       } else {
         console.log("Preview document does not exist!");
