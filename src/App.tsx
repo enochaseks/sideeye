@@ -4,9 +4,10 @@ import {
   Route, 
   Navigate,
   BrowserRouter as Router,
-  useLocation
+  useLocation,
+  useNavigate
 } from 'react-router-dom';
-import { CssBaseline, Box, useTheme, useMediaQuery, CircularProgress } from '@mui/material';
+import { CssBaseline, Box, useTheme, useMediaQuery, CircularProgress, Fab } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { ThemeContextProvider } from './contexts/ThemeContext';
@@ -30,6 +31,7 @@ import { FirestoreProvider } from './context/FirestoreContext';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import CookieConsent from './components/CookieConsent';
+import CreateSideRoom from './components/CreateSideRoom';
 
 // Lazy load larger page components
 const Profile = lazy(() => import('./pages/Profile'));
@@ -79,7 +81,7 @@ const LoadingFallback = () => (
 const DRAWER_WIDTH = 240;
 const COLLAPSED_DRAWER_WIDTH = 64;
 
-const BottomNavWrapper: React.FC = () => {
+const BottomNavWrapper: React.FC<{ onCreateRoomClick: () => void }> = ({ onCreateRoomClick }) => {
   const { currentUser } = useAuth();
   const location = useLocation();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -88,15 +90,36 @@ const BottomNavWrapper: React.FC = () => {
     return null;
   }
   
-  return <BottomNav isDrawerOpen={isDrawerOpen} setIsDrawerOpen={setIsDrawerOpen} />;
+  return <BottomNav 
+    isDrawerOpen={isDrawerOpen} 
+    setIsDrawerOpen={setIsDrawerOpen} 
+    onCreateRoomClick={onCreateRoomClick}
+  />;
 };
 
 const AppContent: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isVibitsPage = location.pathname === '/vibits';
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  
+  // Global state for create room dialog
+  const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false);
+
+  // Create a global function for the create room dialog
+  React.useEffect(() => {
+    // @ts-ignore - Adding a global function
+    window.openCreateRoomDialog = () => {
+      setShowCreateRoomDialog(true);
+    };
+    
+    return () => {
+      // @ts-ignore - Clean up on unmount
+      delete window.openCreateRoomDialog;
+    };
+  }, []);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -115,7 +138,32 @@ const AppContent: React.FC = () => {
         }),
         pb: { xs: '56px', sm: 0 },
       }}>
-        <Box component="main" sx={{ flexGrow: 1, width: '100%' }}>
+        <Box component="main" sx={{ flexGrow: 1, width: '100%', position: 'relative' }}>
+          {/* Floating Sade AI button for mobile */}
+          {isMobile && location.pathname === '/' && (
+            <Fab
+              color="secondary"
+              aria-label="sade-ai"
+              onClick={() => navigate('/sade-ai')}
+              sx={{
+                position: 'fixed',
+                bottom: 80, // Position above bottom nav
+                right: 16,
+                zIndex: 1000,
+              }}
+            >
+              <img
+                src="/images/sade-avatar.jpg"
+                alt="Sade AI"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  borderRadius: '50%',
+                }}
+              />
+            </Fab>
+          )}
+
           <Suspense fallback={<LoadingFallback />}>
             <Routes>
               {/* Public routes */}
@@ -233,7 +281,7 @@ const AppContent: React.FC = () => {
           </Suspense>
         </Box>
       </Box>
-      <BottomNavWrapper />
+      <BottomNavWrapper onCreateRoomClick={() => setShowCreateRoomDialog(true)} />
       <UpdateNotification />
       <CookieConsent />
       <Toaster 
@@ -245,6 +293,12 @@ const AppContent: React.FC = () => {
             color: theme.palette.text.primary,
           },
         }}
+      />
+      
+      {/* GLOBAL Create Room Dialog that works from ANY page */}
+      <CreateSideRoom
+        open={showCreateRoomDialog}
+        onClose={() => setShowCreateRoomDialog(false)}
       />
     </Box>
   );

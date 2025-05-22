@@ -17,7 +17,7 @@ import {
   Typography,
   IconButton,
   Tooltip,
-  Divider
+  Divider,
 } from '@mui/material';
 import {
   Home as HomeIcon,
@@ -28,7 +28,8 @@ import {
   Message as MessageIcon,
   Menu as MenuIcon,
   ChevronLeft as ChevronLeftIcon,
-  ChevronRight as ChevronRightIcon
+  ChevronRight as ChevronRightIcon,
+  Add as AddIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -40,9 +41,10 @@ const COLLAPSED_DRAWER_WIDTH = 64;
 interface BottomNavProps {
   isDrawerOpen: boolean;
   setIsDrawerOpen: Dispatch<SetStateAction<boolean>>;
+  onCreateRoomClick?: () => void;
 }
 
-const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) => {
+const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen, onCreateRoomClick }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentUser } = useAuth();
@@ -84,6 +86,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) 
     setIsDrawerOpen(false);
   };
 
+  // Define navigation items - NOTE: Removed Sade AI for mobile
   const navigationItems = [
     {
       label: "Discover",
@@ -104,7 +107,8 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) 
         </Badge>
       ),
     },
-    {
+    // Sade AI remains in desktop navigation items only
+    ...(isMobile ? [] : [{
       label: "Sade AI",
       path: "/sade-ai",
       icon: (
@@ -113,7 +117,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) 
           sx={{ width: 24, height: 24 }}
         />
       ),
-    },
+    }]),
     {
       label: "Profile",
       path: `/profile/${currentUser?.uid}`,
@@ -228,13 +232,48 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen }) 
     >
       <BottomNavigation
         value={location.pathname}
-        onChange={(event, newValue) => handleNavigation(newValue)}
+        onChange={(event, newValue) => {
+          // Don't handle the create button through onChange
+          // This will only handle navigation to actual routes
+          if (newValue !== 'create') {
+            handleNavigation(newValue);
+          }
+        }}
         sx={{
           backgroundColor: theme.palette.background.paper,
           borderTop: `1px solid ${theme.palette.divider}`,
         }}
       >
-        {navigationItems.map((item) => (
+        {/* First two items (Discover, Side Rooms) */}
+        {navigationItems.slice(0, 2).map((item) => (
+          <BottomNavigationAction
+            key={item.label}
+            label={item.label}
+            value={item.path}
+            icon={item.icon}
+          />
+        ))}
+        
+        {/* Create button in the middle */}
+        <BottomNavigationAction
+          key="create"
+          label="Create"
+          value="create"
+          icon={<AddIcon />}
+          onClick={(e) => {
+            e.preventDefault(); // Prevent default navigation behavior
+            console.log('[BottomNav] Create button clicked');
+            if (onCreateRoomClick) {
+              console.log('[BottomNav] Calling onCreateRoomClick handler');
+              onCreateRoomClick();
+            } else {
+              console.warn('[BottomNav] onCreateRoomClick handler is not defined');
+            }
+          }}
+        />
+        
+        {/* Last two items (Messages, Profile) */}
+        {navigationItems.slice(2).map((item) => (
           <BottomNavigationAction
             key={item.label}
             label={item.label}

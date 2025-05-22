@@ -121,6 +121,11 @@ import {
     VerifiedUser as VerifiedUserIcon, // Added VerifiedUserIcon
     HeartBroken as HeartBrokenIcon,
     HeartBrokenOutlined as HeartBrokenOutlinedIcon,
+    SportsEsports as SportsEsportsIcon,
+    FiberManualRecord as FiberManualRecordIcon,
+    Visibility as VisibilityIcon,
+    CardGiftcard as CardGiftcardIcon,
+    EmojiEvents as EmojiEventsIcon,
 } from '@mui/icons-material';
 import type { SideRoom, RoomMember, UserProfile, RoomStyle} from '../../types/index';
 import RoomForm from './RoomForm';
@@ -152,6 +157,8 @@ import { io, Socket } from 'socket.io-client'; // Import socket.io-client
 import SearchSourceLinks, { SourceLink } from '../SearchSourceLinks';
 import ReportContent from '../ReportContent/ReportContent';
 import ShareRoomViaMessageDialog from './ShareRoomViaMessageDialog'; // Import the new dialog
+import Gifts from './Gifts'; // Add this import
+import TopGifters from './TopGifters';
 
 // --- YouTube Iframe Player API Types (Basic) ---
 declare global {
@@ -167,6 +174,9 @@ declare global {
                 CUED: number;
             };
         };
+        // Custom screen sharing properties
+        SIDEEYE_SCREENSHARE_PARTICIPANT: any;
+        SIDEEYE_SCREENSHARE_STREAM: MediaStream | null;
     }
 }
 
@@ -2374,7 +2384,7 @@ const SideRoomComponent: React.FC = () => {
                             <ExitToApp />
                         </IconButton>
                     </Tooltip>
-                    {isRoomOwner && isDesktop && activeStreamCallInstance && ( // ADDED screen share button condition
+                    {isRoomOwner && isDesktop && activeStreamCallInstance && (
                         <Tooltip title={isScreenSharing ? "Stop Sharing Screen" : "Share Screen (Desktop Only)"}>
                             <IconButton onClick={handleToggleScreenShare} sx={{ color: room?.style?.accentColor || 'inherit' }}>
                                 {isScreenSharing ? <StopScreenShareIcon /> : <ScreenShareIcon />}
@@ -4261,12 +4271,17 @@ const InsideStreamCallContent: React.FC<{
     theme: any,
     navigate: Function
 }> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme, navigate }) => {
+    // Create a ref for the screen share video element
+    const screenShareVideoRef = useRef<HTMLVideoElement>(null);
     const call = useCall(); 
     const { useParticipants, useCallState, useMicrophoneState, useCameraState } = useCallStateHooks(); 
     const participants = useParticipants(); 
     const { localParticipant } = useCallState(); 
     const { isMute: localUserIsMute } = useMicrophoneState(); 
     const { isEnabled: isCameraEnabled, isTogglePending } = useCameraState(); 
+    
+    // State to force screen share updates
+    const [forceScreenShareUpdate, setForceScreenShareUpdate] = useState(0); 
 
     // Initialize camera as disabled
     useEffect(() => {
@@ -4291,7 +4306,7 @@ const InsideStreamCallContent: React.FC<{
     const [pinnedUserIds, setPinnedUserIds] = useState<string[]>([]);
     
     // Add state for chat tab
-    const [activeTab, setActiveTab] = useState<'participants' | 'chat'>('participants');
+    const [activeTab, setActiveTab] = useState<'participants' | 'chat' | 'gifts' | 'topGifters'>('participants');
     const [chatMessages, setChatMessages] = useState<{id: string, userId: string, userName: string, message: string, timestamp: number}[]>([]);
     const [chatInput, setChatInput] = useState('');
     const chatEndRef = useRef<null | HTMLDivElement>(null);
@@ -4324,12 +4339,15 @@ const InsideStreamCallContent: React.FC<{
         }
     }, [isRoomOwnerSharing, screenSharingParticipant]);
     
-    // Screen sharing effect for all participants
+    // When participants change, force an update to screen sharing view
     useEffect(() => {
         if (screenSharingParticipant) {
             console.log(`Screen sharing available from participant: ${screenSharingParticipant.name || screenSharingParticipant.userId}`);
+            
+            // Force an update whenever participants change to ensure new joiners see the stream
+            setForceScreenShareUpdate(prev => prev + 1);
         }
-    }, [screenSharingParticipant]);
+    }, [screenSharingParticipant, participants.length]);
 
     // State to cache usernames from Firestore
     const [firestoreUserData, setFirestoreUserData] = useState<{[key: string]: {username: string, avatar?: string}}>({});
@@ -4643,17 +4661,211 @@ const InsideStreamCallContent: React.FC<{
         }
     }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); 
 
-    // Screen sharing detection effect using Stream's native components
+    // Force a re-check of screen sharing when call changes or when we need to force an update
     useEffect(() => {
-        if (!call || !participants || participants.length === 0) return;
+        if (!call) return;
+        
+        // Schedule a re-check in case the video stream isn't immediately available
+        console.log("Call or force update changed, rechecking screen share in 2 seconds");
+        
+        const checkScreenShare = setTimeout(() => {
+            const container = document.getElementById('screen-share-container');
+            if (container && screenSharingParticipant?.screenShareStream) {
+                // Create and append a video element if it doesn't exist
+                let videoEl = container.querySelector('video');
+                
+                if (!videoEl) {
+                    videoEl = document.createElement('video');
+                    videoEl.id = 'screen-share-video';
+                    videoEl.autoplay = true;
+                    videoEl.playsInline = true;
+                    videoEl.style.width = '100%';
+                    videoEl.style.height = '100%';
+                    videoEl.style.position = 'absolute';
+                    videoEl.style.top = '0';
+                    videoEl.style.left = '0';
+                    videoEl.style.objectFit = 'contain';
+                    container.appendChild(videoEl);
+                }
+                
+                // Set or update the stream
+                if (videoEl.srcObject !== screenSharingParticipant.screenShareStream) {
+                    videoEl.srcObject = screenSharingParticipant.screenShareStream;
+                    videoEl.play().catch(err => console.error("Error playing screen share:", err));
+                    console.log("Force-updated screen share video with latest stream");
+                }
+            }
+        }, 2000);
+        
+        return () => {
+            clearTimeout(checkScreenShare);
+        };
+    }, [call, forceScreenShareUpdate, screenSharingParticipant]);
+
+    // Manual screen share handling to bypass React lifecycle issues
+    useEffect(() => {
+        if (!participants || participants.length === 0) return;
         
         // Find any participant who is sharing their screen
         const screensharer = participants.find(p => p.screenShareStream);
-        if (screensharer) {
+        const container = document.getElementById('screen-share-container');
+        
+        // Function to create and set up video element
+        const setupScreenShareVideo = () => {
+            if (!screensharer?.screenShareStream || !container) return;
+            
             console.log(`Screen sharing detected from: ${screensharer.name || screensharer.userId}`);
-            console.log("Screen share stream should be visible to ALL participants");
+            
+            // Remove any existing video element to avoid duplicates
+            const existingVideo = container.querySelector('video');
+            if (existingVideo) {
+                existingVideo.remove();
+            }
+            
+            // Create a fresh video element
+            const videoEl = document.createElement('video');
+            videoEl.id = 'screen-share-video';
+            videoEl.autoplay = true;
+            videoEl.playsInline = true;
+            videoEl.muted = false;
+            
+            // Set stream directly
+            videoEl.srcObject = screensharer.screenShareStream;
+            
+            // Add to container
+            container.appendChild(videoEl);
+            
+            // Add gaming overlays to the container
+            // Game name banner
+            const gamerNameBox = document.createElement('div');
+            gamerNameBox.className = 'gaming-overlay gamer-name';
+            gamerNameBox.innerHTML = `<span>${screensharer.name || 'Gamer'}</span>`;
+            gamerNameBox.style.cssText = `
+                position: absolute;
+                top: 20px;
+                left: 20px;
+                background-color: rgba(0,0,0,0.7);
+                border-radius: 8px;
+                padding: 8px 12px;
+                display: flex;
+                align-items: center;
+                border: 1px solid ${room?.style?.accentColor || '#ff5722'};
+                box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+                z-index: 99;
+                color: white;
+                font-weight: bold;
+            `;
+            container.appendChild(gamerNameBox);
+            
+            // Live indicator
+            const liveBox = document.createElement('div');
+            liveBox.className = 'gaming-overlay live-indicator';
+            liveBox.innerHTML = `<span>LIVE</span>`;
+            liveBox.style.cssText = `
+                position: absolute;
+                top: 20px;
+                right: 20px;
+                background-color: #f44336;
+                border-radius: 4px;
+                padding: 4px 8px;
+                display: flex;
+                align-items: center;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                z-index: 99;
+                color: white;
+                font-weight: bold;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                font-size: 0.8rem;
+            `;
+            container.appendChild(liveBox);
+            
+            // Viewer count
+            const viewerBox = document.createElement('div');
+            viewerBox.className = 'gaming-overlay viewer-count';
+            viewerBox.innerHTML = `<span>${participants?.length || 0} viewers</span>`;
+            viewerBox.style.cssText = `
+                position: absolute;
+                bottom: 20px;
+                left: 20px;
+                background-color: rgba(0,0,0,0.7);
+                border-radius: 8px;
+                padding: 6px 10px;
+                display: flex;
+                align-items: center;
+                z-index: 99;
+                color: white;
+                font-weight: medium;
+                font-size: 0.9rem;
+            `;
+            container.appendChild(viewerBox);
+            
+            // Bottom bar
+            const bottomBar = document.createElement('div');
+            bottomBar.className = 'gaming-overlay bottom-bar';
+            bottomBar.innerHTML = `<span style="color: ${room?.style?.accentColor || '#ff5722'}; font-weight: bold;">GAMING STREAM</span>`;
+            bottomBar.style.cssText = `
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                background-color: rgba(0,0,0,0.7);
+                padding: 8px 10px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                z-index: 98;
+            `;
+            container.appendChild(bottomBar);
+            
+            // Play with retry mechanism
+            const playVideo = () => {
+                const playPromise = videoEl.play();
+                
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.error('Error playing screen share:', error);
+                        setTimeout(playVideo, 1000);
+                    });
+                }
+            };
+            
+            playVideo();
+            
+            console.log('Screen share video element created and playing');
+        };
+        
+        // Clean up if no screen sharing
+        const cleanupScreenShareVideo = () => {
+            if (!container) return;
+            
+            // Remove video element
+            const existingVideo = container.querySelector('video');
+            if (existingVideo) {
+                existingVideo.srcObject = null;
+                existingVideo.remove();
+                console.log('Screen share video element removed');
+            }
+            
+            // Remove all overlays
+            const overlays = container.querySelectorAll('.gaming-overlay');
+            overlays.forEach(overlay => {
+                overlay.remove();
+            });
+        };
+        
+        // Setup or cleanup based on screen sharing state
+        if (screensharer) {
+            setupScreenShareVideo();
+        } else {
+            cleanupScreenShareVideo();
         }
-    }, [call, participants]);
+        
+        // Cleanup on component unmount
+        return () => {
+            cleanupScreenShareVideo();
+        };
+    }, [participants]);
 
     if (!call) {
         return (
@@ -5067,19 +5279,19 @@ const InsideStreamCallContent: React.FC<{
                         <Typography variant="h6" align="center" sx={{ 
                             mt: 2, 
                             mb: 1, 
-                            fontWeight: 500,
-                            color: room?.style?.accentColor || theme.palette.primary.main
+                            fontWeight: 700,
+                            color: room?.style?.accentColor || '#ff5722',
+                            textTransform: 'uppercase',
+                            letterSpacing: '1px',
+                            textShadow: '0px 1px 2px rgba(0,0,0,0.2)'
                         }}>
-                            {screenSharingParticipant.userId === currentUser?.uid ? 
-                                "You are sharing your screen" : 
-                                `${screenSharingParticipant.name || 'Someone'} is sharing their screen`}
-                            {isRoomOwnerSharing && screenSharingParticipant.userId !== currentUser?.uid && " (Room Owner)"}
+                            🎮 LIVE GAMING STREAM 🎮
                         </Typography>
                         <Box sx={{ 
                             m: 0,
                             p: 0,
-                            border: '1px solid',
-                            borderColor: 'divider',
+                            border: '2px solid',
+                            borderColor: room?.style?.accentColor || '#ff5722',
                             borderRadius: '8px',
                             backgroundColor: '#000',
                             position: 'relative',
@@ -5092,96 +5304,33 @@ const InsideStreamCallContent: React.FC<{
                             marginTop: 2,
                             marginBottom: 2,
                             overflow: 'hidden',
-                            boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
+                            boxShadow: '0 8px 16px rgba(0,0,0,0.3)'
                         }}>
                             {/* Show screen share when PiP is not enlarged, ensuring all participants can see it */}
                             {!isPipEnlarged && (
-                            <Box sx={{
+                            <Box 
+                                id="screen-share-container"
+                                sx={{
                                 width: '100%', 
                                 paddingTop: '56.25%', // 16:9 aspect ratio (9/16 = 0.5625)
                                 overflow: 'hidden', 
                                 position: 'relative', 
                                 border: 'none',
-                                '& .str-video__screen-share-info': {
-                                    display: 'none !important',
-                                    visibility: 'hidden !important',
-                                    opacity: 0,
-                                    height: 0,
-                                    overflow: 'hidden',
-                                    pointerEvents: 'none',
-                                    position: 'absolute',
-                                    zIndex: -9999
-                                },
-                                '& .str-video__participant-details, & .str-video__participant-bar, & .str-video__loading-indicator, & .str-video__screen-share-text, & .str-video__screen-share-status, & .str-video__participant__name, & .str-video__participant__info, & .str-video__participant-flag, & div[class*="screen-share"], & span[class*="presentation"]': {
-                                    display: 'none !important',
-                                    visibility: 'hidden !important',
-                                    opacity: 0,
-                                    height: 0,
-                                    width: 0,
-                                    overflow: 'hidden',
-                                    pointerEvents: 'none'
-                                },
-                                '& .str-video__participant-view': { 
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    width: '100% !important',
-                                    height: '100% !important',
-                                    border: 'none',
-                                    display: 'flex', 
-                                    justifyContent: 'center', 
-                                    alignItems: 'center', 
+                                background: '#000',
                                     '& video': { 
                                         width: '100%', 
                                         height: '100%', 
-                                        objectFit: 'contain',
-                                        background: '#000'
-                                    },
-                                    '& .str-video__participant-details': {
-                                        display: 'none !important'
-                                    },
-                                    '& .str-video__participant-status': {
-                                        display: 'none !important'
-                                    },
-                                    '& .str-video__participant-flag-container': {
-                                        display: 'none !important'
-                                    }
-                                },
-                            }}>
-                                <ParticipantView 
-                                    participant={screenSharingParticipant} 
-                                    trackType="screenShareTrack"
-                                />
-                            </Box>
-                            )}
-                            
-                            {/* Make sure everyone can see the screen share regardless of who is sharing */}
-                            {screenSharingParticipant && !isPipEnlarged && (
-                                <Box sx={{
                                     position: 'absolute',
                                     top: 0,
                                     left: 0,
-                                    width: '100%',
-                                    height: '100%',
-                                    zIndex: -1, // Hidden but keeps the stream active for all participants
-                                    opacity: 0,
-                                    pointerEvents: 'none'
-                                }}>
-                                    {/* This ensures the screen share stream is active for all participants */}
-                                    <video 
-                                        autoPlay 
-                                        playsInline
-                                        ref={(el) => {
-                                            if (el && screenSharingParticipant?.screenShareStream) {
-                                                if (el.srcObject !== screenSharingParticipant.screenShareStream) {
-                                                    el.srcObject = screenSharingParticipant.screenShareStream;
-                                                    el.play().catch(err => console.error("Error playing screen share:", err));
-                                                }
+                                    objectFit: 'contain'
                                             }
                                         }}
-                                    />
+                            >
                                 </Box>
                             )}
+                            
+                            {/* Hidden element removed - We're now directly rendering the screen share stream in the visible UI */}
                             
                             {/* Show enlarged camera when PiP is enlarged */}
                             {isPipEnlarged && isPipVisible && localParticipant && (
@@ -5443,48 +5592,92 @@ const InsideStreamCallContent: React.FC<{
                  )}
 
                  {/* Tabs UI */}
-                 <Box sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
-                     <Tabs 
-                         value={activeTab} 
-                         onChange={(_, newValue) => setActiveTab(newValue)}
-                         aria-label="room content tabs"
-                         sx={{ 
-                             '& .MuiTab-root': {
-                                 fontFamily: room?.style?.font || 'inherit',
-                                 color: room?.style?.textColor || 'inherit',
-                                 opacity: 0.7
-                             },
-                             '& .Mui-selected': {
-                                 color: `${room?.style?.accentColor || theme.palette.primary.main} !important`,
-                                 opacity: 1
-                             },
-                             '& .MuiTabs-indicator': {
-                                 backgroundColor: room?.style?.accentColor || theme.palette.primary.main
-                             }
-                         }}
-                     >
-                         <Tab 
-                             label={`Participants (${gridParticipants.length})`} 
-                             value="participants" 
-                         />
-                         {shouldShowChatTab && (
+                 <Box sx={{ 
+                     mb: 2, 
+                     borderBottom: 1, 
+                     borderColor: 'divider',
+                     overflow: 'hidden' // Hide overflow for scrollable tabs container
+                 }}>
+                     <Box sx={{ 
+                         maxWidth: '100%', 
+                         display: 'flex',
+                         overflowX: 'auto',
+                         scrollbarWidth: 'none', // Hide scrollbar for Firefox
+                         '&::-webkit-scrollbar': {
+                             display: 'none' // Hide scrollbar for Chrome/Safari
+                         },
+                         WebkitOverflowScrolling: 'touch', // Smooth scrolling for iOS
+                     }}>
+                         <Tabs 
+                             value={activeTab} 
+                             onChange={(_, newValue) => setActiveTab(newValue)}
+                             aria-label="room content tabs"
+                             variant="scrollable" // Enable scrolling
+                             scrollButtons="auto" // Show scroll buttons when needed
+                             allowScrollButtonsMobile // Enable scroll buttons on mobile
+                             sx={{ 
+                                 '& .MuiTab-root': {
+                                     fontFamily: room?.style?.font || 'inherit',
+                                     color: room?.style?.textColor || 'inherit',
+                                     opacity: 0.7,
+                                     minWidth: 'auto', // Allow tabs to be smaller on mobile
+                                     padding: { xs: '6px 8px', sm: '12px 16px' }, // Smaller padding on mobile
+                                     fontSize: { xs: '0.75rem', sm: '0.875rem' } // Smaller font on mobile
+                                 },
+                                 '& .Mui-selected': {
+                                     color: `${room?.style?.accentColor || theme.palette.primary.main} !important`,
+                                     opacity: 1
+                                 },
+                                 '& .MuiTabs-indicator': {
+                                     backgroundColor: room?.style?.accentColor || theme.palette.primary.main
+                                 },
+                                 '& .MuiTabs-scrollButtons': {
+                                     '&.Mui-disabled': { opacity: 0.3 },
+                                     '&': {
+                                         color: room?.style?.textColor || 'inherit',
+                                     }
+                                 }
+                             }}
+                         >
                              <Tab 
-                                 label="Chat" 
-                                 value="chat" 
-                                 icon={<Badge 
-                                     color="primary" 
-                                     variant="dot" 
-                                     invisible={activeTab === 'chat' || chatMessages.length === 0}
-                                     sx={{
-                                         '& .MuiBadge-badge': {
-                                             backgroundColor: room?.style?.accentColor || theme.palette.primary.main
-                                         }
-                                     }}
-                                 />}
+                                 label={`Participants (${gridParticipants.length})`} 
+                                 value="participants" 
+                                 sx={{ flexShrink: 0 }} // Prevent tab from shrinking
+                             />
+                             {shouldShowChatTab && (
+                                 <Tab 
+                                     label="Chat" 
+                                     value="chat"
+                                     sx={{ flexShrink: 0 }} // Prevent tab from shrinking
+                                     icon={<Badge 
+                                         color="primary" 
+                                         variant="dot" 
+                                         invisible={activeTab === 'chat' || chatMessages.length === 0}
+                                         sx={{
+                                             '& .MuiBadge-badge': {
+                                                 backgroundColor: room?.style?.accentColor || theme.palette.primary.main
+                                             }
+                                         }}
+                                     />}
+                                     iconPosition="end"
+                                 />
+                             )}
+                             <Tab 
+                                 label="Gifts" 
+                                 value="gifts" 
+                                 sx={{ flexShrink: 0 }} // Prevent tab from shrinking
+                                 icon={<CardGiftcardIcon fontSize="small" />}
                                  iconPosition="end"
                              />
-                         )}
-                     </Tabs>
+                             <Tab 
+                                 label="Top Gifters" 
+                                 value="topGifters"
+                                 sx={{ flexShrink: 0 }} // Prevent tab from shrinking
+                                 icon={<EmojiEventsIcon fontSize="small" />}
+                                 iconPosition="end"
+                             />
+                         </Tabs>
+                     </Box>
                  </Box>
 
                  {/* Participants Tab Content */}
@@ -5744,6 +5937,26 @@ const InsideStreamCallContent: React.FC<{
                          </Box>
                      </Box>
                 )}
+                
+                {/* Gifts Tab Content */}
+                {activeTab === 'gifts' && (
+                    <Gifts 
+                        roomId={room.id} 
+                        roomOwnerId={room.ownerId} 
+                        theme={theme} 
+                        roomStyle={room?.style} 
+                    />
+                )}
+
+                {/* Top Gifters Tab Content */}
+                {activeTab === 'topGifters' && room && (
+                    <TopGifters
+                        roomId={room.id}
+                        roomOwnerId={room.ownerId}
+                        theme={theme}
+                        roomStyle={room?.style}
+                    />
+                )}
             </Box>
 
             {/* Bottom Control Bar - Ensuring all buttons, including Camera Toggle, are here */}
@@ -5900,16 +6113,36 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
             
             // If the participant is the room owner, update the room's isLive status based on microphone state
             if (isRoomOwner && localUserAuthData?.uid) {
-                const roomId = call.cid; // The call ID is the room ID
+                // Fix the room ID parsing - remove any namespace prefixes
+                const rawRoomId = call.cid;
+                const roomId = rawRoomId.includes(':') ? rawRoomId.split(':').pop() : rawRoomId;
+                
+                if (!roomId) {
+                    console.error('[StreamParticipantCard] Invalid room ID format:', rawRoomId);
+                    return;
+                }
+                
                 const db = getFirestore();
                 const roomRef = doc(db, 'sideRooms', roomId);
-                const newMuteState = !call.microphone.enabled;
                 
-                console.log(`[StreamParticipantCard] Room owner mic toggled, updating isLive to: ${!newMuteState}`);
-                await updateDoc(roomRef, {
-                    isLive: !newMuteState, // If not muted (enabled), then it's live
-                    lastActive: serverTimestamp()
-                });
+                // Check if document exists first
+                try {
+                    const roomDoc = await getDoc(roomRef);
+                    if (!roomDoc.exists()) {
+                        console.error('[StreamParticipantCard] Room document does not exist:', roomId);
+                        return;
+                    }
+                    
+                    const newMuteState = !call.microphone.enabled;
+                    
+                    console.log(`[StreamParticipantCard] Room owner mic toggled, updating isLive to: ${!newMuteState}`);
+                    await updateDoc(roomRef, {
+                        isLive: !newMuteState, // If not muted (enabled), then it's live
+                        lastActive: serverTimestamp()
+                    });
+                } catch (docError) {
+                    console.error('[StreamParticipantCard] Error accessing room document:', docError);
+                }
             }
         } catch (error) {
             console.error('[StreamParticipantCard] Error toggling local microphone:', error);

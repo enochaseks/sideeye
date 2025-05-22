@@ -27,7 +27,9 @@ import {
   MenuItem,
   Grid,
   Paper,
-  CardMedia
+  CardMedia,
+  useMediaQuery,
+  useTheme
 } from '@mui/material';
 import {
   LocalFireDepartment,
@@ -40,7 +42,6 @@ import {
   CleaningServices as CleanupIcon,
   Equalizer as EqualizerIcon
 } from '@mui/icons-material';
-import CreateSideRoom from '../CreateSideRoom';
 import { useFirestore } from '../../context/FirestoreContext';
 import { db } from '../../services/firebase';
 
@@ -91,7 +92,6 @@ const SideRoomList: React.FC = () => {
   const [filteredRooms, setFilteredRooms] = useState<SideRoomData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<SideRoomData | null>(null);
   const [password, setPassword] = useState('');
@@ -107,9 +107,21 @@ const SideRoomList: React.FC = () => {
   
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   // Add this inside the SideRoomList component definition
   const [roomOwnerProfiles, setRoomOwnerProfiles] = useState<{[key: string]: { username: string, profilePic: string }}>({});
+
+  // Function to handle the click on Create Room button for desktop
+  const handleCreateRoomClick = () => {
+    // Use the global create room dialog by accessing the window object
+    // @ts-ignore
+    if (window.openCreateRoomDialog && typeof window.openCreateRoomDialog === 'function') {
+      // @ts-ignore
+      window.openCreateRoomDialog();
+    }
+  };
 
   // Function to get both blocked users and users who blocked the current user
   const getBlockedAndBlockingUsers = async (): Promise<string[]> => {
@@ -564,13 +576,13 @@ const SideRoomList: React.FC = () => {
       // Then by the selected sort criteria
       switch (sortBy) {
         case 'newest':
-          return b.createdAt.toMillis() - a.createdAt.toMillis();
+          return (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0);
         case 'oldest':
-          return a.createdAt.toMillis() - b.createdAt.toMillis();
+          return (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0);
         case 'members':
           return (b.viewerCount || 0) - (a.viewerCount || 0);
         case 'activity':
-          return b.lastActive.toMillis() - a.lastActive.toMillis();
+          return (b.lastActive?.toMillis() || 0) - (a.lastActive?.toMillis() || 0);
         default:
           return 0;
       }
@@ -611,14 +623,17 @@ const SideRoomList: React.FC = () => {
               {isAdminCleanupRunning ? 'Cleaning...' : 'Cleanup Orphaned Rooms'}
             </Button>
           )}
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={() => setShowCreateRoom(true)}
-            disabled={!currentUser}
-          >
-            Create Room
-          </Button>
+          {/* Hide Create Room button on mobile, it will be in the bottom nav */}
+          {!isMobile && (
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={handleCreateRoomClick}
+              disabled={!currentUser}
+            >
+              Create Room
+            </Button>
+          )}
         </Box>
       </Box>
 
@@ -767,11 +782,6 @@ const SideRoomList: React.FC = () => {
           </Typography>
         )}
       </Grid>
-
-      <CreateSideRoom
-        open={showCreateRoom}
-        onClose={() => setShowCreateRoom(false)}
-      />
 
       <Dialog open={showPasswordDialog} onClose={() => setShowPasswordDialog(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Enter Room Password</DialogTitle>

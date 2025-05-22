@@ -19,8 +19,14 @@ import {
   Alert,
   Divider,
   FormHelperText,
+  Drawer,
+  useMediaQuery,
+  useTheme,
+  AppBar,
+  Toolbar,
+  Container,
 } from '@mui/material';
-import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import { Add as AddIcon, Delete as DeleteIcon, Close as CloseIcon } from '@mui/icons-material';
 import { collection, addDoc, serverTimestamp, Firestore, Timestamp, getDoc, doc, updateDoc, arrayUnion, setDoc, deleteDoc } from 'firebase/firestore';
 import { storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -48,6 +54,8 @@ interface FormData {
 const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormData>({
@@ -215,152 +223,206 @@ const CreateSideRoom: React.FC<CreateSideRoomProps> = ({ open, onClose }) => {
     }
   };
 
+  // Form content to be used in both Dialog and Drawer
+  const formContent = (
+    <>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      
+      <TextField
+        autoFocus
+        margin="dense"
+        label="Room Name"
+        type="text"
+        fullWidth
+        value={formData.name}
+        onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+        required
+        error={!formData.name.trim()}
+        helperText={!formData.name.trim() ? "Room name is required" : ""}
+      />
+      
+      <TextField
+        margin="dense"
+        label="Description"
+        type="text"
+        fullWidth
+        multiline
+        rows={3}
+        value={formData.description}
+        onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+        required
+        error={!formData.description.trim()}
+        helperText={!formData.description.trim() ? "Description is required" : ""}
+      />
+
+      <FormControl fullWidth margin="dense" required error={!formData.category}>
+        <InputLabel>Category</InputLabel>
+        <Select
+          value={formData.category}
+          onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
+          label="Category"
+        >
+          <MenuItem value="Just Chatting">Just Chatting</MenuItem>
+          <MenuItem value="Music">Music</MenuItem>
+          <MenuItem value="Gossip">Gossip</MenuItem>
+          <MenuItem value="Podcasts">Podcasts</MenuItem>
+          <MenuItem value="Shows">Shows</MenuItem>
+          <MenuItem value="Social">Social</MenuItem>
+          <MenuItem value="ASMR">ASMR</MenuItem>
+          <MenuItem value="Other">Other</MenuItem>
+        </Select>
+        {!formData.category && <FormHelperText>Category is required</FormHelperText>}
+      </FormControl>
+
+      <Box sx={{ mt: 2 }}>
+        <Typography variant="subtitle2">Tags (Optional)</Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+          {tags.map((tag) => (
+            <Chip
+              key={tag}
+              label={tag}
+              onDelete={() => handleRemoveTag(tag)}
+            />
+          ))}
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <TextField
+            size="small"
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+            placeholder="Add tag"
+            onKeyPress={(e) => e.key === 'Enter' && handleAddTag()}
+          />
+          <IconButton onClick={handleAddTag} size="small">
+            <AddIcon />
+          </IconButton>
+        </Box>
+      </Box>
+
+      <Box sx={{ mt: 2 }}>
+        <Typography variant="subtitle2">Rules (Optional)</Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+          {rules.map((rule) => (
+            <Chip
+              key={rule}
+              label={rule}
+              onDelete={() => handleRemoveRule(rule)}
+            />
+          ))}
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <TextField
+            size="small"
+            value={newRule}
+            onChange={(e) => setNewRule(e.target.value)}
+            placeholder="Add rule"
+            onKeyPress={(e) => e.key === 'Enter' && handleAddRule()}
+          />
+          <IconButton onClick={handleAddRule} size="small">
+            <AddIcon />
+          </IconButton>
+        </Box>
+      </Box>
+
+      <FormControlLabel
+        control={
+          <Switch
+            checked={formData.isPrivate}
+            onChange={(e) => setFormData(prev => ({ ...prev, isPrivate: e.target.checked }))}
+          />
+        }
+        label="Private Room"
+      />
+
+      {formData.isPrivate && (
+        <TextField
+          margin="dense"
+          label="Password"
+          type="password"
+          fullWidth
+          value={formData.password}
+          onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+          required
+          error={!formData.password.trim()}
+          helperText={!formData.password.trim() ? "Password is required for private rooms" : ""}
+        />
+      )}
+
+      <Box sx={{ mt: 2, mb: 1 }}>
+        <Button
+          variant="outlined"
+          component="label"
+          fullWidth
+        >
+          Upload Thumbnail (Optional)
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            onChange={handleFileChange}
+          />
+        </Button>
+        {thumbnailFile && (
+          <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
+            Selected: {thumbnailFile.name}
+          </Typography>
+        )}
+      </Box>
+    </>
+  );
+
+  // Use Drawer for mobile, Dialog for desktop
+  if (isMobile) {
+    return (
+      <Drawer
+        anchor="bottom"
+        open={open}
+        onClose={onClose}
+        PaperProps={{
+          sx: {
+            maxHeight: '90vh',
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            px: 2,
+            pb: 2
+          }
+        }}
+      >
+        <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
+          <Toolbar>
+            <Typography variant="h6" sx={{ flexGrow: 1 }}>Create Room</Typography>
+            <IconButton edge="end" color="inherit" onClick={onClose} aria-label="close">
+              <CloseIcon />
+            </IconButton>
+          </Toolbar>
+        </AppBar>
+        
+        <Box sx={{ p: 2, pt: 0 }}>
+          {formContent}
+          
+          <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between' }}>
+            <Button onClick={onClose} variant="outlined">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              variant="contained"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Creating...' : 'Create Room'}
+            </Button>
+          </Box>
+        </Box>
+      </Drawer>
+    );
+  }
+
+  // Desktop dialog
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Create Side Room</DialogTitle>
       <DialogContent>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-        
-        <TextField
-          autoFocus
-          margin="dense"
-          label="Room Name"
-          type="text"
-          fullWidth
-          value={formData.name}
-          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-          required
-          error={!formData.name.trim()}
-          helperText={!formData.name.trim() ? "Room name is required" : ""}
-        />
-        
-        <TextField
-          margin="dense"
-          label="Description"
-          type="text"
-          fullWidth
-          multiline
-          rows={3}
-          value={formData.description}
-          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-          required
-          error={!formData.description.trim()}
-          helperText={!formData.description.trim() ? "Description is required" : ""}
-        />
-
-        <FormControl fullWidth margin="dense" required error={!formData.category}>
-          <InputLabel>Category</InputLabel>
-          <Select
-            value={formData.category}
-            onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
-            label="Category"
-          >
-            <MenuItem value="Just Chatting">Just Chatting</MenuItem>
-            <MenuItem value="Music">Music</MenuItem>
-            <MenuItem value="Gossip">Gossip</MenuItem>
-            <MenuItem value="Podcasts">Podcasts</MenuItem>
-            <MenuItem value="Shows">Shows</MenuItem>
-            <MenuItem value="Social">Social</MenuItem>
-            <MenuItem value="ASMR">ASMR</MenuItem>
-            <MenuItem value="Other">Other</MenuItem>
-          </Select>
-          {!formData.category && <FormHelperText>Category is required</FormHelperText>}
-        </FormControl>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2">Tags (Optional)</Typography>
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-            {tags.map((tag) => (
-              <Chip
-                key={tag}
-                label={tag}
-                onDelete={() => handleRemoveTag(tag)}
-              />
-            ))}
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <TextField
-              size="small"
-              value={newTag}
-              onChange={(e) => setNewTag(e.target.value)}
-              placeholder="Add tag"
-              onKeyPress={(e) => e.key === 'Enter' && handleAddTag()}
-            />
-            <IconButton onClick={handleAddTag} size="small">
-              <AddIcon />
-            </IconButton>
-          </Box>
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2">Rules (Optional)</Typography>
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-            {rules.map((rule) => (
-              <Chip
-                key={rule}
-                label={rule}
-                onDelete={() => handleRemoveRule(rule)}
-              />
-            ))}
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <TextField
-              size="small"
-              value={newRule}
-              onChange={(e) => setNewRule(e.target.value)}
-              placeholder="Add rule"
-              onKeyPress={(e) => e.key === 'Enter' && handleAddRule()}
-            />
-            <IconButton onClick={handleAddRule} size="small">
-              <AddIcon />
-            </IconButton>
-          </Box>
-        </Box>
-
-        <FormControlLabel
-          control={
-            <Switch
-              checked={formData.isPrivate}
-              onChange={(e) => setFormData(prev => ({ ...prev, isPrivate: e.target.checked }))}
-            />
-          }
-          label="Private Room"
-        />
-
-        {formData.isPrivate && (
-          <TextField
-            margin="dense"
-            label="Password"
-            type="password"
-            fullWidth
-            value={formData.password}
-            onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
-            required
-            error={!formData.password.trim()}
-            helperText={!formData.password.trim() ? "Password is required for private rooms" : ""}
-          />
-        )}
-
-        <Box sx={{ mt: 2, mb: 1 }}>
-          <Button
-            variant="outlined"
-            component="label"
-            fullWidth
-          >
-            Upload Thumbnail (Optional)
-            <input
-              type="file"
-              hidden
-              accept="image/*"
-              onChange={handleFileChange}
-            />
-          </Button>
-          {thumbnailFile && (
-            <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
-              Selected: {thumbnailFile.name}
-            </Typography>
-          )}
-        </Box>
+        {formContent}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>

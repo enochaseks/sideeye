@@ -35,6 +35,8 @@
 - Added a heart and heartbreak floating functionality
 - About the founder is now located in the settings page
 - Updated the discover page, popular tab and main side room page.
+- Gift features added to the side room components
+- Bugs fixed and FAQ updated
 
 ## Version 1.0.0
 - Initial release of SideEye 
