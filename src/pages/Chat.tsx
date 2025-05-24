@@ -33,6 +33,8 @@ import {
   useTheme,
   Link
 } from '@mui/material';
+import OnlineIndicator from '../components/OnlineIndicator';
+import { usePresence } from '../hooks/usePresence';
 import { 
   ArrowBack as ArrowBackIcon,
   Send as SendIcon,
@@ -112,6 +114,7 @@ const Chat: React.FC = () => {
   const { conversationId, userId } = useParams<{ conversationId?: string; userId?: string }>();
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  const { isUserOnline } = usePresence();
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messageText, setMessageText] = useState('');
@@ -1360,22 +1363,43 @@ const Chat: React.FC = () => {
               }}
               onClick={() => navigate(`/profile/${chatPartner.id}`)}
             >
-              <Avatar 
-                src={chatPartner.profilePic || undefined} 
-                alt={chatPartner.name || chatPartner.username}
-                sx={{ 
-                  mr: 2, 
-                  width: 40, 
-                  height: 40,
-                  bgcolor: !chatPartner.profilePic ? 'primary.main' : undefined
-                }}
-              >
-                {!chatPartner.profilePic && (chatPartner.name || chatPartner.username)?.charAt(0).toUpperCase()}
-              </Avatar>
+              <Box sx={{ position: 'relative', mr: 2 }}>
+                <Avatar 
+                  src={chatPartner.profilePic || undefined} 
+                  alt={chatPartner.name || chatPartner.username}
+                  sx={{ 
+                    width: 40, 
+                    height: 40,
+                    bgcolor: !chatPartner.profilePic ? 'primary.main' : undefined
+                  }}
+                >
+                  {!chatPartner.profilePic && (chatPartner.name || chatPartner.username)?.charAt(0).toUpperCase()}
+                </Avatar>
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    bottom: 2,
+                    right: 2,
+                    zIndex: 1
+                  }}
+                >
+                  <OnlineIndicator 
+                    isOnline={isUserOnline(chatPartner.id)} 
+                    size="small" 
+                  />
+                </Box>
+              </Box>
               <Box>
-                <Typography variant="subtitle1" fontWeight="medium">
-                  {chatPartner.name || chatPartner.username}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="subtitle1" fontWeight="medium">
+                    {chatPartner.name || chatPartner.username}
+                  </Typography>
+                  {isUserOnline(chatPartner.id) && (
+                    <Typography variant="caption" color="success.main" sx={{ fontWeight: 'medium' }}>
+                      • Online
+                    </Typography>
+                  )}
+                </Box>
                 {chatPartner.name && (
                   <Typography variant="caption" color="text.secondary">
                     @{chatPartner.username}

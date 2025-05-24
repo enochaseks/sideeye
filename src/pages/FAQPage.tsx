@@ -232,18 +232,23 @@ const FAQPage: React.FC = () => {
                 
                 <strong>Room Owner Features:</strong><br />
                 • Edit room details and appearance at any time<br />
-                • Mute participants in voice/video chats<br />
+                • Block & remove disruptive participants<br />
+                • Ban users permanently from the room<br />
+                • Pin important participants to the top of the list<br />
                 • Enable video to be seen by participants<br />
                 • Receive gifts from viewers and track top supporters<br />
-                • Share and control media content<br /><br />
+                • Share and control media content (videos, screen sharing)<br />
+                • Manage banned users list and unban when appropriate<br /><br />
                 
                 <strong>Participant Features:</strong><br />
                 • Join conversations via text, audio, or video<br />
                 • Enable video to be seen by other participants<br />
                 • Send gifts to room owners<br />
                 • View shared media content<br />
-                • Block users you don't want to interact with<br />
-                • Follow room owners and get notifications for new content
+                • Block users locally to filter their audio and hide their profile<br />
+                • Report inappropriate users or content<br />
+                • Follow room owners and get notifications for new content<br />
+                • Heart or heartbreak rooms to show your reaction
               </Typography>
             </AccordionDetails>
           </Accordion>
@@ -275,14 +280,17 @@ const FAQPage: React.FC = () => {
                 
                 <strong>Managing Interactions:</strong><br />
                 As a room owner or participant, you have several tools to manage your experience:<br />
-                • <strong>Mute Users:</strong> Room owners can temporarily prevent a user from speaking in voice chats<br />
-                • <strong>Block Users:</strong> Both owners and participants can block users they don't want to interact with<br /><br />
+                • <strong>Block & Remove (Owners):</strong> Room owners can block users and immediately remove them from the room<br />
+                • <strong>Block Users (Participants):</strong> Participants can locally block users to filter their audio and hide their profile<br />
+                • <strong>Ban Users (Owners):</strong> Room owners can permanently ban disruptive users from the room<br />
+                • <strong>Report Users:</strong> Both owners and participants can report users to site moderators<br /><br />
                 
                 <strong>Audio and Video:</strong><br />
                 Participate in rooms via audio or video:<br />
                 • <strong>Enable Video:</strong> Turn on your camera to be seen by other participants<br />
                 • <strong>Audio Only:</strong> Join with just your microphone if you prefer not to use video<br />
-                • <strong>Mute Yourself:</strong> Control when others can hear you by toggling your microphone<br /><br />
+                • <strong>Toggle Microphone:</strong> Control when others can hear you by toggling your microphone on/off<br />
+                • <strong>Local Audio Filtering:</strong> Participants can block others to filter out their audio locally<br /><br />
                 
                 <strong>Content Sharing:</strong><br />
                 Share content with your room participants:<br />
@@ -299,6 +307,157 @@ const FAQPage: React.FC = () => {
             </AccordionDetails>
           </Accordion>
           
+          <Accordion expanded={expanded === 'panel8a'} onChange={handleChange('panel8a')}>
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              aria-controls="panel8a-content"
+              id="panel8a-header"
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <ListItemIcon sx={{ minWidth: 40 }}>
+                  <HelpOutlineIcon />
+                </ListItemIcon>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                  Room Moderation, Blocking, and Banning Users
+                </Typography>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Typography variant="body2" color="text.secondary" sx={{ pl: 6 }}>
+                <strong>Room Owner Moderation Tools:</strong><br />
+                As a room owner, you have several moderation tools to maintain a positive environment:<br />
+                • <strong>Pin Users:</strong> Pin important participants to the top of the participant list<br />
+                • <strong>Block & Remove Users:</strong> Block users and immediately remove them from your room<br />
+                • <strong>Ban Users:</strong> Permanently exclude disruptive users from your room<br />
+                • <strong>Report Users:</strong> Report users to site moderators for rule violations<br /><br />
+                
+                <strong>Room Owner Blocking vs. Participant Blocking:</strong><br />
+                <strong>When Room Owners Block Users ("Block & Remove"):</strong><br />
+                • The user is immediately kicked out of the room<br />
+                • The user is added to your personal blocked users list<br />
+                • They cannot rejoin this room or contact you directly<br />
+                • They receive a message: "You have been blocked by the room owner and removed from the room"<br /><br />
+                
+                <strong>When Participants Block Other Users:</strong><br />
+                • The blocked user's audio is filtered out locally (you won't hear them)<br />
+                • Their profile picture is replaced with a gray "?" avatar<br />
+                • Their name shows as "Blocked User" to you<br />
+                • Their card appears with reduced opacity<br />
+                • No speaking indicators are shown for blocked users<br />
+                • This only affects your experience - other participants are unaffected<br /><br />
+                
+                <strong>Special Case - Blocking the Room Owner:</strong><br />
+                If a participant tries to block the room owner:<br />
+                • They will see: "You cannot block the room owner. You will be removed from the room."<br />
+                • The participant is automatically kicked out of the room after 2 seconds<br />
+                • The block is still applied for interactions outside the room<br />
+                • The menu option shows "Block Owner (Leave Room)" to make this clear<br /><br />
+                
+                <strong>How to Ban a User (Room Owners Only):</strong><br />
+                If a user is being seriously disruptive or violating room rules:<br />
+                1. <strong>During Audio/Video Session:</strong> Click the three-dot menu (⋮) next to their name in the participants list<br />
+                2. <strong>Select "Ban":</strong> Choose the "Ban" option from the menu<br />
+                3. <strong>Confirm Action:</strong> Confirm that you want to ban the user - this action is permanent until you unban them<br />
+                4. <strong>Immediate Effect:</strong> The user will be immediately removed from the room and cannot rejoin<br /><br />
+                
+                <strong>What Happens When You Ban Someone:</strong><br />
+                • The user is immediately kicked out of the room<br />
+                • They cannot rejoin the room using any method<br />
+                • They will see "You have been banned from this room" if they try to access it<br />
+                • The ban remains in effect until you manually remove it<br />
+                • Bans are room-specific - they can still join other rooms<br />
+                • Other participants will not be notified of the ban<br /><br />
+                
+                <strong>Managing Banned Users:</strong><br />
+                You can view and manage your banned users list:<br />
+                1. <strong>Access Settings:</strong> In your room, click the three-dot menu (⋮) in the top right<br />
+                2. <strong>Select "View Banned Users":</strong> This opens the banned users management dialog<br />
+                3. <strong>View List:</strong> See all users you've banned from this room with their usernames and profile pictures<br />
+                4. <strong>Unban Users:</strong> Click "Unban" next to any user to remove the ban<br /><br />
+                
+                <strong>Unbanning Users:</strong><br />
+                To give someone a second chance:<br />
+                • Go to Room Settings → "View Banned Users"<br />
+                • Find the user in your banned list<br />
+                • Click the "Unban" button next to their name<br />
+                • Confirm the action<br />
+                • The user can now rejoin your room<br /><br />
+                
+                <strong>Moderation Actions Comparison:</strong><br />
+                • <strong>Block & Remove (Owner):</strong> Kicks user out, blocks them personally, prevents rejoining this room<br />
+                • <strong>Block (Participant):</strong> Local effects only - filters audio, changes appearance for you<br />
+                • <strong>Ban (Owner):</strong> Permanent room exclusion until unbanned, room-specific<br />
+                • <strong>Report:</strong> Alerts site moderators about rule violations, no immediate room effects<br /><br />
+                
+                <strong>Best Practices for Room Moderation:</strong><br />
+                • Start with warnings or asking users to modify their behavior<br />
+                • Use "Block & Remove" for users who are disruptive but might deserve a second chance later<br />
+                • Use "Ban" for serious violations or repeated offenses after removal<br />
+                • Always report serious violations to site moderators as well<br />
+                • Keep your banned users list manageable by unbanning when appropriate<br />
+                • Remember that room-level actions (ban/remove) don't affect other rooms<br />
+                • Document serious incidents for your own records
+              </Typography>
+            </AccordionDetails>
+          </Accordion>
+          
+          {/* Gifts and Reactions Section Title */}
+          <ListItem sx={{ bgcolor: alpha(theme.palette.primary.main, 0.1), py: 1.5 }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+              Gifts and Reactions
+            </Typography>
+          </ListItem>
+          
+          <Accordion expanded={expanded === 'panel8b'} onChange={handleChange('panel8b')}>
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              aria-controls="panel8b-content"
+              id="panel8b-header"
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <ListItemIcon sx={{ minWidth: 40 }}>
+                  <HelpOutlineIcon />
+                </ListItemIcon>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                  Gift System and Room Reactions
+                </Typography>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Typography variant="body2" color="text.secondary" sx={{ pl: 6 }}>
+                <strong>Sending Gifts to Room Owners:</strong><br />
+                Show your appreciation to room owners by sending virtual gifts:<br />
+                • <strong>Access Gifts:</strong> In a room, go to the "Gifts" tab to see available options<br />
+                • <strong>Gift Categories:</strong> Choose from various gift types and values<br />
+                • <strong>Send Gift:</strong> Select a gift and confirm to send it to the room owner<br />
+                • <strong>Gift Notifications:</strong> Room owners are notified when they receive gifts<br /><br />
+                
+                <strong>Gift Tracking and Leaderboards:</strong><br />
+                Both room owners and participants can view gift statistics:<br />
+                • <strong>Top Gifters Tab:</strong> See who has sent the most gifts to a room owner<br />
+                • <strong>Time Periods:</strong> View top gifters for today, this week, this month, or all time<br />
+                • <strong>Gift Values:</strong> See total gift values and individual contributions<br />
+                • <strong>Recognition:</strong> Top gifters may receive special recognition in rooms<br /><br />
+                
+                <strong>Room Heart and Heartbreak Reactions:</strong><br />
+                Express your feelings about rooms with reaction buttons:<br />
+                • <strong>Heart Rooms:</strong> Click the heart button to show you love a room<br />
+                • <strong>Heartbreak Rooms:</strong> Click the heartbreak button to show disappointment<br />
+                • <strong>Floating Animations:</strong> Reactions trigger floating animations on screen<br />
+                • <strong>Public Counters:</strong> See how many hearts and heartbreaks a room has received<br />
+                • <strong>Toggle Reactions:</strong> You can change your reaction or remove it at any time<br />
+                • <strong>Exclusive Actions:</strong> You can only heart OR heartbreak a room, not both<br /><br />
+                
+                <strong>Gift and Reaction Etiquette:</strong><br />
+                • <strong>Be Genuine:</strong> Only give reactions and gifts that reflect your true feelings<br />
+                • <strong>Support Creators:</strong> Use gifts to support room owners whose content you enjoy<br />
+                • <strong>Respectful Feedback:</strong> Use heartbreak reactions constructively, not maliciously<br />
+                • <strong>Don't Expect Favors:</strong> Gifts should be given freely without expecting special treatment<br />
+                • <strong>Budget Responsibly:</strong> Only spend what you can afford on virtual gifts
+              </Typography>
+            </AccordionDetails>
+          </Accordion>
+
           {/* Profile Management Section Title */}
           <ListItem sx={{ bgcolor: alpha(theme.palette.primary.main, 0.1), py: 1.5 }}>
             <Typography variant="h6" sx={{ fontWeight: 'bold' }}>

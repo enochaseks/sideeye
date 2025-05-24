@@ -6,7 +6,7 @@ import { useAuth } from './AuthContext';
 // Define the structure of a notification
 export interface Notification {
   id: string;
-  type: 'like' | 'comment' | 'follow' | 'mention' | 'tag' | 'room_invite' | 'room_created' | string; // Allow custom types
+  type: 'like' | 'comment' | 'follow' | 'mention' | 'tag' | 'room_invite' | 'room_created' | 'room_announcement' | 'room_poll' | string; // Allow custom types
   senderId: string;
   senderName?: string; // Optional: Store sender's name directly
   senderAvatar?: string; // Optional: Store sender's avatar URL directly

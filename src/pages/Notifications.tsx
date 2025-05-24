@@ -18,7 +18,7 @@ import {
   DialogActions,
   Button
 } from '@mui/material';
-import { Close as CloseIcon, Favorite as FavoriteIcon, Comment as CommentIcon, PersonAdd as PersonAddIcon, Notifications as NotificationsIcon, Message as MessageIcon, Videocam as VideocamIcon, Group as GroupIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Favorite as FavoriteIcon, Comment as CommentIcon, PersonAdd as PersonAddIcon, Notifications as NotificationsIcon, Message as MessageIcon, Videocam as VideocamIcon, Group as GroupIcon, Announcement as AnnouncementIcon, Poll as PollIcon } from '@mui/icons-material';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
@@ -111,6 +111,13 @@ const NotificationsPage: React.FC = () => {
       case 'room_removal':
         if (notification.roomId) {
           navigateTo = `/side-room/${notification.roomId}`;
+        }
+        break;
+      case 'room_announcement':
+      case 'room_poll':
+        // Navigate to the specific room chat for announcements and polls
+        if (notification.roomId) {
+          navigateTo = `/chat/room/${notification.roomId}`;
         }
         break;
       // Add other notification types if necessary
@@ -208,6 +215,8 @@ const NotificationsPage: React.FC = () => {
                         {notification.type === 'message' && <MessageIcon fontSize="small" color="primary" />}
                         {notification.type === 'live_stream' && <VideocamIcon fontSize="small" color="error" />}
                         {notification.type === 'room_created' && <GroupIcon fontSize="small" color="primary" />}
+                        {notification.type === 'room_announcement' && <AnnouncementIcon fontSize="small" color="warning" />}
+                        {notification.type === 'room_poll' && <PollIcon fontSize="small" color="info" />}
                         <Typography component="span" variant="body2" color="text.primary">
                           {notification.content || 'Notification content missing.'}
                         </Typography>

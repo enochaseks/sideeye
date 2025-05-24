@@ -66,7 +66,7 @@
   },
   "scripts": {
     "start": "cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts start",
-    "build": "node scripts/update-version.js && cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts build",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
@@ -74,9 +74,7 @@
     "deploy:functions": "firebase deploy --only functions",
     "deploy:all": "npm run build && firebase deploy",
     "server": "ts-node server.ts",
-    "lint": "eslint .",
-    "update-version": "node scripts/update-version.js",
-    "watch-version": "node scripts/watch-release-notes.js"
+    "lint": "eslint ."
   },
   "eslintConfig": {
     "extends": [

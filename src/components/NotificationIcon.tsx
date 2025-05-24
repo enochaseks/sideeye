@@ -95,6 +95,13 @@ export const NotificationIcon: React.FC = () => {
           navigateTo = `/side-room/${notification.roomId}`;
         }
         break;
+      case 'room_announcement':
+      case 'room_poll':
+        // Navigate to the specific room chat for announcements and polls
+        if (notification.roomId) {
+          navigateTo = `/chat/room/${notification.roomId}`;
+        }
+        break;
       default:
         console.warn(`Unhandled notification type for navigation: ${notification.type}`);
         // Keep default navigateTo = '/notifications'

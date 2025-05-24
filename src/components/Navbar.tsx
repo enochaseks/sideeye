@@ -21,6 +21,7 @@ import {
   Logout as LogoutIcon,
   Notifications as NotificationsIcon,
   Psychology,
+  Lightbulb as LightbulbIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -33,6 +34,7 @@ const Navbar: React.FC = () => {
   const { currentUser, logout } = useAuth();
   const { unreadCount } = useNotifications();
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [isLightbulbLit, setIsLightbulbLit] = useState(false);
 
   useEffect(() => {
     if (!currentUser?.uid) return;
@@ -58,6 +60,47 @@ const Navbar: React.FC = () => {
 
     return () => unsubscribe();
   }, [currentUser?.uid]);
+
+  // Effect to listen for suggestion submissions and light up the bulb
+  useEffect(() => {
+    // Immediate effect handler for instant feedback
+    const handleImmediateSuggestionSubmitted = () => {
+      setIsLightbulbLit(true);
+      
+      // Turn off the light after 3 seconds
+      setTimeout(() => {
+        setIsLightbulbLit(false);
+      }, 3000);
+    };
+
+    // Check for suggestion submission flag every 500ms (backup method)
+    const checkForSuggestionSubmission = () => {
+      const suggestionSubmitted = localStorage.getItem('suggestionSubmitted');
+      
+      if (suggestionSubmitted === 'true') {
+        setIsLightbulbLit(true);
+        
+        // Clear the flag
+        localStorage.removeItem('suggestionSubmitted');
+        
+        // Turn off the light after 3 seconds
+        setTimeout(() => {
+          setIsLightbulbLit(false);
+        }, 3000);
+      }
+    };
+
+    // Set up immediate event listener for instant feedback
+    window.addEventListener('suggestionSubmittedImmediate', handleImmediateSuggestionSubmitted);
+
+    // Set up polling interval as backup
+    const interval = setInterval(checkForSuggestionSubmission, 500);
+
+    return () => {
+      window.removeEventListener('suggestionSubmittedImmediate', handleImmediateSuggestionSubmitted);
+      clearInterval(interval);
+    };
+  }, []);
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -121,6 +164,36 @@ const Navbar: React.FC = () => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             {currentUser ? (
               <>
+                <IconButton
+                  color="inherit"
+                  onClick={() => navigate('/suggestions')}
+                  sx={{
+                    color: isLightbulbLit ? '#FFD700' : 'text.primary',
+                    backgroundColor: isLightbulbLit ? 'rgba(255, 215, 0, 0.2)' : 'transparent',
+                    border: isLightbulbLit ? '2px solid #FFD700' : '2px solid transparent',
+                    '&:hover': {
+                      backgroundColor: isLightbulbLit ? 'rgba(255, 215, 0, 0.3)' : 'rgba(0, 0, 0, 0.04)',
+                    },
+                    transition: 'all 0.3s ease-in-out',
+                    transform: isLightbulbLit ? 'scale(1.2)' : 'scale(1)',
+                    filter: isLightbulbLit ? 'drop-shadow(0 0 10px #FFD700) drop-shadow(0 0 20px #FFD700) brightness(1.5)' : 'none',
+                    animation: isLightbulbLit ? 'pulse 0.8s ease-in-out infinite alternate' : 'none',
+                    '@keyframes pulse': {
+                      '0%': {
+                        filter: 'drop-shadow(0 0 10px #FFD700) drop-shadow(0 0 20px #FFD700) brightness(1.5)',
+                        transform: 'scale(1.2)',
+                      },
+                      '100%': {
+                        filter: 'drop-shadow(0 0 15px #FFD700) drop-shadow(0 0 30px #FFD700) brightness(1.8)',
+                        transform: 'scale(1.25)',
+                      },
+                    },
+                  }}
+                  title="Suggestions"
+                >
+                  <LightbulbIcon />
+                </IconButton>
+                
                 <IconButton
                   color={unreadCount > 0 ? "error" : "inherit"}
                   onClick={() => navigate('/notifications')}

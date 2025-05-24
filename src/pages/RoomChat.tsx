@@ -32,6 +32,8 @@ import {
   Popover,
   Chip
 } from '@mui/material';
+import OnlineIndicator from '../components/OnlineIndicator';
+import { usePresence } from '../hooks/usePresence';
 import {
   MoreVert as MoreVertIcon,
   Send as SendIcon,
@@ -54,6 +56,7 @@ import {
   Block as BlockIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { useNotifications } from '../contexts/NotificationContext';
 import { 
   doc, 
   getDoc, 
@@ -150,7 +153,9 @@ const HiddenFileInput = styled('input')({
 const RoomChat: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>();
   const { currentUser } = useAuth();
+  const { addNotification } = useNotifications();
   const navigate = useNavigate();
+  const { isUserOnline } = usePresence();
   const [room, setRoom] = useState<Room | null>(null);
   const [loading, setLoading] = useState(true);
   const [isOwner, setIsOwner] = useState(false);
@@ -473,6 +478,13 @@ const RoomChat: React.FC = () => {
         reactions: [] // Initialize empty reactions array
       });
 
+      // Notify all room members about the new announcement
+      await notifyRoomMembers(
+        'room_announcement', 
+        `📢 New announcement in "${room?.name}": ${announcement.trim().substring(0, 100)}${announcement.trim().length > 100 ? '...' : ''}`,
+        { postId: null } // No specific post ID for announcements
+      );
+
       setAnnouncement('');
       setSnackbarMessage('Announcement posted');
       setSnackbarSeverity('success');
@@ -508,6 +520,13 @@ const RoomChat: React.FC = () => {
         pollOptions: validOptions,
         pollVotes: {}
       });
+
+      // Notify all room members about the new poll
+      await notifyRoomMembers(
+        'room_poll', 
+        `📊 New poll in "${room?.name}": ${pollQuestion.trim().substring(0, 80)}${pollQuestion.trim().length > 80 ? '...' : ''}`,
+        { postId: null } // No specific post ID for polls
+      );
 
       setPollQuestion('');
       setPollOptions([{ text: '' }, { text: '' }]);
@@ -1615,6 +1634,36 @@ const handleDeletePoll = async () => {
     }
   }, [roomMembers, blockedUsers]);
 
+  // Function to notify all room members except the sender
+  const notifyRoomMembers = async (type: string, content: string, additionalData?: any) => {
+    if (!room || !currentUser || !isOwner) return;
+    
+    try {
+      // Get all room members except the current user (sender)
+      const membersToNotify = room.members.filter(memberId => memberId !== currentUser.uid);
+      
+      // Create notifications for each member
+      const notificationPromises = membersToNotify.map(memberId => 
+        addNotification({
+          type: type,
+          senderId: currentUser.uid,
+          senderName: currentUserData.name || currentUserData.username || currentUser.displayName || 'Room Owner',
+          senderAvatar: currentUserData.profilePic || currentUser.photoURL || '',
+          recipientId: memberId,
+          content: content,
+          roomId: roomId!,
+          roomName: room.name,
+          ...additionalData
+        })
+      );
+      
+      await Promise.all(notificationPromises);
+      console.log(`Sent ${type} notifications to ${membersToNotify.length} room members`);
+    } catch (error) {
+      console.error('Error sending room notifications:', error);
+    }
+  };
+
   const handleRoomLinkClick = (roomId: string) => {
     navigate(`/side-room/${roomId}`);
   };
@@ -1658,6 +1707,72 @@ const handleDeletePoll = async () => {
       }
       return <span key={index}>{part}</span>;
     });
+  };
+
+  const handleAnnouncementReaction = async (announcementId: string, emoji: string) => {
+    if (!currentUser?.uid || !roomId) {
+      return;
+    }
+    
+    try {
+      const announcementRef = doc(db, 'rooms', roomId, 'messages', announcementId);
+      
+      // Get the current announcement to access its reactions
+      const announcementDoc = await getDoc(announcementRef);
+      if (!announcementDoc.exists()) {
+        setSnackbarMessage('Announcement not found');
+        setSnackbarSeverity('error');
+        setSnackbarOpen(true);
+        return;
+      }
+      
+      const announcementData = announcementDoc.data();
+      const existingReactions = announcementData.reactions || [];
+      
+      // Check if user already reacted with this emoji
+      const existingReactionIndex = existingReactions.findIndex(
+        (r: Reaction) => r.userId === currentUser.uid && r.emoji === emoji
+      );
+      
+      let updatedReactions: Reaction[];
+      
+      if (existingReactionIndex !== -1) {
+        // User already reacted with this emoji, remove the reaction
+        updatedReactions = [...existingReactions];
+        updatedReactions.splice(existingReactionIndex, 1);
+      } else {
+        // Add new reaction, but first remove any other emoji reactions from this user
+        const reactionsWithoutUserReactions = existingReactions.filter(
+          (r: Reaction) => r.userId !== currentUser.uid
+        );
+        
+        const newReaction: Reaction = {
+          emoji,
+          userId: currentUser.uid,
+          username: currentUserData.name || currentUserData.username || currentUser.displayName || ''
+        };
+        
+        updatedReactions = [...reactionsWithoutUserReactions, newReaction];
+      }
+      
+      // Update Firestore
+      await updateDoc(announcementRef, {
+        reactions: updatedReactions
+      });
+      
+      // Update local state
+      setAnnouncements(prev => prev.map(announcement => 
+        announcement.id === announcementId 
+          ? { ...announcement, reactions: updatedReactions } 
+          : announcement
+      ));
+      
+    } catch (error) {
+      console.error('Error handling announcement reaction:', error);
+      setSnackbarMessage('Failed to update reaction');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
   };
 
   if (loading) {
@@ -1763,22 +1878,39 @@ const handleDeletePoll = async () => {
                       }}
                     >
                       <ListItemAvatar sx={{ minWidth: isCurrentUser ? '40px' : '56px', ml: isCurrentUser ? 1 : 0 }}>
-                        <Avatar 
-                          alt={msg.senderName} 
-                          src={msg.senderPhoto}
-                          sx={{ 
-                            width: 40, 
-                            height: 40,
-                            bgcolor: !msg.senderPhoto ? (isCurrentUser ? 'primary.main' : 'secondary.main') : undefined,
-                            cursor: 'pointer',
-                            '&:hover': {
-                              opacity: 0.8
-                            }
-                          }}
-                          onClick={() => navigate(`/profile/${msg.sender}`)}
-                        >
-                          {!msg.senderPhoto && msg.senderName?.charAt(0)?.toUpperCase()}
-                        </Avatar>
+                        <Box sx={{ position: 'relative' }}>
+                          <Avatar 
+                            alt={msg.senderName} 
+                            src={msg.senderPhoto}
+                            sx={{ 
+                              width: 40, 
+                              height: 40,
+                              bgcolor: !msg.senderPhoto ? (isCurrentUser ? 'primary.main' : 'secondary.main') : undefined,
+                              cursor: 'pointer',
+                              '&:hover': {
+                                opacity: 0.8
+                              }
+                            }}
+                            onClick={() => navigate(`/profile/${msg.sender}`)}
+                          >
+                            {!msg.senderPhoto && msg.senderName?.charAt(0)?.toUpperCase()}
+                          </Avatar>
+                          {!isCurrentUser && (
+                            <Box
+                              sx={{
+                                position: 'absolute',
+                                bottom: 4,
+                                right: 4,
+                                zIndex: 1
+                              }}
+                            >
+                              <OnlineIndicator 
+                                isOnline={isUserOnline(msg.sender)} 
+                                size="small" 
+                              />
+                            </Box>
+                          )}
+                        </Box>
                       </ListItemAvatar>
                       <Box
                         sx={{
@@ -2032,7 +2164,22 @@ const handleDeletePoll = async () => {
                 {announcements.map((announcement) => (
                   <Paper key={announcement.id} elevation={0} sx={{ mb: 2, p: 2, bgcolor: 'background.default' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                      <Avatar alt={announcement.senderName} src={announcement.senderPhoto} sx={{ mr: 1 }} />
+                      <Box sx={{ position: 'relative', mr: 1 }}>
+                        <Avatar alt={announcement.senderName} src={announcement.senderPhoto} />
+                        <Box
+                          sx={{
+                            position: 'absolute',
+                            bottom: 4,
+                            right: 4,
+                            zIndex: 1
+                          }}
+                        >
+                          <OnlineIndicator 
+                            isOnline={isUserOnline(announcement.sender)} 
+                            size="small" 
+                          />
+                        </Box>
+                      </Box>
                       <Box sx={{ flexGrow: 1 }}>
                         <Typography variant="subtitle2">{announcement.senderName}</Typography>
                         <Typography variant="caption" color="text.secondary">
@@ -2049,7 +2196,54 @@ const handleDeletePoll = async () => {
                         </IconButton>
                       )}
                     </Box>
-                    <Typography variant="body1">{announcement.text}</Typography>
+                    <Typography variant="body1" sx={{ mb: 2 }}>{announcement.text}</Typography>
+                    
+                    {/* Heart and Heartbreak Buttons */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2 }}>
+                      {/* Heart Button */}
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleAnnouncementReaction(announcement.id, '❤️')}
+                          sx={{
+                            color: announcement.reactions?.some(r => r.emoji === '❤️' && r.userId === currentUser?.uid) 
+                              ? 'red' 
+                              : 'text.secondary',
+                            '&:hover': {
+                              color: 'red',
+                              backgroundColor: 'rgba(255, 0, 0, 0.1)'
+                            }
+                          }}
+                        >
+                          ❤️
+                        </IconButton>
+                        <Typography variant="caption" color="text.secondary">
+                          {announcement.reactions?.filter(r => r.emoji === '❤️').length || 0}
+                        </Typography>
+                      </Box>
+
+                      {/* Heartbreak Button */}
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleAnnouncementReaction(announcement.id, '💔')}
+                          sx={{
+                            color: announcement.reactions?.some(r => r.emoji === '💔' && r.userId === currentUser?.uid) 
+                              ? 'purple' 
+                              : 'text.secondary',
+                            '&:hover': {
+                              color: 'purple',
+                              backgroundColor: 'rgba(128, 0, 128, 0.1)'
+                            }
+                          }}
+                        >
+                          💔
+                        </IconButton>
+                        <Typography variant="caption" color="text.secondary">
+                          {announcement.reactions?.filter(r => r.emoji === '💔').length || 0}
+                        </Typography>
+                      </Box>
+                    </Box>
                   </Paper>
                 ))}
               </List>
@@ -2087,7 +2281,22 @@ const handleDeletePoll = async () => {
                 {polls.map((poll) => (
                   <Paper key={poll.id} elevation={0} sx={{ mb: 3, p: 2, bgcolor: 'background.default' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <Avatar alt={poll.senderName} src={poll.senderPhoto} sx={{ mr: 1 }} />
+                      <Box sx={{ position: 'relative', mr: 1 }}>
+                        <Avatar alt={poll.senderName} src={poll.senderPhoto} />
+                        <Box
+                          sx={{
+                            position: 'absolute',
+                            bottom: 4,
+                            right: 4,
+                            zIndex: 1
+                          }}
+                        >
+                          <OnlineIndicator 
+                            isOnline={isUserOnline(poll.sender)} 
+                            size="small" 
+                          />
+                        </Box>
+                      </Box>
                       <Box sx={{ flexGrow: 1 }}>
                         <Typography variant="subtitle2">{poll.senderName}</Typography>
                         <Typography variant="caption" color="text.secondary">
@@ -2281,7 +2490,22 @@ const handleDeletePoll = async () => {
                   }
                 >
                   <ListItemAvatar>
-                    <Avatar alt={user.username} src={user.profilePic} />
+                    <Box sx={{ position: 'relative' }}>
+                      <Avatar alt={user.username} src={user.profilePic} />
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          bottom: 4,
+                          right: 4,
+                          zIndex: 1
+                        }}
+                      >
+                        <OnlineIndicator 
+                          isOnline={isUserOnline(user.id)} 
+                          size="small" 
+                        />
+                      </Box>
+                    </Box>
                   </ListItemAvatar>
                   <ListItemText
                     primary={user.name || user.username}
@@ -2820,8 +3044,23 @@ const handleDeletePoll = async () => {
                   onClick={() => handleViewProfile(member)}
                 >
                   <ListItemAvatar>
-                    <Avatar alt={member.username} src={member.profilePic} />
-                  </ListItemAvatar>
+                    <Box sx={{ position: 'relative' }}>
+                      <Avatar alt={member.username} src={member.profilePic} />
+                                            <Box
+                        sx={{
+                          position: 'absolute',
+                          bottom: 4,
+                          right: 4,
+                          zIndex: 1
+                        }}
+                      >
+                         <OnlineIndicator 
+                           isOnline={isUserOnline(member.id)} 
+                           size="small" 
+                         />
+                       </Box>
+                     </Box>
+                    </ListItemAvatar>
                   <ListItemText
                     primary={
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

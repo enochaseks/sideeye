@@ -22,7 +22,8 @@ import {
     addDoc, // Import addDoc for chat messages
     getFirestore, // Import getFirestore for component use
     getDocs, // Import getDocs
-    arrayRemove // Import arrayRemove
+    arrayRemove, // Import arrayRemove
+    arrayUnion // Import arrayUnion for adding to arrays
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import {
@@ -108,7 +109,7 @@ import {
     PushPin as PushPinIcon,
     Videocam as VideocamIcon, // ADDED for camera toggle
     VideocamOff as VideocamOffIcon, // ADDED for camera toggle
-    Close as CloseIcon, // ADDED for PiP close button
+    Close as CloseIcon, // ADDED for PiP close button and dialogs
     PictureInPicture as PictureInPictureIcon, // ADDED for PiP toggle button
     Send as SendIcon,
     ZoomIn as ZoomInIcon,
@@ -726,6 +727,15 @@ const SideRoomComponent: React.FC = () => {
     // --- State for Room Reporting ---
     const [reportRoomDialogOpen, setReportRoomDialogOpen] = useState(false);
     
+    // --- State for Banned Users Management ---
+    const [showBannedUsersDialog, setShowBannedUsersDialog] = useState(false);
+    const [bannedUsersData, setBannedUsersData] = useState<{
+        id: string;
+        username: string;
+        name?: string;
+        profilePic?: string;
+    }[]>([]);
+    
     // ... existing code ...
 
     // Camera toggle function for main component
@@ -1025,6 +1035,79 @@ const SideRoomComponent: React.FC = () => {
         }
         return foundOwner;
     }, [room]); // Dependency on `room` is correct as `room.viewers` is part of it
+
+    // --- Banned Users Management Functions ---
+    const loadBannedUsers = useCallback(async () => {
+        if (!room?.bannedUsers || room.bannedUsers.length === 0) {
+            setBannedUsersData([]);
+            return;
+        }
+
+        try {
+            const bannedUserProfiles = await Promise.all(
+                room.bannedUsers.map(async (userId) => {
+                    try {
+                        const userDoc = await getDoc(doc(db, 'users', userId));
+                        if (userDoc.exists()) {
+                            const userData = userDoc.data() as UserProfile;
+                            return { 
+                                id: userId, 
+                                username: userData.username || 'Unknown User', 
+                                name: userData.name,
+                                profilePic: userData.profilePic 
+                            };
+                        }
+                        return { 
+                            id: userId, 
+                            username: 'Unknown User', 
+                            name: 'Unknown',
+                            profilePic: '' 
+                        };
+                    } catch (error) {
+                        console.error(`Error fetching user data for ${userId}:`, error);
+                        return { 
+                            id: userId, 
+                            username: 'Unknown User', 
+                            name: 'Unknown',
+                            profilePic: '' 
+                        };
+                    }
+                })
+            );
+            setBannedUsersData(bannedUserProfiles);
+        } catch (error) {
+            console.error('Error loading banned users:', error);
+            toast.error('Failed to load banned users');
+        }
+    }, [room?.bannedUsers, db]);
+
+    const handleUnbanUser = useCallback(async (userId: string, username: string) => {
+        if (!isRoomOwner || !roomId) return;
+
+        if (window.confirm(`Are you sure you want to unban ${username}? They will be able to rejoin the room.`)) {
+            try {
+                const roomRef = doc(db, 'sideRooms', roomId);
+                await updateDoc(roomRef, {
+                    bannedUsers: arrayRemove(userId),
+                    lastActive: serverTimestamp()
+                });
+
+                // Update local banned users list
+                setBannedUsersData(prev => prev.filter(user => user.id !== userId));
+                toast.success(`${username} has been unbanned`);
+            } catch (error) {
+                console.error('Error unbanning user:', error);
+                toast.error('Failed to unban user');
+            }
+        }
+    }, [isRoomOwner, roomId, db]);
+
+    // Load banned users when dialog opens
+    useEffect(() => {
+        if (showBannedUsersDialog) {
+            loadBannedUsers();
+        }
+    }, [showBannedUsersDialog, loadBannedUsers]);
 
     // --- Helper function to write user's presence (sets online: true) ---
     const writeUserPresence = useCallback(async (
@@ -1422,6 +1505,19 @@ const SideRoomComponent: React.FC = () => {
         const unsubscribeRoom = onSnapshot(roomRef, (docSnapshot) => {
             if (docSnapshot.exists()) {
                 const roomData = { id: docSnapshot.id, ...docSnapshot.data() } as SideRoom;
+                
+                // Check if user is banned from this room
+                const bannedUsers = roomData.bannedUsers || [];
+                if (bannedUsers.includes(currentUser.uid)) {
+                    // User is banned, show error and navigate away
+                    setError('You have been banned from this room');
+                    setRoom(null);
+                    setLoading(false);
+                    toast.error('You have been banned from this room by the owner');
+                    navigate('/side-rooms');
+                    return;
+                }
+                
                 setRoom(roomData);
                 setRoomHeartCount(roomData.heartCount || 0); // Set heart count
                 setLoading(false);
@@ -1927,9 +2023,18 @@ const SideRoomComponent: React.FC = () => {
         };
 
         // Listener for when the current user is removed from the room by the host
-        const handleBeenRemoved = (removedInRoomId: string) => {
-            if (removedInRoomId === roomId && currentUser?.uid) { // Ensure it's this room and user is defined
-                toast("The host has removed you from the room."); // Changed from toast.info
+        const handleBeenRemoved = (data: { roomId: string, targetUserId?: string, reason?: string } | string) => {
+            // Handle both old string format and new object format for backward compatibility
+            const roomIdToCheck = typeof data === 'string' ? data : data.roomId;
+            const reason = typeof data === 'object' ? data.reason : 'removed';
+            
+            if (roomIdToCheck === roomId && currentUser?.uid) { // Ensure it's this room and user is defined
+                let message = "The host has removed you from the room.";
+                if (reason === 'blocked') {
+                    message = "You have been blocked by the room owner and removed from the room.";
+                }
+                
+                toast.error(message);
                 activeStreamCallInstance?.leave()
                     .catch(err => console.error("[SideRoomComponent] Error leaving Stream call after being removed:", err))
                     .finally(() => {
@@ -1940,11 +2045,74 @@ const SideRoomComponent: React.FC = () => {
             }
         };
 
+        // Listener for when the current user is banned from the room by the host
+        const handleBeenBanned = (data: { roomId: string, reason?: string }) => {
+            if (data.roomId === roomId && currentUser?.uid) { // Ensure it's this room and user is defined
+                toast.error(`You have been banned from this room. ${data.reason || ''}`);
+                activeStreamCallInstance?.leave()
+                    .catch(err => console.error("[SideRoomComponent] Error leaving Stream call after being banned:", err))
+                    .finally(() => {
+                        navigate('/side-rooms'); // Navigate to the main room list
+                    });
+            }
+        };
+
+        // Listener for when the current user is force-muted by the room owner
+        const handleBeenForceMuted = (data: { roomId: string, targetUserId: string }) => {
+            if (data.roomId === roomId && data.targetUserId === currentUser?.uid && activeStreamCallInstance) {
+                console.log('[SideRoomComponent] Received force-mute from room owner');
+                activeStreamCallInstance.microphone.disable()
+                    .then(async () => {
+                        // Update Firestore presence to reflect force-mute state
+                        try {
+                            const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
+                            await updateDoc(userPresenceRef, { forceMuted: true });
+                        } catch (error) {
+                            console.error('[SideRoomComponent] Error updating presence after force-mute:', error);
+                        }
+                        
+                        toast.error("You have been muted by the room owner");
+                        console.log('[SideRoomComponent] Successfully muted user via force-mute');
+                    })
+                    .catch(err => {
+                        console.error("[SideRoomComponent] Error force-muting user:", err);
+                        toast.error("Failed to mute microphone");
+                    });
+            }
+        };
+
+        // Listener for when the current user is force-unmuted by the room owner
+        const handleBeenForceUnmuted = (data: { roomId: string, targetUserId: string }) => {
+            if (data.roomId === roomId && data.targetUserId === currentUser?.uid && activeStreamCallInstance) {
+                console.log('[SideRoomComponent] Received force-unmute from room owner');
+                activeStreamCallInstance.microphone.enable()
+                    .then(async () => {
+                        // Update Firestore presence to reflect force-unmute state
+                        try {
+                            const userPresenceRef = doc(db, 'sideRooms', roomId, 'presence', currentUser.uid);
+                            await updateDoc(userPresenceRef, { forceMuted: false });
+                        } catch (error) {
+                            console.error('[SideRoomComponent] Error updating presence after force-unmute:', error);
+                        }
+                        
+                        toast.success("You have been unmuted by the room owner");
+                        console.log('[SideRoomComponent] Successfully unmuted user via force-unmute');
+                    })
+                    .catch(err => {
+                        console.error("[SideRoomComponent] Error force-unmuting user:", err);
+                        toast.error("Failed to unmute microphone");
+                    });
+            }
+        };
+
         socket.on('invite-success', handleInviteSuccess);
         socket.on('invite-failed', handleInviteFailed);
         socket.on('guest-joined', handleGuestJoined);
         socket.on('user-search-results-for-invite', handleUserSearchResults);
         socket.on('force-remove', handleBeenRemoved); // Listen for the server's force-remove directive
+        socket.on('force-ban', handleBeenBanned); // Listen for the server's force-ban directive
+        socket.on('force-mute', handleBeenForceMuted); // Listen for force-mute from room owner
+        socket.on('force-unmute', handleBeenForceUnmuted); // Listen for force-unmute from room owner
 
         return () => {
             socket.off('invite-success', handleInviteSuccess);
@@ -1952,6 +2120,9 @@ const SideRoomComponent: React.FC = () => {
             socket.off('guest-joined', handleGuestJoined);
             socket.off('user-search-results-for-invite', handleUserSearchResults);
             socket.off('force-remove', handleBeenRemoved); // Clean up listener
+            socket.off('force-ban', handleBeenBanned); // Clean up ban listener
+            socket.off('force-mute', handleBeenForceMuted); // Clean up force-mute listener
+            socket.off('force-unmute', handleBeenForceUnmuted); // Clean up force-unmute listener
         };
     }, [socket, roomId, navigate, activeStreamCallInstance, currentUser?.uid]); // Depend on socket, roomId, navigate, call instance, and currentUser
 
@@ -2360,6 +2531,13 @@ const SideRoomComponent: React.FC = () => {
                                     <ListItemIcon><PersonAdd fontSize="small" /></ListItemIcon>
                                     Invite
                                 </MenuItem>
+                                <MenuItem onClick={() => {
+                                    setShowBannedUsersDialog(true);
+                                    handleMenuClose();
+                                }}> 
+                                    <ListItemIcon><Block fontSize="small" /></ListItemIcon>
+                                    View Banned Users
+                                </MenuItem>
                                 <MenuItem onClick={handleDeleteRoom} sx={{ color: 'error.main' }}>
                                     <ListItemIcon><Delete fontSize="small" color="error" /></ListItemIcon>
                                     Delete Room
@@ -2384,13 +2562,13 @@ const SideRoomComponent: React.FC = () => {
                             <ExitToApp />
                         </IconButton>
                     </Tooltip>
-                    {isRoomOwner && isDesktop && activeStreamCallInstance && (
+                   {/* {isRoomOwner && isDesktop && activeStreamCallInstance && (
                         <Tooltip title={isScreenSharing ? "Stop Sharing Screen" : "Share Screen (Desktop Only)"}>
                             <IconButton onClick={handleToggleScreenShare} sx={{ color: room?.style?.accentColor || 'inherit' }}>
                                 {isScreenSharing ? <StopScreenShareIcon /> : <ScreenShareIcon />}
                             </IconButton>
                         </Tooltip>
-                    )}
+                    )} */}
                 </Box>
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2504,71 +2682,102 @@ const SideRoomComponent: React.FC = () => {
     );
 
     // --- Moderation Handlers (To be defined in SideRoomComponent) --- 
-    const handleForceMuteToggle = useCallback(async (targetUserId: string, currentMuteState: boolean) => {
-        if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid) return;
-        console.log(`Owner toggling mute for ${targetUserId}. Currently muted: ${currentMuteState}`);
+    const handleForceMuteToggle = useCallback(async (targetUserId: string, currentForceMuteState: boolean) => {
+        if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid || !socket) return;
+        console.log(`Owner toggling force-mute for ${targetUserId}. Currently force-muted: ${currentForceMuteState}`);
         
-        const newMuteState = !currentMuteState;
-        // This part needs to be adapted. If Stream API provides remote mute, use that.
-        // Otherwise, this relies on the target client listening to a 'force-mute' socket event
-        // and then muting its own Stream microphone.
-        // The current backend emits 'force-mute' to the target client's socket.
-        // This presumes the client still has a general socket connection.
-
+        const newForceMuteState = !currentForceMuteState;
         const targetPresenceRef = doc(db, 'sideRooms', roomId, 'presence', targetUserId);
         
         try {
-            await updateDoc(targetPresenceRef, { isMuted: newMuteState }); // Update Firestore for UI consistency
+            // Update Firestore for UI consistency - use forceMuted field
+            await updateDoc(targetPresenceRef, { forceMuted: newForceMuteState });
             
-            // Send signal via existing general socket.io channel if still in use for moderation
-            // This assumes the backend `handleMuteToggle` relays this to the target.
-            // socket?.emit(newMuteState ? 'force-mute' : 'force-unmute', { roomId, targetUserId });
-             console.warn("[SideRoomComponent] handleForceMuteToggle needs to be connected to the correct signaling (e.g., general Socket.IO emit)")
+            // Send socket event to force mute/unmute the target user
+            if (newForceMuteState) {
+                socket.emit('force-mute', { roomId, targetUserId });
+                console.log(`[SideRoomComponent] Emitted force-mute for user ${targetUserId}`);
+            } else {
+                socket.emit('force-unmute', { roomId, targetUserId });
+                console.log(`[SideRoomComponent] Emitted force-unmute for user ${targetUserId}`);
+            }
 
-
-            toast.success(`User ${newMuteState ? 'muted' : 'unmuted'}.`);
+            toast.success(`User ${newForceMuteState ? 'muted' : 'unmuted'}.`);
         } catch (error) {
-             console.error(`Error toggling mute for ${targetUserId}:`, error);
-             toast.error('Failed to update mute status.');
+            console.error(`Error toggling force-mute for ${targetUserId}:`, error);
+            toast.error('Failed to update mute status.');
         }
-    }, [isRoomOwner, roomId, currentUser?.uid, db]);
+    }, [isRoomOwner, roomId, currentUser?.uid, db, socket]);
 
-    const handleForceRemove = useCallback((targetUserId: string, targetUsername?: string) => {
+    const handleForceRemove = useCallback((targetUserId: string, targetUsername?: string, reason?: string) => {
         if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid || !socket) return;
         
         const name = targetUsername || 'this user';
-        if (window.confirm(`Are you sure you want to remove ${name} from the room?`)) {
-             console.log(`[SideRoomComponent] Owner removing user ${targetUserId} from room ${roomId}`);
-             socket.emit('force-remove', { roomId, targetUserId }); // Emit to server
-             toast.success(`Removing ${name}...`); // Optimistic toast
+        const isBlockAction = reason === 'blocked';
+        
+        if (!isBlockAction && !window.confirm(`Are you sure you want to remove ${name} from the room?`)) {
+            return;
+        }
+        
+        console.log(`[SideRoomComponent] Owner removing user ${targetUserId} from room ${roomId} - reason: ${reason || 'removed'}`);
+        socket.emit('force-remove', { roomId, targetUserId, reason: reason || 'removed' }); // Emit to server with reason
+        
+        if (!isBlockAction) {
+            toast.success(`Removing ${name}...`); // Optimistic toast only for manual removal
         }
     }, [isRoomOwner, roomId, currentUser?.uid, socket]); // Added socket dependency
 
-    // Add Ban Handler
-    const handleForceBan = useCallback((targetUserId: string, targetUsername?: string) => {
+    // Ban Handler - Permanently bans user from the room
+    const handleForceBan = useCallback(async (targetUserId: string, targetUsername?: string) => {
         if (!isRoomOwner || !roomId || targetUserId === currentUser?.uid) return;
         
-        // Function is maintained for backwards compatibility with existing code,
-        // but now it should use blockUser instead of banning
         const name = targetUsername || 'this user';
 
-        if (window.confirm(`Are you sure you want to block ${name}? They will be removed from the room.`)) {
+        if (window.confirm(`Are you sure you want to ban ${name}? They will be banned from this room and cannot rejoin.`)) {
             try {
-                blockUser(targetUserId)
-                    .then(() => {
-                        toast.success(`Blocked ${name}`);
-                        console.log(`User ${targetUserId} has been blocked`);
-                    })
-                    .catch((error) => {
-                        console.error('Error blocking user:', error);
-                        toast.error('Failed to block user');
-                    });
+                // Add user to banned list in room document
+                const roomRef = doc(db, 'sideRooms', roomId);
+                const roomDoc = await getDoc(roomRef);
+                
+                if (roomDoc.exists()) {
+                    const roomData = roomDoc.data();
+                    const currentBannedUsers = roomData.bannedUsers || [];
+                    
+                    if (!currentBannedUsers.includes(targetUserId)) {
+                        // Add to banned users list
+                        await updateDoc(roomRef, {
+                            bannedUsers: arrayUnion(targetUserId),
+                            lastActive: serverTimestamp()
+                        });
+                        
+                        // Also remove from viewers list if present
+                        const currentViewers = roomData.viewers || [];
+                        const updatedViewers = currentViewers.filter((viewer: any) => viewer.userId !== targetUserId);
+                        
+                        await updateDoc(roomRef, {
+                            viewers: updatedViewers
+                        });
+                        
+                        console.log(`[SideRoomComponent] User ${targetUserId} banned from room ${roomId}`);
+                        
+                        // Force remove via socket to kick them out immediately
+                        if (socket) {
+                            socket.emit('force-ban', { roomId, targetUserId, reason: 'Banned by room owner' });
+                        }
+                        
+                        toast.success(`${name} has been banned from the room`);
+                    } else {
+                        toast.error(`${name} is already banned from this room`);
+                    }
+                } else {
+                    toast.error('Room not found');
+                }
             } catch (error) {
-                console.error('Error initiating block:', error);
-                toast.error('Failed to block user');
+                console.error('Error banning user:', error);
+                toast.error('Failed to ban user');
             }
         }
-    }, [isRoomOwner, roomId, currentUser?.uid, blockUser]);
+    }, [isRoomOwner, roomId, currentUser?.uid, socket, db]);
 
     // --- Sade AI Chat: Scrolling ---
     const scrollToSadeBottom = () => {
@@ -2987,6 +3196,30 @@ const SideRoomComponent: React.FC = () => {
         }
     };
 
+    const handleToggleScreenShare = useCallback(async () => {
+        if (!activeStreamCallInstance) {
+            toast.error("Audio/video call not active to share screen.");
+            return;
+        }
+        if (!isDesktop) {
+            toast.error("Screen sharing is only available on desktop devices.");
+            return;
+        }
+        try {
+            await activeStreamCallInstance.screenShare.toggle();
+            const currentlySharing = activeStreamCallInstance.screenShare.enabled;
+            setIsScreenSharing(currentlySharing);
+            if (currentlySharing) {
+                toast.success("Screen sharing started.");
+            } else {
+                toast.success("Screen sharing stopped.");
+            }
+        } catch (error: any) {
+            console.error("Error toggling screen share:", error);
+            toast.error(`Failed to toggle screen sharing: ${error.message || 'Unknown error'}`);
+        }
+    }, [activeStreamCallInstance, isDesktop]);
+
     // --- Heartbreak Feature Handler ---
     const handleHeartbreakRoom = async () => {
         if (!currentUser || !currentUser.uid || !roomId || !room) return;
@@ -3165,6 +3398,8 @@ const SideRoomComponent: React.FC = () => {
         }
     };
 
+    
+
     // --- RE-ADD renderRoomContent function definition ---
     const renderRoomContent = () => (
         <Box sx={{ 
@@ -3210,6 +3445,8 @@ const SideRoomComponent: React.FC = () => {
                 </Box>
             )}
 
+            
+
             {/* Participants Grid - Use Firestore data */}
             <Typography variant="h6" gutterBottom>
                 Participants ({onlineParticipants.length})
@@ -3245,48 +3482,10 @@ const SideRoomComponent: React.FC = () => {
             )}
         </Box>
     );
+    
+    
+    
 
-    // --- Handler for Screen Sharing --- (NEW)
-    const handleToggleScreenShare = async () => {
-        if (!activeStreamCallInstance) {
-            toast.error("Audio/video call not active to share screen.");
-            return;
-        }
-        if (!isDesktop) {
-            toast.error("Screen sharing is only available on desktop devices.");
-            return;
-        }
-        try {
-            await activeStreamCallInstance.screenShare.toggle();
-            const currentlySharing = activeStreamCallInstance.screenShare.enabled;
-            setIsScreenSharing(currentlySharing);
-            if (currentlySharing) {
-                toast.success("Screen sharing started. All participants will see your screen automatically.");
-                if (socket && room?.id && currentUser?.uid) {
-                    socket.emit('start-screen-share', { roomId: room.id, userId: currentUser.uid });
-                }
-            } else {
-                toast.success("Screen sharing stopped.");
-                if (socket && room?.id && currentUser?.uid) {
-                    socket.emit('stop-screen-share', { roomId: room.id, userId: currentUser.uid });
-                }
-            }
-        } catch (error: any) {
-            console.error("Error toggling screen share:", error);
-            if (error.name === 'NotAllowedError' || error.message?.includes('Permission denied')) {
-                toast.error("Screen share permission denied. Please allow access in your browser.");
-            } else if (error.message?.includes('InvalidStateError')) {
-                toast.error("Cannot toggle screen share: an operation is already in progress or call state is invalid.");
-            } else if (error.message?.includes("getDisplayMedia is not supported") || error.message?.includes("getDisplayMedia API is not available")){
-                toast.error("Screen sharing is not supported by your browser.");
-            } else {
-                toast.error(`Failed to toggle screen sharing: ${error.message || 'Unknown error'}`);
-            }
-            if (activeStreamCallInstance.screenShare) {
-                 setIsScreenSharing(activeStreamCallInstance.screenShare.enabled);
-            }
-        }
-    };
 
     // Add/update the handlePasswordSubmit function
     const handlePasswordSubmit = async () => {
@@ -4249,6 +4448,66 @@ const SideRoomComponent: React.FC = () => {
                     onSend={handleSendMessage}
                     currentUserId={currentUser?.uid}
                 />
+
+                {/* Banned Users Management Dialog */}
+                <Dialog
+                    open={showBannedUsersDialog}
+                    onClose={() => setShowBannedUsersDialog(false)}
+                    maxWidth="sm"
+                    fullWidth
+                >
+                    <DialogTitle>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Typography variant="h6">Banned Users</Typography>
+                            <IconButton onClick={() => setShowBannedUsersDialog(false)}>
+                                <CloseIcon />
+                            </IconButton>
+                        </Box>
+                    </DialogTitle>
+                    <DialogContent>
+                        {bannedUsersData.length === 0 ? (
+                            <Box sx={{ textAlign: 'center', py: 3 }}>
+                                <Typography variant="body1" color="text.secondary">
+                                    No users are currently banned from this room
+                                </Typography>
+                            </Box>
+                        ) : (
+                            <List>
+                                {bannedUsersData.map((user) => (
+                                    <ListItem
+                                        key={user.id}
+                                        sx={{ 
+                                            border: '1px solid',
+                                            borderColor: 'divider',
+                                            borderRadius: 1,
+                                            mb: 1
+                                        }}
+                                        secondaryAction={
+                                            <Button
+                                                variant="outlined"
+                                                color="success"
+                                                size="small"
+                                                onClick={() => handleUnbanUser(user.id, user.username)}
+                                            >
+                                                Unban
+                                            </Button>
+                                        }
+                                    >
+                                        <ListItemAvatar>
+                                            <Avatar src={user.profilePic} alt={user.username}>
+                                                {user.username.charAt(0).toUpperCase()}
+                                            </Avatar>
+                                        </ListItemAvatar>
+                                        <ListItemText
+                                            primary={user.name || user.username}
+                                            secondary={`@${user.username}`}
+                                        />
+                                    </ListItem>
+                                ))}
+                            </List>
+                        )}
+                    </DialogContent>
+                </Dialog>
                         </Box>
         </>
     );
@@ -4266,7 +4525,7 @@ const InsideStreamCallContent: React.FC<{
     currentVideoUrl: string | null, 
     renderVideoPlayer: (videoUrl: string) => React.ReactNode, 
     onForceMuteToggle: Function, 
-    onForceRemove: Function, 
+    onForceRemove: (targetUserId: string, targetUsername?: string, reason?: string) => void, 
     onForceBan: Function, 
     theme: any,
     navigate: Function
@@ -4281,7 +4540,7 @@ const InsideStreamCallContent: React.FC<{
     const { isEnabled: isCameraEnabled, isTogglePending } = useCameraState(); 
     
     // State to force screen share updates
-    const [forceScreenShareUpdate, setForceScreenShareUpdate] = useState(0); 
+   
 
     // Initialize camera as disabled
     useEffect(() => {
@@ -4312,45 +4571,16 @@ const InsideStreamCallContent: React.FC<{
     const chatEndRef = useRef<null | HTMLDivElement>(null);
 
     // Screen sharing detection - ensure ALL participants can see it
-    const screenSharingParticipant = participants.find(p => p.screenShareStream);
-    const isRoomOwnerSharing = screenSharingParticipant?.userId === room.ownerId;
-
-    // Screen sharing detection effect - without manual DOM manipulation
-    useEffect(() => {
-        if (screenSharingParticipant) {
-            console.log(`Screen sharing detected from participant ${screenSharingParticipant.name || screenSharingParticipant.userId}`);
-            
-            // Log if it's the room owner to help with debugging
-            if (isRoomOwnerSharing) {
-                console.log('Room owner is sharing their screen - should be visible to ALL participants');
-            }
-        }
-    }, [screenSharingParticipant, isRoomOwnerSharing]);
-    
-    // Determine if chat tab should be shown
-    const shouldShowChatTab = true; // Always show chat tab
-    
-    // Screen sharing detection effect
-    useEffect(() => {
-        // If the room owner is sharing their screen, make sure it's visible to all participants
-        if (isRoomOwnerSharing && screenSharingParticipant) {
-            // Log for debugging
-            console.log("Room owner is sharing screen - should be visible to all participants");
-        }
-    }, [isRoomOwnerSharing, screenSharingParticipant]);
-    
-    // When participants change, force an update to screen sharing view
-    useEffect(() => {
-        if (screenSharingParticipant) {
-            console.log(`Screen sharing available from participant: ${screenSharingParticipant.name || screenSharingParticipant.userId}`);
-            
-            // Force an update whenever participants change to ensure new joiners see the stream
-            setForceScreenShareUpdate(prev => prev + 1);
-        }
-    }, [screenSharingParticipant, participants.length]);
+   
 
     // State to cache usernames from Firestore
     const [firestoreUserData, setFirestoreUserData] = useState<{[key: string]: {username: string, avatar?: string}}>({});
+
+    // Determine if chat tab should be shown
+    const shouldShowChatTab = true; // Always show chat tab
+
+    // Screen sharing detection using Stream's built-in functionality
+    const screenSharingParticipant = participants.find(p => p.screenShareStream);
 
     // Fetch Firestore username for a user
     const fetchUserFirestoreData = useCallback(async (userId: string) => {
@@ -4490,21 +4720,30 @@ const InsideStreamCallContent: React.FC<{
             toast.error("Screen sharing is only available on desktop devices.");
             return;
         }
+        
         try {
-            await call.screenShare.toggle();
-            // No local state needed as we're using the button directly in the screen share section
-            if (call.screenShare.enabled) {
-                toast.success("Screen sharing started.");
+            console.log('Current screen share state:', call.screenShare.enabled);
+            
+            if (!call.screenShare.enabled) {
+                // Starting screen share
+                toast.loading("Starting screen share...");
+                await call.screenShare.enable();
+                console.log('Screen share enabled successfully');
+                toast.dismiss();
+                toast.success("Screen sharing started! Everyone should see your screen now.");
             } else {
+                // Stopping screen share
+                await call.screenShare.disable();
+                console.log('Screen share disabled successfully');
                 toast.success("Screen sharing stopped.");
             }
         } catch (error: any) {
-            console.error("Error toggling screen share:", error);
+            toast.dismiss();
+            console.error("Screen share error:", error);
+            
             if (error.name === 'NotAllowedError' || error.message?.includes('Permission denied')) {
-                toast.error("Screen share permission denied. Please allow access in your browser.");
-            } else if (error.message?.includes('InvalidStateError')) {
-                toast.error("Cannot toggle screen share: an operation is already in progress or call state is invalid.");
-            } else if (error.message?.includes("getDisplayMedia is not supported") || error.message?.includes("getDisplayMedia API is not available")){
+                toast.error("Screen share permission denied. Please allow access when prompted by your browser.");
+            } else if (error.message?.includes('getDisplayMedia is not supported')) {
                 toast.error("Screen sharing is not supported by your browser.");
             } else {
                 toast.error(`Failed to toggle screen sharing: ${error.message || 'Unknown error'}`);
@@ -4594,278 +4833,26 @@ const InsideStreamCallContent: React.FC<{
 
     const gridParticipants = sortedParticipants;
 
-    // Add prefetch effect after gridParticipants is declared
-    useEffect(() => {
-        if (!participants?.length) return;
-        
-        const fetchAllUserData = async () => {
-            const promises = participants
-                .filter(p => !firestoreUserData[p.userId])
-                .map(p => fetchUserFirestoreData(p.userId));
-            
-            await Promise.all(promises);
-        };
-        
-        fetchAllUserData();
-    }, [participants, fetchUserFirestoreData, firestoreUserData]);
+    // Add these functions here:
+const renderCallStatusHeader = () => null; // Simple placeholder - can be enhanced later
 
-    const handleLeaveCall = () => {
-        call?.leave().then(() => navigate('/side-rooms')); 
-    }; 
-
-    const renderCallStatusHeader = () => ( 
-        <Box sx={{ 
-            p: 1, 
-            borderBottom: 1, 
-            borderColor: 'divider', 
-            textAlign: 'center', 
-            flexShrink: 0, 
-            backgroundColor: room?.style?.headerGradient 
-                ? `linear-gradient(to right, ${room?.style?.headerColor || theme.palette.primary.main}, ${room?.style?.accentColor || theme.palette.secondary.light})` 
-                : room?.style?.headerColor || alpha(theme.palette.background.paper, 0.95),
-            color: room?.style?.textColor || 'inherit'
-        }}>
-            <Typography 
-                variant="body2" 
-                fontWeight="medium"
-                sx={{ 
-                    fontFamily: room?.style?.font || 'inherit'
-                }}
-            >
-                {room.name}
-            </Typography>
-            <Typography 
-                variant="caption" 
-                color={room?.style?.textColor ? alpha(room?.style?.textColor, 0.8) : "text.secondary"}
-                sx={{
-                    fontFamily: room?.style?.font || 'inherit'
-                }}
-            >
-                (Mic: {localUserIsMute ? 'Muted' : 'On'})
-            </Typography>
-            </Box>
-        );
-
-    useEffect(() => {
-        if (call && currentUser?.uid && room?.id && typeof localUserIsMute === 'boolean' && db) { 
-            const userPresenceRef = doc(db, 'sideRooms', room.id, 'presence', currentUser.uid);
-            const userPresencePath = `sideRooms/${room.id}/presence/${currentUser.uid}`;
-            console.log('[DEBUG Mute Sync] Attempting updateDoc to path:', userPresencePath, 'with data:', JSON.stringify({ isMuted: localUserIsMute }, null, 2));
-            updateDoc(userPresenceRef, { isMuted: localUserIsMute })
-                .then(() => {
-                    console.log(`[InsideStreamCallContent] Synced local mute state (${localUserIsMute}) to Firestore for ${currentUser.uid}`);
-                })
-                .catch(error => {
-                    console.error(`[InsideStreamCallContent] Error syncing local mute state to Firestore for ${currentUser.uid}:`, error);
-                });
-        }
-    }, [localUserIsMute, call, currentUser?.uid, room?.id, db]); 
-
-    // Force a re-check of screen sharing when call changes or when we need to force an update
-    useEffect(() => {
-        if (!call) return;
-        
-        // Schedule a re-check in case the video stream isn't immediately available
-        console.log("Call or force update changed, rechecking screen share in 2 seconds");
-        
-        const checkScreenShare = setTimeout(() => {
-            const container = document.getElementById('screen-share-container');
-            if (container && screenSharingParticipant?.screenShareStream) {
-                // Create and append a video element if it doesn't exist
-                let videoEl = container.querySelector('video');
-                
-                if (!videoEl) {
-                    videoEl = document.createElement('video');
-                    videoEl.id = 'screen-share-video';
-                    videoEl.autoplay = true;
-                    videoEl.playsInline = true;
-                    videoEl.style.width = '100%';
-                    videoEl.style.height = '100%';
-                    videoEl.style.position = 'absolute';
-                    videoEl.style.top = '0';
-                    videoEl.style.left = '0';
-                    videoEl.style.objectFit = 'contain';
-                    container.appendChild(videoEl);
-                }
-                
-                // Set or update the stream
-                if (videoEl.srcObject !== screenSharingParticipant.screenShareStream) {
-                    videoEl.srcObject = screenSharingParticipant.screenShareStream;
-                    videoEl.play().catch(err => console.error("Error playing screen share:", err));
-                    console.log("Force-updated screen share video with latest stream");
-                }
-            }
-        }, 2000);
-        
-        return () => {
-            clearTimeout(checkScreenShare);
-        };
-    }, [call, forceScreenShareUpdate, screenSharingParticipant]);
-
-    // Manual screen share handling to bypass React lifecycle issues
-    useEffect(() => {
-        if (!participants || participants.length === 0) return;
-        
-        // Find any participant who is sharing their screen
-        const screensharer = participants.find(p => p.screenShareStream);
-        const container = document.getElementById('screen-share-container');
-        
-        // Function to create and set up video element
-        const setupScreenShareVideo = () => {
-            if (!screensharer?.screenShareStream || !container) return;
-            
-            console.log(`Screen sharing detected from: ${screensharer.name || screensharer.userId}`);
-            
-            // Remove any existing video element to avoid duplicates
-            const existingVideo = container.querySelector('video');
-            if (existingVideo) {
-                existingVideo.remove();
-            }
-            
-            // Create a fresh video element
-            const videoEl = document.createElement('video');
-            videoEl.id = 'screen-share-video';
-            videoEl.autoplay = true;
-            videoEl.playsInline = true;
-            videoEl.muted = false;
-            
-            // Set stream directly
-            videoEl.srcObject = screensharer.screenShareStream;
-            
-            // Add to container
-            container.appendChild(videoEl);
-            
-            // Add gaming overlays to the container
-            // Game name banner
-            const gamerNameBox = document.createElement('div');
-            gamerNameBox.className = 'gaming-overlay gamer-name';
-            gamerNameBox.innerHTML = `<span>${screensharer.name || 'Gamer'}</span>`;
-            gamerNameBox.style.cssText = `
-                position: absolute;
-                top: 20px;
-                left: 20px;
-                background-color: rgba(0,0,0,0.7);
-                border-radius: 8px;
-                padding: 8px 12px;
-                display: flex;
-                align-items: center;
-                border: 1px solid ${room?.style?.accentColor || '#ff5722'};
-                box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-                z-index: 99;
-                color: white;
-                font-weight: bold;
-            `;
-            container.appendChild(gamerNameBox);
-            
-            // Live indicator
-            const liveBox = document.createElement('div');
-            liveBox.className = 'gaming-overlay live-indicator';
-            liveBox.innerHTML = `<span>LIVE</span>`;
-            liveBox.style.cssText = `
-                position: absolute;
-                top: 20px;
-                right: 20px;
-                background-color: #f44336;
-                border-radius: 4px;
-                padding: 4px 8px;
-                display: flex;
-                align-items: center;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-                z-index: 99;
-                color: white;
-                font-weight: bold;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                font-size: 0.8rem;
-            `;
-            container.appendChild(liveBox);
-            
-            // Viewer count
-            const viewerBox = document.createElement('div');
-            viewerBox.className = 'gaming-overlay viewer-count';
-            viewerBox.innerHTML = `<span>${participants?.length || 0} viewers</span>`;
-            viewerBox.style.cssText = `
-                position: absolute;
-                bottom: 20px;
-                left: 20px;
-                background-color: rgba(0,0,0,0.7);
-                border-radius: 8px;
-                padding: 6px 10px;
-                display: flex;
-                align-items: center;
-                z-index: 99;
-                color: white;
-                font-weight: medium;
-                font-size: 0.9rem;
-            `;
-            container.appendChild(viewerBox);
-            
-            // Bottom bar
-            const bottomBar = document.createElement('div');
-            bottomBar.className = 'gaming-overlay bottom-bar';
-            bottomBar.innerHTML = `<span style="color: ${room?.style?.accentColor || '#ff5722'}; font-weight: bold;">GAMING STREAM</span>`;
-            bottomBar.style.cssText = `
-                position: absolute;
-                bottom: 0;
-                left: 0;
-                right: 0;
-                background-color: rgba(0,0,0,0.7);
-                padding: 8px 10px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                z-index: 98;
-            `;
-            container.appendChild(bottomBar);
-            
-            // Play with retry mechanism
-            const playVideo = () => {
-                const playPromise = videoEl.play();
-                
-                if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.error('Error playing screen share:', error);
-                        setTimeout(playVideo, 1000);
-                    });
-                }
-            };
-            
-            playVideo();
-            
-            console.log('Screen share video element created and playing');
-        };
-        
-        // Clean up if no screen sharing
-        const cleanupScreenShareVideo = () => {
-            if (!container) return;
-            
-            // Remove video element
-            const existingVideo = container.querySelector('video');
-            if (existingVideo) {
-                existingVideo.srcObject = null;
-                existingVideo.remove();
-                console.log('Screen share video element removed');
-            }
-            
-            // Remove all overlays
-            const overlays = container.querySelectorAll('.gaming-overlay');
-            overlays.forEach(overlay => {
-                overlay.remove();
+const handleLeaveCall = () => {
+    if (call) {
+        call.leave()
+            .then(() => {
+                console.log('Successfully left call');
+                navigate('/side-rooms');
+            })
+            .catch(err => {
+                console.error('Error leaving call:', err);
+                navigate('/side-rooms'); // Navigate anyway
             });
-        };
-        
-        // Setup or cleanup based on screen sharing state
-        if (screensharer) {
-            setupScreenShareVideo();
-        } else {
-            cleanupScreenShareVideo();
-        }
-        
-        // Cleanup on component unmount
-        return () => {
-            cleanupScreenShareVideo();
-        };
-    }, [participants]);
+    } else {
+        navigate('/side-rooms');
+    }
+};
+
+    
 
     if (!call) {
         return (
@@ -4902,643 +4889,421 @@ const InsideStreamCallContent: React.FC<{
                 // Removing overflowY to fix double scrollbar issue
                 // overflowY: 'auto', 
             }}>
-                                 {/* TikTok-like video display for all participants */}
-                 {!screenSharingParticipant && (
-                     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                         <Typography variant="h6" align="center" sx={{ 
-                             mt: 2, 
-                             mb: 1, 
-                             fontWeight: 500,
-                             color: room?.style?.accentColor || theme.palette.primary.main
-                         }}>
-                             Live Video
-                         </Typography>
-                         
-                         {/* Main side-by-side video display */}
-                         <Box sx={{ 
-                             width: '100%',
-                             display: 'flex',
-                             flexDirection: 'row',
-                             justifyContent: 'center',
-                             alignItems: 'center',
-                             gap: 2,
-                             flexWrap: { xs: 'wrap', sm: 'nowrap' },
-                             mb: 2
-                         }}>
-                             {isCameraEnabled ? (
-                             /* Your video - only shown when camera is enabled */
-                             <Box sx={{ 
-                                 border: '3px solid',
-                                 borderColor: theme.palette.primary.main,
-                                 borderRadius: '16px',
-                                 backgroundColor: '#000',
-                                 position: 'relative',
-                                 display: 'flex',
-                                 flexDirection: 'column',
-                                 height: { xs: '40vh', sm: '60vh' },
-                                 maxHeight: '400px',
-                                 width: { xs: '90%', sm: '45%' },
-                                 maxWidth: '350px',
-                                 overflow: 'hidden',
-                                 boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
-                                 '& .str-video__participant-view': {
-                                     width: '100%',
-                                     height: '100%',
-                                     '& video': {
-                                         width: '100%',
-                                         height: '100%',
-                                         objectFit: 'cover',
-                                         background: '#000'
-                                     }
-                                 }
-                             }}>
-                                 {/* Close (X) button */}
-                                 <IconButton
-                                     onClick={toggleCamera}
-                                     sx={{
-                                         position: 'absolute',
-                                         top: 8,
-                                         right: 8,
-                                         backgroundColor: 'rgba(0,0,0,0.6)',
-                                         color: 'white',
-                                         width: 32,
-                                         height: 32,
-                                         zIndex: 10,
-                                         '&:hover': {
-                                             backgroundColor: 'rgba(255,0,0,0.8)'
-                                         }
-                                     }}
-                                 >
-                                     <CloseIcon fontSize="small" />
-                                 </IconButton>
-                                 
-                                 {localParticipant && (
-                                     <ParticipantView participant={localParticipant} trackType="videoTrack" />
-                                 )}
-                                 
-                                 {/* TikTok-style gradient overlay at bottom */}
-                                 <Box sx={{
-                                     position: 'absolute',
-                                     bottom: 0,
-                                     left: 0,
-                                     right: 0,
-                                     padding: '40px 16px 16px 16px',
-                                     background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-                                     color: 'white',
-                                     zIndex: 2
-                                 }}>
-                                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                         <Avatar sx={{ width: 40, height: 40, mr: 1 }}>
-                                             {currentUser?.displayName?.[0] || 'U'}
-                                         </Avatar>
-                                         <Box>
-                                             <Typography variant="subtitle2" fontWeight="bold">
-                                                 {currentUser?.displayName || 'You'}
-                                             </Typography>
-                                             <Typography variant="caption">
-                                                 {room?.name || 'Live Room'}
-                                             </Typography>
-                                         </Box>
-                                     </Box>
-                                 </Box>
-                                 
-                                 {/* Control buttons */}
-                                 <Box sx={{
-                                     position: 'absolute',
-                                     right: 12,
-                                     bottom: 70,
-                                     display: 'flex',
-                                     flexDirection: 'column',
-                                     alignItems: 'center',
-                                     gap: 2
-                                 }}>                                      
-                                      <Tooltip title={localUserIsMute ? "Unmute" : "Mute"}>
-                                          <IconButton 
-                                              onClick={() => call?.microphone.toggle()}
-                                              sx={{
-                                                  backgroundColor: 'rgba(0,0,0,0.6)',
-                                                  color: 'white',
-                                                  width: 44,
-                                                  height: 44,
-                                                  '&:hover': {
-                                                      backgroundColor: 'rgba(0,0,0,0.8)'
-                                                  }
-                                              }}
-                                          >
-                                              {localUserIsMute ? <MicOff /> : <Mic />}
-                                          </IconButton>
-                                      </Tooltip>
-                                 </Box>
-                             </Box>
-                             ) : (
-                                 <Box sx={{
-                                     display: 'flex',
-                                     flexDirection: 'column',
-                                     justifyContent: 'center',
-                                     alignItems: 'center',
-                                     width: { xs: '90%', sm: '45%' },
-                                     maxWidth: '350px',
-                                 }}>
-                                     <Button 
-                                         variant="contained" 
-                                         color="primary" 
-                                         onClick={toggleCamera}
-                                         startIcon={<VideocamIcon />}
-                                     >
-                                         Enable Camera
-                                     </Button>
-                                 </Box>
-                             )}
+                {/* Screen Share Display - Shows when someone is sharing */}
+                {screenSharingParticipant && (
+                    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 3 }}>
+                        <Typography variant="h6" align="center" sx={{ 
+                            mt: 2, 
+                            mb: 2, 
+                            fontWeight: 700,
+                            color: room?.style?.accentColor || theme.palette.primary.main,
+                        }}>
+                            🖥️ {screenSharingParticipant.name || 'Someone'} is sharing their screen
+                        </Typography>
+                        
+                        <Box sx={{ 
+                            width: '100%',
+                            maxWidth: '1200px',
+                            position: 'relative',
+                            paddingTop: '56.25%', // 16:9 aspect ratio
+                            backgroundColor: '#000',
+                            borderRadius: 2,
+                            overflow: 'hidden',
+                            border: `2px solid ${room?.style?.accentColor || theme.palette.primary.main}`,
+                            '& .str-video__participant-view': {
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                height: '100%',
+                                '& video': {
+                                    width: '100%',
+                                    height: '100%',
+                                    objectFit: 'contain'
+                                }
+                            }
+                        }}>
+                            <ParticipantView 
+                                participant={screenSharingParticipant} 
+                                trackType="screenShareTrack" 
+                            />
+                        </Box>
+                    </Box>
+                )}
 
-                             {/* Other participant's video (side by side) - prioritizing the host */}
-                             {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 0 && (
-                                 isPipVisible ? (
-                                     <Box sx={{ 
-                                         border: '3px solid',
-                                         borderColor: 'divider',
-                                         borderRadius: '16px',
-                                         backgroundColor: '#000',
-                                         position: 'relative',
-                                         display: 'flex',
-                                         flexDirection: 'column',
-                                         height: { xs: '40vh', sm: '60vh' },
-                                         maxHeight: '400px',
-                                         width: { xs: '90%', sm: '45%' },
-                                         maxWidth: '350px',
-                                         overflow: 'hidden',
-                                         boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
-                                         '& .str-video__participant-view': {
-                                             width: '100%',
-                                             height: '100%',
-                                             '& video': {
-                                                 width: '100%',
-                                                 height: '100%',
-                                                 objectFit: 'cover',
-                                                 background: '#000'
-                                             }
-                                         }
-                                     }}>
-                                         {(() => {
-                                             // Prioritize showing the host if present
-                                             const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
-                                             const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
-                                             const participantToShow = hostParticipant || otherParticipant;
-                                             
-                                             return participantToShow ? (
-                                                 <ParticipantView 
-                                                     participant={participantToShow} 
-                                                     trackType="videoTrack" 
-                                                 />
-                                             ) : null;
-                                         })()}
-
-                                         {/* Close (X) button for other participant */}
-                                         <IconButton
-                                             onClick={() => {
-                                                 // Hide the remote participant's view
-                                                 setIsPipVisible(false);
-                                                 toast.success("Video view closed");
-                                             }}
-                                             sx={{
-                                                 position: 'absolute',
-                                                 top: 8,
-                                                 right: 8,
-                                                 backgroundColor: 'rgba(0,0,0,0.6)',
-                                                 color: 'white',
-                                                 width: 32,
-                                                 height: 32,
-                                                 zIndex: 10,
-                                                 '&:hover': {
-                                                     backgroundColor: 'rgba(255,0,0,0.8)'
-                                                 }
-                                             }}
-                                         >
-                                             <CloseIcon fontSize="small" />
-                                         </IconButton>
-
-                                         {/* Name overlay for other participant */}
-                                         <Box sx={{
-                                             position: 'absolute',
-                                             bottom: 0,
-                                             left: 0,
-                                             right: 0,
-                                             padding: '40px 16px 16px 16px',
-                                             background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-                                             color: 'white',
-                                             zIndex: 2
-                                         }}>
-                                                                                      {(() => {
-                                             // Use the same logic to get the prioritized participant
-                                             const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
-                                             const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
-                                             const participantToShow = hostParticipant || otherParticipant;
-                                             
-                                             return participantToShow && (
-                                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                                     <Avatar src={firestoreUserData[participantToShow.userId]?.avatar} sx={{ width: 40, height: 40, mr: 1 }} />
-                                                     <Box>
-                                                         <Typography variant="subtitle2" fontWeight="bold">
-                                                             {participantToShow?.name || 'User'}
-                                                             {participantToShow.userId === room.ownerId && " (Host)"}
-                                                         </Typography>
-                                                     </Box>
-                                                 </Box>
-                                             );
-                                         })()}
-                                         </Box>
-                                     </Box>
-                                 ) : (
-                                     <Box sx={{
-                                         display: 'flex',
-                                         flexDirection: 'column',
-                                         justifyContent: 'center',
-                                         alignItems: 'center',
-                                         width: { xs: '90%', sm: '45%' },
-                                         maxWidth: '350px',
-                                     }}>
-                                         <Button 
-                                             variant="outlined" 
-                                             color="primary" 
-                                             onClick={() => setIsPipVisible(true)}
-                                             startIcon={<VideocamIcon />}
-                                         >
-                                             Show Partner Video
-                                         </Button>
-                                     </Box>
-                                 )
-                             )}
-                         </Box>
-
-                         {/* Show additional participants if more than one other participant */}
-                         {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 1 && (
-                             <Box sx={{
-                                 display: 'flex',
-                                 flexWrap: 'wrap',
-                                 justifyContent: 'center',
-                                 gap: 1,
-                                 mt: 2,
-                                 width: '100%',
-                                 maxWidth: '600px'
-                             }}>
-                                 {participants
-                                    .filter(p => p.userId !== currentUser?.uid)
-                                    // Get the host participant to exclude from this list if shown in main view
-                                    .filter(p => {
-                                        const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
-                                        // If this is the host AND the host is shown in the main view (not this one), skip
-                                        return !(p.userId === room.ownerId && hostParticipant === participants.filter(p => p.userId !== currentUser?.uid)[0]);
-                                    })
-                                    .filter(p => !hiddenParticipantIds.includes(p.userId))
-                                    .map((participant) => (
-                                     <Box 
-                                         key={participant.userId}
-                                         sx={{
-                                             width: '100px',
-                                             height: '150px',
-                                             borderRadius: '10px',
-                                             overflow: 'hidden',
-                                             position: 'relative',
-                                             border: '2px solid',
-                                             borderColor: 'divider',
-                                             backgroundColor: '#000',
-                                             '& .str-video__participant-view': {
-                                                 width: '100%',
-                                                 height: '100%',
-                                                 '& video': {
-                                                     width: '100%',
-                                                     height: '100%',
-                                                     objectFit: 'cover'
-                                                 }
-                                             }
-                                         }}
-                                     >
-                                         <ParticipantView participant={participant} trackType="videoTrack" />
-                                         {/* Close (X) button for additional participants */}
-                                         <IconButton
-                                             onClick={() => {
-                                                 // Toggle the visibility of this participant in a state
-                                                 const hiddenIds = [...(hiddenParticipantIds || [])];
-                                                 if (hiddenIds.includes(participant.userId)) {
-                                                     // Remove from hidden list
-                                                     const index = hiddenIds.indexOf(participant.userId);
-                                                     if (index > -1) {
-                                                         hiddenIds.splice(index, 1);
-                                                     }
-                                                 } else {
-                                                     // Add to hidden list
-                                                     hiddenIds.push(participant.userId);
-                                                 }
-                                                 setHiddenParticipantIds(hiddenIds);
-                                                 toast.success("Video view toggled");
-                                             }}
-                                             sx={{
-                                                 position: 'absolute',
-                                                 top: 2,
-                                                 right: 2,
-                                                 backgroundColor: 'rgba(0,0,0,0.6)',
-                                                 color: 'white',
-                                                 width: 20,
-                                                 height: 20,
-                                                 zIndex: 10,
-                                                 padding: '2px',
-                                                 '& .MuiSvgIcon-root': {
-                                                     fontSize: '14px'
-                                                 },
-                                                 '&:hover': {
-                                                     backgroundColor: 'rgba(255,0,0,0.8)'
-                                                 }
-                                             }}
-                                         >
-                                             <CloseIcon />
-                                         </IconButton>
-                                         <Box sx={{
-                                             position: 'absolute',
-                                             bottom: 0,
-                                             left: 0,
-                                             right: 0,
-                                             padding: '2px 4px',
-                                             background: 'rgba(0,0,0,0.7)',
-                                             color: 'white',
-                                             fontSize: '10px',
-                                             textAlign: 'center',
-                                             overflow: 'hidden',
-                                             textOverflow: 'ellipsis',
-                                             whiteSpace: 'nowrap'
-                                         }}>
-                                             {participant.name || `User ${participant.userId.substring(0, 5)}`}
-                                         </Box>
-                                     </Box>
-                                 ))}
-                             </Box>
-                         )}
-                     </Box>
-                 )}
-                
-                 {screenSharingParticipant && (
+                {/* TikTok-like video display for all participants */}
+                {!screenSharingParticipant && (
                     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                         <Typography variant="h6" align="center" sx={{ 
                             mt: 2, 
                             mb: 1, 
-                            fontWeight: 700,
-                            color: room?.style?.accentColor || '#ff5722',
-                            textTransform: 'uppercase',
-                            letterSpacing: '1px',
-                            textShadow: '0px 1px 2px rgba(0,0,0,0.2)'
+                            fontWeight: 500,
+                            color: room?.style?.accentColor || theme.palette.primary.main
                         }}>
-                            🎮 LIVE GAMING STREAM 🎮
+                            Live Video
                         </Typography>
+                        
+                        {/* Main side-by-side video display */}
                         <Box sx={{ 
-                            m: 0,
-                            p: 0,
-                            border: '2px solid',
-                            borderColor: room?.style?.accentColor || '#ff5722',
-                            borderRadius: '8px',
-                            backgroundColor: '#000',
-                            position: 'relative',
+                            width: '100%',
                             display: 'flex',
-                            flexDirection: 'column',
-                            height: 'auto',
-                            width: '90%',
-                            maxWidth: '1200px',
-                            margin: '0 auto',
-                            marginTop: 2,
-                            marginBottom: 2,
-                            overflow: 'hidden',
-                            boxShadow: '0 8px 16px rgba(0,0,0,0.3)'
+                            flexDirection: 'row',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            gap: 2,
+                            flexWrap: { xs: 'wrap', sm: 'nowrap' },
+                            mb: 2
                         }}>
-                            {/* Show screen share when PiP is not enlarged, ensuring all participants can see it */}
-                            {!isPipEnlarged && (
-                            <Box 
-                                id="screen-share-container"
-                                sx={{
-                                width: '100%', 
-                                paddingTop: '56.25%', // 16:9 aspect ratio (9/16 = 0.5625)
-                                overflow: 'hidden', 
-                                position: 'relative', 
-                                border: 'none',
-                                background: '#000',
-                                    '& video': { 
-                                        width: '100%', 
-                                        height: '100%', 
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    objectFit: 'contain'
-                                            }
-                                        }}
-                            >
-                                </Box>
-                            )}
-                            
-                            {/* Hidden element removed - We're now directly rendering the screen share stream in the visible UI */}
-                            
-                            {/* Show enlarged camera when PiP is enlarged */}
-                            {isPipEnlarged && isPipVisible && localParticipant && (
-                                <Box sx={{
-                                    width: '100%', 
-                                    paddingTop: '56.25%', // Maintain 16:9 aspect ratio
-                                    overflow: 'hidden', 
-                                    position: 'relative', 
-                                    border: 'none',
-                                    backgroundColor: '#000',
-                                    '& .str-video__participant-view': { 
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        width: '100% !important',
-                                        height: '100% !important',
-                                        border: 'none',
-                                        display: 'flex', 
-                                        justifyContent: 'center', 
-                                        alignItems: 'center', 
-                                        '& video': { 
-                                            width: '100%', 
-                                            height: '100%', 
-                                            objectFit: 'cover',
-                                            background: '#000'
-                                        }
-                                    }
-                                }}>
-                                    {isCameraEnabled ? (
-                                        <ParticipantView participant={localParticipant} trackType="videoTrack" />
-                                    ) : (
-                                        <Box sx={{
-                                            position: 'absolute',
-                                            top: 0,
-                                            left: 0,
-                                            width: '100%',
-                                            height: '100%',
-                                            display: 'flex',
-                                            justifyContent: 'center',
-                                            alignItems: 'center',
-                                            color: 'white',
-                                            backgroundColor: 'rgba(0,0,0,0.8)'
-                                        }}>
-                                            <VideocamOffIcon sx={{ fontSize: '5rem' }} />
-                                        </Box>
-                                    )}
-                                    
-                                    <IconButton
-                                        size="medium"
-                                        onClick={toggleCamera}
-                                        sx={{
-                                            position: 'absolute',
-                                            top: 16,
-                                            right: 80,
-                                            padding: '8px',
-                                            color: 'white',
-                                            backgroundColor: 'rgba(0,0,0,0.5)',
-                                            '&:hover': {
-                                                backgroundColor: 'rgba(0,0,0,0.7)',
-                                            }
-                                        }}
-                                    >
-                                        {isCameraEnabled ? 
-                                            <VideocamIcon /> : 
-                                            <VideocamOffIcon />
-                                        }
-                                    </IconButton>
-                                    
-                                    <IconButton
-                                        size="medium"
-                                        onClick={() => setIsPipEnlarged(false)}
-                                        sx={{
-                                            position: 'absolute',
-                                            top: 16,
-                                            right: 16,
-                                            padding: '8px',
-                                            color: 'white',
-                                            backgroundColor: 'rgba(0,0,0,0.5)',
-                                            '&:hover': {
-                                                backgroundColor: 'rgba(0,0,0,0.7)',
-                                            }
-                                        }}
-                                    >
-                                        <CloseIcon />
-                                    </IconButton>
-                                </Box>
-                            )}
-                            
+                            {isCameraEnabled ? (
+                            /* Your video - only shown when camera is enabled */
                             <Box sx={{ 
-                                position: 'absolute',
-                                top: 10,
-                                right: 10,
-                                zIndex: 10
+                                border: '3px solid',
+                                borderColor: theme.palette.primary.main,
+                                borderRadius: '16px',
+                                backgroundColor: '#000',
+                                position: 'relative',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                height: { xs: '40vh', sm: '60vh' },
+                                maxHeight: '400px',
+                                width: { xs: '90%', sm: '45%' },
+                                maxWidth: '350px',
+                                overflow: 'hidden',
+                                boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
+                                '& .str-video__participant-view': {
+                                    width: '100%',
+                                    height: '100%',
+                                    '& video': {
+                                        width: '100%',
+                                        height: '100%',
+                                        objectFit: 'cover',
+                                        background: '#000'
+                                    }
+                                }
                             }}>
-                                {isRoomOwner && (
-                                    <Button
-                                        variant="contained"
-                                        color="error"
-                                        size="small"
-                                        startIcon={<StopScreenShareIcon />}
-                                        onClick={handleToggleScreenShare}
-                                        sx={{ 
-                                            borderRadius: '20px',
-                                            textTransform: 'none',
-                                            py: 0.5,
-                                            px: 1.5,
-                                            bgcolor: 'error.main',
-                                            fontWeight: 'bold',
-                                            minWidth: 0,
-                                            boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
-                                            fontFamily: room?.style?.font || 'inherit'
-                                        }}
-                                    >
-                                        Stop
-                                    </Button>
-                                )}
-                            </Box>
-
-                            {/* Only show small PiP when not enlarged */}
-                            {!isPipEnlarged && isPipVisible && localParticipant && (
-                                <Box
+                                {/* Close (X) button */}
+                                <IconButton
+                                    onClick={toggleCamera}
                                     sx={{
                                         position: 'absolute',
-                                        bottom: 16,
-                                        right: 16,
-                                        width: '160px', // Reduced from original size
-                                        height: '90px', // Reduced from original size
-                                        borderRadius: '8px',
-                                        overflow: 'hidden',
-                                        border: '2px solid',
-                                        borderColor: 'primary.main',
-                                        backgroundColor: '#000',
-                                        boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                                        top: 8,
+                                        right: 8,
+                                        backgroundColor: 'rgba(0,0,0,0.6)',
+                                        color: 'white',
+                                        width: 32,
+                                        height: 32,
                                         zIndex: 10,
+                                        '&:hover': {
+                                            backgroundColor: 'rgba(255,0,0,0.8)'
+                                        }
+                                    }}
+                                >
+                                    <CloseIcon fontSize="small" />
+                                </IconButton>
+                                
+                                {localParticipant && (
+                                    <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                )}
+                                
+                                {/* TikTok-style gradient overlay at bottom */}
+                                <Box sx={{
+                                    position: 'absolute',
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                    padding: '40px 16px 16px 16px',
+                                    background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                                    color: 'white',
+                                    zIndex: 2
+                                }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                        <Avatar sx={{ width: 40, height: 40, mr: 1 }}>
+                                            {currentUser?.displayName?.[0] || 'U'}
+                                        </Avatar>
+                                        <Box>
+                                            <Typography variant="subtitle2" fontWeight="bold">
+                                                {currentUser?.displayName || 'You'}
+                                            </Typography>
+                                            <Typography variant="caption">
+                                                {room?.name || 'Live Room'}
+                                            </Typography>
+                                        </Box>
+                                    </Box>
+                                </Box>
+                                
+                                {/* Control buttons */}
+                                <Box sx={{
+                                    position: 'absolute',
+                                    right: 12,
+                                    bottom: 70,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    gap: 2
+                                }}>                                      
+                                     <Tooltip title={localUserIsMute ? "Unmute" : "Mute"}>
+                                         <IconButton 
+                                             onClick={() => call?.microphone.toggle()}
+                                             sx={{
+                                                 backgroundColor: 'rgba(0,0,0,0.6)',
+                                                 color: 'white',
+                                                 width: 44,
+                                                 height: 44,
+                                                 '&:hover': {
+                                                     backgroundColor: 'rgba(0,0,0,0.8)'
+                                                 }
+                                             }}
+                                         >
+                                             {localUserIsMute ? <MicOff /> : <Mic />}
+                                         </IconButton>
+                                     </Tooltip>
+                                </Box>
+                            </Box>
+                            ) : (
+                                <Box sx={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    width: { xs: '90%', sm: '45%' },
+                                    maxWidth: '350px',
+                                }}>
+                                    <Button 
+                                        variant="contained" 
+                                        color="primary" 
+                                        onClick={toggleCamera}
+                                        startIcon={<VideocamIcon />}
+                                    >
+                                        Enable Camera
+                                    </Button>
+                                </Box>
+                            )}
+
+                            {/* Other participant's video (side by side) - prioritizing the host */}
+                            {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 0 && (
+                                isPipVisible ? (
+                                    <Box sx={{ 
+                                        border: '3px solid',
+                                        borderColor: 'divider',
+                                        borderRadius: '16px',
+                                        backgroundColor: '#000',
+                                        position: 'relative',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        height: { xs: '40vh', sm: '60vh' },
+                                        maxHeight: '400px',
+                                        width: { xs: '90%', sm: '45%' },
+                                        maxWidth: '350px',
+                                        overflow: 'hidden',
+                                        boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
                                         '& .str-video__participant-view': {
                                             width: '100%',
                                             height: '100%',
                                             '& video': {
                                                 width: '100%',
                                                 height: '100%',
-                                                objectFit: 'cover'
+                                                objectFit: 'cover',
+                                                background: '#000'
                                             }
                                         }
-                                    }}
-                                >
-                                    {isCameraEnabled ? (
-                                        <ParticipantView participant={localParticipant} trackType="videoTrack" />
-                                    ) : (
+                                    }}>
+                                        {(() => {
+                                            // Prioritize showing the host if present
+                                            const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
+                                            const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
+                                            const participantToShow = hostParticipant || otherParticipant;
+                                            
+                                            return participantToShow ? (
+                                                <ParticipantView 
+                                                    participant={participantToShow} 
+                                                    trackType="videoTrack" 
+                                                />
+                                            ) : null;
+                                        })()}
+
+                                        {/* Close (X) button for other participant */}
+                                        <IconButton
+                                            onClick={() => {
+                                                // Hide the remote participant's view
+                                                setIsPipVisible(false);
+                                                toast.success("Video view closed");
+                                            }}
+                                            sx={{
+                                                position: 'absolute',
+                                                top: 8,
+                                                right: 8,
+                                                backgroundColor: 'rgba(0,0,0,0.6)',
+                                                color: 'white',
+                                                width: 32,
+                                                height: 32,
+                                                zIndex: 10,
+                                                '&:hover': {
+                                                    backgroundColor: 'rgba(255,0,0,0.8)'
+                                                }
+                                            }}
+                                        >
+                                            <CloseIcon fontSize="small" />
+                                        </IconButton>
+
+                                        {/* Name overlay for other participant */}
                                         <Box sx={{
                                             position: 'absolute',
-                                            top: 0,
+                                            bottom: 0,
                                             left: 0,
-                                            width: '100%',
-                                            height: '100%',
-                                            display: 'flex',
-                                            justifyContent: 'center',
-                                            alignItems: 'center',
+                                            right: 0,
+                                            padding: '40px 16px 16px 16px',
+                                            background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
                                             color: 'white',
-                                            backgroundColor: 'rgba(0,0,0,0.8)'
+                                            zIndex: 2
                                         }}>
-                                            <VideocamOffIcon sx={{ fontSize: '1.5rem' }} />
+                                                                                      {(() => {
+                                            // Use the same logic to get the prioritized participant
+                                            const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
+                                            const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
+                                            const participantToShow = hostParticipant || otherParticipant;
+                                            
+                                            return participantToShow && (
+                                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    <Avatar src={firestoreUserData[participantToShow.userId]?.avatar} sx={{ width: 40, height: 40, mr: 1 }} />
+                                                    <Box>
+                                                        <Typography variant="subtitle2" fontWeight="bold">
+                                                            {participantToShow?.name || 'User'}
+                                                            {participantToShow.userId === room.ownerId && " (Host)"}
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                            );
+                                        })()}
                                         </Box>
-                                    )}
-                                    
-                                    <IconButton
-                                        size="small"
-                                        onClick={toggleCamera}
-                                        sx={{
-                                            position: 'absolute',
-                                            top: 2,
-                                            right: 26,
-                                            padding: '2px',
-                                            color: 'white',
-                                            backgroundColor: 'rgba(0,0,0,0.5)',
-                                            '&:hover': {
-                                                backgroundColor: 'rgba(0,0,0,0.7)',
-                                            }
-                                        }}
-                                    >
-                                        {isCameraEnabled ? 
-                                            <VideocamIcon sx={{ fontSize: '0.9rem' }} /> : 
-                                            <VideocamOffIcon sx={{ fontSize: '0.9rem' }} />
-                                        }
-                                    </IconButton>
-                                    
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => setIsPipEnlarged(true)}
-                                        sx={{
-                                            position: 'absolute',
-                                            top: 2,
-                                            right: 2,
-                                            padding: '2px',
-                                            color: 'white',
-                                            backgroundColor: 'rgba(0,0,0,0.5)',
-                                            '&:hover': {
-                                                backgroundColor: 'rgba(0,0,0,0.7)',
-                                            }
-                                        }}
-                                    >
-                                        <ZoomInIcon sx={{ fontSize: '0.9rem' }} />
-                                    </IconButton>
-                                </Box>
+                                    </Box>
+                                ) : (
+                                    <Box sx={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        width: { xs: '90%', sm: '45%' },
+                                        maxWidth: '350px',
+                                    }}>
+                                        <Button 
+                                            variant="outlined" 
+                                            color="primary" 
+                                            onClick={() => setIsPipVisible(true)}
+                                            startIcon={<VideocamIcon />}
+                                        >
+                                            Show Partner Video
+                                        </Button>
+                                    </Box>
+                                )
                             )}
                         </Box>
+
+                        {/* Show additional participants if more than one other participant */}
+                        {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 1 && (
+                            <Box sx={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                justifyContent: 'center',
+                                gap: 1,
+                                mt: 2,
+                                width: '100%',
+                                maxWidth: '600px'
+                            }}>
+                                {participants
+                                   .filter(p => p.userId !== currentUser?.uid)
+                                   // Get the host participant to exclude from this list if shown in main view
+                                   .filter(p => {
+                                       const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
+                                       // If this is the host AND the host is shown in the main view (not this one), skip
+                                       return !(p.userId === room.ownerId && hostParticipant === participants.filter(p => p.userId !== currentUser?.uid)[0]);
+                                   })
+                                   .filter(p => !hiddenParticipantIds.includes(p.userId))
+                                   .map((participant) => (
+                                    <Box 
+                                        key={participant.userId}
+                                        sx={{
+                                            width: '100px',
+                                            height: '150px',
+                                            borderRadius: '10px',
+                                            overflow: 'hidden',
+                                            position: 'relative',
+                                            border: '2px solid',
+                                            borderColor: 'divider',
+                                            backgroundColor: '#000',
+                                            '& .str-video__participant-view': {
+                                                width: '100%',
+                                                height: '100%',
+                                                '& video': {
+                                                    width: '100%',
+                                                    height: '100%',
+                                                    objectFit: 'cover'
+                                                }
+                                            }
+                                        }}
+                                    >
+                                        <ParticipantView participant={participant} trackType="videoTrack" />
+                                        {/* Close (X) button for additional participants */}
+                                        <IconButton
+                                            onClick={() => {
+                                                // Toggle the visibility of this participant in a state
+                                                const hiddenIds = [...(hiddenParticipantIds || [])];
+                                                if (hiddenIds.includes(participant.userId)) {
+                                                    // Remove from hidden list
+                                                    const index = hiddenIds.indexOf(participant.userId);
+                                                    if (index > -1) {
+                                                        hiddenIds.splice(index, 1);
+                                                    }
+                                                } else {
+                                                    // Add to hidden list
+                                                    hiddenIds.push(participant.userId);
+                                                }
+                                                setHiddenParticipantIds(hiddenIds);
+                                                toast.success("Video view toggled");
+                                            }}
+                                            sx={{
+                                                position: 'absolute',
+                                                top: 2,
+                                                right: 2,
+                                                backgroundColor: 'rgba(0,0,0,0.6)',
+                                                color: 'white',
+                                                width: 20,
+                                                height: 20,
+                                                zIndex: 10,
+                                                padding: '2px',
+                                                '& .MuiSvgIcon-root': {
+                                                    fontSize: '14px'
+                                                },
+                                                '&:hover': {
+                                                    backgroundColor: 'rgba(255,0,0,0.8)'
+                                                }
+                                            }}
+                                        >
+                                            <CloseIcon />
+                                        </IconButton>
+                                        <Box sx={{
+                                            position: 'absolute',
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                            padding: '2px 4px',
+                                            background: 'rgba(0,0,0,0.7)',
+                                            color: 'white',
+                                            fontSize: '10px',
+                                            textAlign: 'center',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap'
+                                        }}>
+                                            {participant.name || `User ${participant.userId.substring(0, 5)}`}
+                                        </Box>
+                                    </Box>
+                                ))}
+                            </Box>
+                        )}
                     </Box>
                  )}
                  {/* End Screen Share Display Section */}
+                 
 
                  {currentVideoUrl && (
                      <Box sx={{ mt: 1, mb: 3, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1, backgroundColor: 'action.hover' }}>
@@ -6063,7 +5828,7 @@ interface StreamParticipantCardProps {
     isRoomOwner: boolean;
     isLocalParticipant: boolean;
     onForceMuteToggle: Function;
-    onForceRemove: Function;
+    onForceRemove: (targetUserId: string, targetUsername?: string, reason?: string) => void;
     onForceBan: Function;
     call: Call;
     localUserAuthData: AuthContextUser | null;
@@ -6095,8 +5860,12 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
     const { isSpeaking, publishedTracks } = participant;
     const { blockUser, currentUser } = useAuth();
 
+
+
     const isAudioTrackPublished = publishedTracks.includes('audio' as any);
-    const showRemoteMuteIcon = !isAudioTrackPublished && !isSpeaking; 
+    const showRemoteMuteIcon = isLocalParticipant 
+        ? (localUserIsMute ?? true) 
+        : (!isAudioTrackPublished && !isSpeaking); 
 
     const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
     const menuOpen = Boolean(anchorEl);
@@ -6104,8 +5873,9 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
     const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
     const handleMenuClose = () => setAnchorEl(null);
 
-    const handleLocalMicToggle = async () => {
+        const handleLocalMicToggle = async () => {
         if (!isLocalParticipant || !call) return;
+        
         try {
             console.log('[StreamParticipantCard] Attempting to toggle local microphone. Current SDK mute state (from prop localUserIsMute):', localUserIsMute);
             await call.microphone.toggle();
@@ -6150,31 +5920,9 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
         }
     };
 
-    const handleRemoteMuteToggle = async () => {
-        handleMenuClose();
-        if (onForceMuteToggle) {
-            onForceMuteToggle(participant.userId, !participant.publishedTracks.includes('audio' as any));
-        }
-    };
 
-    const handleBlockUser = async () => {
-        handleMenuClose();
-        
-        if (window.confirm(`Are you sure you want to block ${participant.name || participant.userId}?`)) {
-            try {
-                await blockUser(participant.userId);
-                toast.success(`Blocked ${participant.name || participant.userId}`);
-                
-                // Then remove them from the room
-                if (onForceRemove) {
-                    onForceRemove(participant.userId, participant.name || participant.userId);
-                }
-            } catch (error) {
-                console.error('Error blocking user:', error);
-                toast.error('Failed to block user');
-            }
-        }
-    };
+
+
 
     const handlePinToggle = () => {
         handleMenuClose();
@@ -6214,6 +5962,31 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
 
     // Add these state variables within the StreamParticipantCard component
     const [showReportDialog, setShowReportDialog] = useState(false);
+    const [isLocallyBlocked, setIsLocallyBlocked] = useState(false);
+    
+    // Check if this user is already blocked on component mount
+    useEffect(() => {
+        if (currentUser?.blockedUsers && participant.userId && !isLocalParticipant && !isDesignatedHost) {
+            const isBlocked = currentUser.blockedUsers.includes(participant.userId);
+            setIsLocallyBlocked(isBlocked);
+        }
+    }, [currentUser?.blockedUsers, participant.userId, isLocalParticipant, isDesignatedHost]);
+    
+    // Apply local audio filtering for blocked users (non-room-owners only)
+    useEffect(() => {
+        if (!call || isLocalParticipant || isDesignatedHost) return;
+        
+        // Get the participant's audio track
+        const audioTrack = participant.audioStream?.getAudioTracks()[0];
+        if (audioTrack && isLocallyBlocked) {
+            // Mute the audio track locally for blocked users
+            audioTrack.enabled = false;
+            console.log(`[StreamParticipantCard] Audio disabled for blocked user: ${participant.userId}`);
+        } else if (audioTrack && !isLocallyBlocked) {
+            // Ensure audio is enabled for non-blocked users
+            audioTrack.enabled = true;
+        }
+    }, [isLocallyBlocked, participant.audioStream, call, isLocalParticipant, isDesignatedHost, participant.userId]);
 
     // Add this function to handle report submission
     const submitReport = async (reason: string) => {
@@ -6225,7 +5998,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
                 timestamp: serverTimestamp()
             };
             
-            await addDoc(collection(db, "reports"), reportData);
+            await addDoc(collection(getFirestore(), "reports"), reportData);
             toast.success(`Report submitted for ${participant.name || participant.userId}`);
             setShowReportDialog(false);
         } catch (error) {
@@ -6247,20 +6020,31 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
 
     // Render either a clickable avatar or a link to profile based on if it's local user
     const renderAvatar = () => {
+        // Show default avatar for blocked users (except room owner)
+        const displayAvatarUrl = (isLocallyBlocked && !isDesignatedHost) ? null : avatarUrl;
+        const displayAvatarText = (isLocallyBlocked && !isDesignatedHost) ? '?' : displayName;
+        
+        // Don't show speaking indicator for blocked users
+        const shouldShowSpeaking = isSpeaking && !(isLocallyBlocked && !isDesignatedHost);
+        
         const avatarContent = (
             <Avatar 
-                src={avatarUrl}
-                alt={displayName}
+                src={displayAvatarUrl || undefined}
+                alt={displayAvatarText}
                 sx={{
                     width: 64,
                     height: 64, 
                     mb: 0.5,
-                    border: isSpeaking ? `3px solid ${theme.palette.success.main}` : `2px solid ${alpha(theme.palette.divider, 0.5)}`,
-                    boxShadow: isSpeaking ? `0 0 8px ${theme.palette.success.light}` : 'none',
+                    border: shouldShowSpeaking ? `3px solid ${theme.palette.success.main}` : `2px solid ${alpha(theme.palette.divider, 0.5)}`,
+                    boxShadow: shouldShowSpeaking ? `0 0 8px ${theme.palette.success.light}` : 'none',
                     transition: 'border 0.2s ease-in-out, boxShadow 0.2s ease-in-out',
                     cursor: 'pointer',
+                    backgroundColor: (isLocallyBlocked && !isDesignatedHost) ? theme.palette.grey[400] : 'inherit',
+                    opacity: (isLocallyBlocked && !isDesignatedHost) ? 0.6 : 1,
                 }}
-            />
+            >
+                {(isLocallyBlocked && !isDesignatedHost) ? '?' : displayName?.[0]?.toUpperCase()}
+            </Avatar>
         );
 
         return isLocalParticipant ? (
@@ -6327,7 +6111,7 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
                 />
             )}
             <Typography variant="caption" noWrap sx={{ width: '100%', lineHeight: 1.2, fontSize: '0.75rem', fontWeight: 'medium', color: theme.palette.text.primary }}>
-                {displayName}
+                {(isLocallyBlocked && !isDesignatedHost) ? 'Blocked User' : displayName}
             </Typography>
             
             {/* Menu for room owners - gives control options */}
@@ -6344,19 +6128,48 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
                         onClose={handleMenuClose}
                         MenuListProps={{ dense: true }}
                     >
-                        <MenuItem onClick={handleRemoteMuteToggle} sx={{ fontSize: '0.8rem' }}>
-                            <ListItemIcon sx={{minWidth: '30px'}}>{showRemoteMuteIcon ? <VolumeUpIcon fontSize="small"/> : <VolumeOffIcon fontSize="small"/>}</ListItemIcon>
-                            {showRemoteMuteIcon ? 'Unmute' : 'Mute'}
-                        </MenuItem>
                         <MenuItem onClick={handlePinToggle} sx={{ fontSize: '0.8rem' }}>
                             <ListItemIcon sx={{minWidth: '30px'}}>
                                 <PushPinIcon fontSize="small" color={isPinned ? "primary" : "inherit"} />
                             </ListItemIcon>
                             {isPinned ? 'Unpin from top' : 'Pin to top'}
                         </MenuItem>
-                        <MenuItem onClick={handleBlockUser} sx={{ color: 'error.main', fontSize: '0.8rem' }}>
+                        <MenuItem 
+                            onClick={() => {
+                                handleMenuClose();
+                                setShowReportDialog(true);
+                            }} 
+                            sx={{ color: 'warning.main', fontSize: '0.8rem' }}
+                        >
+                            <ListItemIcon sx={{minWidth: '30px'}}><ReportIcon fontSize="small" color="warning"/></ListItemIcon>
+                            Report User
+                        </MenuItem>
+                        <MenuItem 
+                            onClick={() => {
+                                handleMenuClose();
+                                if (blockUser && participant.userId) {
+                                    blockUser(participant.userId);
+                                    
+                                    // Room owner blocking also kicks user from room
+                                    if (onForceRemove) {
+                                        onForceRemove(participant.userId, participant.name || participant.userId, 'blocked');
+                                    }
+                                    toast.success(`${participant.name || participant.userId} has been blocked and removed from the room`);
+                                }
+                            }} 
+                            sx={{ color: 'error.main', fontSize: '0.8rem' }}
+                        >
+                            <ListItemIcon sx={{minWidth: '30px'}}><PersonRemoveIcon fontSize="small" color="error"/></ListItemIcon>
+                            Block & Remove
+                        </MenuItem>
+                        <MenuItem onClick={() => {
+                            handleMenuClose();
+                            if (onForceBan) {
+                                onForceBan(participant.userId, participant.name || participant.userId);
+                            }
+                        }} sx={{ color: 'error.main', fontSize: '0.8rem' }}>
                             <ListItemIcon sx={{minWidth: '30px'}}><Block fontSize="small" color="error"/></ListItemIcon>
-                            Block
+                            Ban
                         </MenuItem>
                     </Menu>
                 </Box>
@@ -6389,6 +6202,50 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
                         >
                             <ListItemIcon sx={{minWidth: '30px'}}><ReportIcon fontSize="small" color="warning"/></ListItemIcon>
                             Report User
+                        </MenuItem>
+                        <MenuItem 
+                            onClick={() => {
+                                handleMenuClose();
+                                if (blockUser && participant.userId) {
+                                    if (isLocallyBlocked) {
+                                        // Unblock user - this would need to be implemented in the blockUser function
+                                        // For now, just toggle the local state
+                                        setIsLocallyBlocked(false);
+                                        toast.success(`${participant.name || participant.userId} has been unblocked.`);
+                                    } else {
+                                        // Check if trying to block the room owner
+                                        if (isDesignatedHost) {
+                                            // Blocking room owner kicks participant out
+                                            blockUser(participant.userId);
+                                            toast.error("You cannot block the room owner. You will be removed from the room.");
+                                            
+                                            // Leave the room after a short delay
+                                            setTimeout(() => {
+                                                if (call) {
+                                                    call.leave()
+                                                        .then(() => navigate('/side-rooms'))
+                                                        .catch(err => {
+                                                            console.error('Error leaving call:', err);
+                                                            navigate('/side-rooms'); // Navigate anyway
+                                                        });
+                                                } else {
+                                                    navigate('/side-rooms');
+                                                }
+                                            }, 2000);
+                                        } else {
+                                            blockUser(participant.userId);
+                                            
+                                            // For regular participants, apply local blocking effects
+                                            setIsLocallyBlocked(true);
+                                            toast.success(`${participant.name || participant.userId} has been blocked. You won't hear them or see their profile picture.`);
+                                        }
+                                    }
+                                }
+                            }} 
+                            sx={{ color: 'error.main', fontSize: '0.8rem' }}
+                        >
+                            <ListItemIcon sx={{minWidth: '30px'}}><PersonRemoveIcon fontSize="small" color="error"/></ListItemIcon>
+                            {isLocallyBlocked ? 'Unblock User' : (isDesignatedHost ? 'Block Owner (Leave Room)' : 'Block User')}
                         </MenuItem>
                     </Menu>
                 </Box>
@@ -6446,3 +6303,4 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
         </Box>
     );
 });
+

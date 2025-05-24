@@ -238,8 +238,8 @@ const Register: React.FC = () => {
         age--;
       }
       
-      if (age < 17) { // 17 is the minimum age to register [DO NOT CHANGE THIS]
-        newErrors.dateOfBirth = 'You must be at least 17 years old'; // Minimum age to register
+      if (age < 18) { // 17 is the minimum age to register [DO NOT CHANGE THIS]
+        newErrors.dateOfBirth = 'You must be at least 18 years old'; // Minimum age to register
       } else if (age > 120) {
         newErrors.dateOfBirth = 'Please enter a valid date of birth';
       }

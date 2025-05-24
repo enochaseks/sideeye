@@ -30,6 +30,8 @@ import {
   Alert,
   Snackbar
 } from '@mui/material';
+import OnlineIndicator from '../components/OnlineIndicator';
+import { usePresence } from '../hooks/usePresence';
 import { 
   Search as SearchIcon,
   Add as AddIcon,
@@ -110,6 +112,7 @@ function TabPanel(props: TabPanelProps) {
 const Messages: React.FC = () => {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  const { isUserOnline } = usePresence();
   const [loading, setLoading] = useState(true);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [pendingRequests, setPendingRequests] = useState<Conversation[]>([]);
@@ -652,23 +655,38 @@ const Messages: React.FC = () => {
               }
             >
               <ListItemAvatar>
-                <Badge
-                  color="primary"
-                  badgeContent={typeof conversation.unreadCount === 'number' ? conversation.unreadCount : 0}
-                  invisible={!conversation.unreadCount}
-                >
-                  <Avatar 
-                    alt={conversation.displayName || 'User'} 
-                    src={conversation.photoURL || undefined}
-                    sx={{ 
-                      width: 40, 
-                      height: 40,
-                      bgcolor: !conversation.photoURL ? 'primary.main' : undefined
+                <Box sx={{ position: 'relative' }}>
+                  <Badge
+                    color="primary"
+                    badgeContent={typeof conversation.unreadCount === 'number' ? conversation.unreadCount : 0}
+                    invisible={!conversation.unreadCount}
+                  >
+                    <Avatar 
+                      alt={conversation.displayName || 'User'} 
+                      src={conversation.photoURL || undefined}
+                      sx={{ 
+                        width: 40, 
+                        height: 40,
+                        bgcolor: !conversation.photoURL ? 'primary.main' : undefined
+                      }}
+                    >
+                      {!conversation.photoURL && conversation.displayName?.charAt(0).toUpperCase()}
+                    </Avatar>
+                  </Badge>
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      bottom: 12,
+                      right: 12,
+                      zIndex: 4
                     }}
                   >
-                    {!conversation.photoURL && conversation.displayName?.charAt(0).toUpperCase()}
-                  </Avatar>
-                </Badge>
+                    <OnlineIndicator 
+                      isOnline={conversation.participants.some(id => id !== currentUser?.uid && isUserOnline(id))} 
+                      size="small" 
+                    />
+                  </Box>
+                </Box>
               </ListItemAvatar>
               <ListItemText
                 primary={conversation.displayName}
@@ -1062,7 +1080,24 @@ const Messages: React.FC = () => {
                   disabled={creatingChat}
                 >
                   <ListItemAvatar>
-                    <Avatar src={user.profilePic} alt={user.username || user.name} />
+                    <Box sx={{ position: 'relative' }}>
+                      <Avatar src={user.profilePic} alt={user.username || user.name} />
+                                             <Box
+                                                    sx={{
+                             position: 'absolute',
+                             bottom: 2,
+                             top: 10,
+                             right: 10,
+                             transform: 'translate(50%, 50%)',
+                             zIndex: 4
+                           }}
+                       >
+                        <OnlineIndicator 
+                          isOnline={isUserOnline(user.id)} 
+                          size="small" 
+                        />
+                      </Box>
+                    </Box>
                   </ListItemAvatar>
                   <ListItemText
                     primary={user.name || user.username}

@@ -193,7 +193,7 @@ const SetupSourceCode: React.FC = () => {
             required
           />
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 2 }}>
-            Your source code is a permanent security feature that cannot be reset. It protects your account by verifying your identity when logging in from new devices. Please remember this code as you will need it anytime you log in from a new device.
+            Please set up a 8 digit source code, that is not your birth date. Your source code is a permanent security feature that cannot be reset. It protects your account by verifying your identity when logging in from new devices. Please remember this code as you will need it anytime you log in from a new device.
           </Typography>
           <Link 
             to="/faq#source-code-faq" 

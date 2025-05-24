@@ -23,7 +23,6 @@ import BottomNav from './components/BottomNav';
 import './App.css';
 import { ThemeProvider as CustomThemeProvider } from './theme/ThemeProvider';
 import { HelmetProvider } from 'react-helmet-async';
-import UpdateNotification from './components/UpdateNotification';
 import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import RateLimiter from './components/RateLimiter';
@@ -62,6 +61,7 @@ const Debug = lazy(() => import('./pages/Debug'));
 const ReportPage = lazy(() => import('./pages/ReportPage'));
 const SadeAIInfo = lazy(() => import('./pages/SadeAIInfo'));
 const FAQPage = lazy(() => import('./pages/FAQPage'));
+const Suggestions = lazy(() => import('./pages/Suggestions'));
 
 // Loading fallback component
 const LoadingFallback = () => (
@@ -274,6 +274,11 @@ const AppContent: React.FC = () => {
               } />
               <Route path="/sade-ai" element={<SadeAIPage />} />
               <Route path="/debug" element={<Debug />} />
+              <Route path="/suggestions" element={
+                <ProtectedRoute>
+                  <Suggestions />
+                </ProtectedRoute>
+              } />
               
               {/* Redirect all other routes to home */}
               <Route path="*" element={<Navigate to="/" replace />} />
@@ -282,7 +287,6 @@ const AppContent: React.FC = () => {
         </Box>
       </Box>
       <BottomNavWrapper onCreateRoomClick={() => setShowCreateRoomDialog(true)} />
-      <UpdateNotification />
       <CookieConsent />
       <Toaster 
         position="bottom-center"
