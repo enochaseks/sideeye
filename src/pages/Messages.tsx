@@ -130,6 +130,7 @@ const Messages: React.FC = () => {
   const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [roomDescription, setRoomDescription] = useState('');
+  const [roomRules, setRoomRules] = useState<string[]>(['']);
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [rooms, setRooms] = useState<any[]>([]);
 
@@ -724,16 +725,36 @@ const Messages: React.FC = () => {
     );
   };
 
+  // Helper functions for room rules
+  const addRule = () => {
+    setRoomRules([...roomRules, '']);
+  };
+
+  const removeRule = (index: number) => {
+    const newRules = roomRules.filter((_, i) => i !== index);
+    setRoomRules(newRules.length === 0 ? [''] : newRules);
+  };
+
+  const updateRule = (index: number, value: string) => {
+    const newRules = [...roomRules];
+    newRules[index] = value;
+    setRoomRules(newRules);
+  };
+
   const handleCreateRoom = async () => {
     if (!currentUser?.uid || !roomName.trim()) return;
     
     setCreatingRoom(true);
     try {
+      // Filter out empty rules
+      const validRules = roomRules.filter(rule => rule.trim() !== '');
+      
       // Create a new room in Firestore
       const roomRef = doc(collection(db, 'rooms'));
       await setDoc(roomRef, {
         name: roomName.trim(),
         description: roomDescription.trim(),
+        rules: validRules,
         createdBy: currentUser.uid,
         createdAt: serverTimestamp(),
         members: [currentUser.uid],
@@ -779,6 +800,7 @@ const Messages: React.FC = () => {
       
       setRoomName('');
       setRoomDescription('');
+      setRoomRules(['']);
       setShowCreateRoomDialog(false);
       
       // Navigate to the new room
@@ -1171,11 +1193,57 @@ const Messages: React.FC = () => {
             multiline
             rows={3}
             placeholder="What is this room about? Who should join?"
+            sx={{ mb: 2 }}
           />
+          
+          <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+            Room Rules (Optional)
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Set guidelines for your room members to follow
+          </Typography>
+          
+          {roomRules.map((rule, index) => (
+            <Box key={index} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <TextField
+                fullWidth
+                variant="outlined"
+                placeholder={`Rule ${index + 1}`}
+                value={rule}
+                onChange={(e) => updateRule(index, e.target.value)}
+                size="small"
+              />
+              {roomRules.length > 1 && (
+                <IconButton 
+                  onClick={() => removeRule(index)}
+                  sx={{ ml: 1 }}
+                  size="small"
+                  color="error"
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              )}
+            </Box>
+          ))}
+          
+          <Button
+            variant="outlined"
+            startIcon={<AddIcon />}
+            onClick={addRule}
+            size="small"
+            sx={{ mt: 1 }}
+          >
+            Add Rule
+          </Button>
         </DialogContent>
         <DialogActions>
           <Button 
-            onClick={() => setShowCreateRoomDialog(false)}
+            onClick={() => {
+              setShowCreateRoomDialog(false);
+              setRoomName('');
+              setRoomDescription('');
+              setRoomRules(['']);
+            }}
             disabled={creatingRoom}
           >
             Cancel

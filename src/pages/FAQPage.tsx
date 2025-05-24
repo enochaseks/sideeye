@@ -399,14 +399,36 @@ const FAQPage: React.FC = () => {
                 • Document serious incidents for your own records
               </Typography>
             </AccordionDetails>
-          </Accordion>
-          
-          {/* Gifts and Reactions Section Title */}
-          <ListItem sx={{ bgcolor: alpha(theme.palette.primary.main, 0.1), py: 1.5 }}>
-            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-              Gifts and Reactions
-            </Typography>
-          </ListItem>
+                          </Accordion>
+                
+                <Accordion expanded={expanded === 'panel8c'} onChange={handleChange('panel8c')}>
+                    <AccordionSummary
+                        expandIcon={<ExpandMoreIcon />}
+                        aria-controls="panel8c-content"
+                        id="panel8c-header"
+                    >
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <ListItemIcon sx={{ minWidth: 40 }}>
+                                <HelpOutlineIcon />
+                            </ListItemIcon>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                                Why can people join my live even though my room is private?
+                            </Typography>
+                        </Box>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                        <Typography variant="body2" color="text.secondary" sx={{ pl: 6 }}>
+                            Even if people join your live room they will be prompted to enter a password and, the submit button is also disabled and if they dont know the password when they press cancel they will be kicked out.
+                        </Typography>
+                    </AccordionDetails>
+                </Accordion>
+                
+                {/* Gifts and Reactions Section Title */}
+                <ListItem sx={{ bgcolor: alpha(theme.palette.primary.main, 0.1), py: 1.5 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                        Gifts and Reactions
+                    </Typography>
+                </ListItem>
           
           <Accordion expanded={expanded === 'panel8b'} onChange={handleChange('panel8b')}>
             <AccordionSummary
@@ -515,16 +537,38 @@ const FAQPage: React.FC = () => {
                 • Follow requests appear in your Settings for approval<br />
                 • You can accept or decline each request individually<br />
                 • If you change from private to public, all pending requests will be automatically accepted
-              </Typography>
+                              </Typography>
             </AccordionDetails>
-          </Accordion>
-          
-          {/* Reporting Section Title */}
-          <ListItem sx={{ bgcolor: alpha(theme.palette.primary.main, 0.1), py: 1.5 }}>
+        </Accordion>
+        
+        <Accordion expanded={expanded === 'panel9a'} onChange={handleChange('panel9a')}>
+            <AccordionSummary
+                expandIcon={<ExpandMoreIcon />}
+                aria-controls="panel9a-content"
+                id="panel9a-header"
+            >
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <ListItemIcon sx={{ minWidth: 40 }}>
+                        <HelpOutlineIcon />
+                    </ListItemIcon>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                        How do I know if someone has blocked me?
+                    </Typography>
+                </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+                <Typography variant="body2" color="text.secondary" sx={{ pl: 6 }}>
+                    If someone has blocked you, then that persons account is hidden from you, you won't be able to search them, all their rooms whether old or new will not be visible to you, any messages you had with them will be deleted and they will be removed from your followers and following list.
+                </Typography>
+            </AccordionDetails>
+        </Accordion>
+        
+        {/* Reporting Section Title */}
+        <ListItem sx={{ bgcolor: alpha(theme.palette.primary.main, 0.1), py: 1.5 }}>
             <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-              Reporting Content & Users
+                Reporting Content & Users
             </Typography>
-          </ListItem>
+        </ListItem>
           
           <Accordion expanded={expanded === 'panel10'} onChange={handleChange('panel10')}>
             <AccordionSummary

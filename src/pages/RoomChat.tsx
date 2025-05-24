@@ -30,7 +30,8 @@ import {
   Badge,
   LinearProgress,
   Popover,
-  Chip
+  Chip,
+  Tooltip
 } from '@mui/material';
 import OnlineIndicator from '../components/OnlineIndicator';
 import { usePresence } from '../hooks/usePresence';
@@ -53,7 +54,10 @@ import {
   Lock as LockIcon,
   LockOpen as LockOpenIcon,
   PersonAdd as PersonAddIcon,
-  Block as BlockIcon
+  Block as BlockIcon,
+  Add as AddIcon,
+  Check as CheckIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -133,6 +137,7 @@ interface Room {
   id: string;
   name: string;
   description: string;
+  rules?: string[];
   createdBy: string;
   createdAt: Timestamp;
   members: string[];
@@ -211,6 +216,15 @@ const RoomChat: React.FC = () => {
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
   const [showBlockedUserAlert, setShowBlockedUserAlert] = useState(false);
   const [blockedUserInRoom, setBlockedUserInRoom] = useState<{id: string, username: string} | null>(null);
+  
+  // Add new state for rules management
+  const [roomRules, setRoomRules] = useState<string[]>([]);
+  const [showAddRuleDialog, setShowAddRuleDialog] = useState(false);
+  const [newRule, setNewRule] = useState('');
+  const [editingRuleIndex, setEditingRuleIndex] = useState<number | null>(null);
+  const [editingRuleText, setEditingRuleText] = useState('');
+  const [showDeleteRuleDialog, setShowDeleteRuleDialog] = useState(false);
+  const [ruleToDelete, setRuleToDelete] = useState<number | null>(null);
   
   // Common emojis for the scrollbar/picker
   const commonEmojis = [
@@ -293,6 +307,9 @@ const RoomChat: React.FC = () => {
 
         setRoom(roomData);
         setIsOwner(roomData.createdBy === currentUser.uid);
+        
+        // Load room rules
+        setRoomRules(roomData.rules || []);
 
         // Check if user is a member
         if (!roomData.members.includes(currentUser.uid)) {
@@ -1634,6 +1651,92 @@ const handleDeletePoll = async () => {
     }
   }, [roomMembers, blockedUsers]);
 
+  // Rules management functions
+  const handleAddRule = async () => {
+    if (!newRule.trim() || !isOwner || !roomId) return;
+    
+    try {
+      const updatedRules = [...roomRules, newRule.trim()];
+      
+      // Update Firestore
+      const roomRef = doc(db, 'rooms', roomId);
+      await updateDoc(roomRef, {
+        rules: updatedRules
+      });
+      
+      // Update local state
+      setRoomRules(updatedRules);
+      setNewRule('');
+      setShowAddRuleDialog(false);
+      
+      setSnackbarMessage('Rule added successfully');
+      setSnackbarSeverity('success');
+      setSnackbarOpen(true);
+    } catch (error) {
+      console.error('Error adding rule:', error);
+      setSnackbarMessage('Failed to add rule');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleUpdateRule = async (index: number) => {
+    if (!editingRuleText.trim() || !isOwner || !roomId) return;
+    
+    try {
+      const updatedRules = [...roomRules];
+      updatedRules[index] = editingRuleText.trim();
+      
+      // Update Firestore
+      const roomRef = doc(db, 'rooms', roomId);
+      await updateDoc(roomRef, {
+        rules: updatedRules
+      });
+      
+      // Update local state
+      setRoomRules(updatedRules);
+      setEditingRuleIndex(null);
+      setEditingRuleText('');
+      
+      setSnackbarMessage('Rule updated successfully');
+      setSnackbarSeverity('success');
+      setSnackbarOpen(true);
+    } catch (error) {
+      console.error('Error updating rule:', error);
+      setSnackbarMessage('Failed to update rule');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleDeleteRule = async () => {
+    if (ruleToDelete === null || !isOwner || !roomId) return;
+    
+    try {
+      const updatedRules = roomRules.filter((_, index) => index !== ruleToDelete);
+      
+      // Update Firestore
+      const roomRef = doc(db, 'rooms', roomId);
+      await updateDoc(roomRef, {
+        rules: updatedRules
+      });
+      
+      // Update local state
+      setRoomRules(updatedRules);
+      setRuleToDelete(null);
+      setShowDeleteRuleDialog(false);
+      
+      setSnackbarMessage('Rule deleted successfully');
+      setSnackbarSeverity('success');
+      setSnackbarOpen(true);
+    } catch (error) {
+      console.error('Error deleting rule:', error);
+      setSnackbarMessage('Failed to delete rule');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+    }
+  };
+
   // Function to notify all room members except the sender
   const notifyRoomMembers = async (type: string, content: string, additionalData?: any) => {
     if (!room || !currentUser || !isOwner) return;
@@ -1784,7 +1887,11 @@ const handleDeletePoll = async () => {
   }
 
   return (
-    <Container maxWidth="md" sx={{ mt: 2, mb: 8, height: '100%' }}>
+    <Container maxWidth="md" sx={{ 
+      mt: 2, 
+      mb: { xs: 10, md: 8 }, // More bottom margin on mobile
+      height: '100%' 
+    }}>
       <Paper elevation={0} sx={{ p: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -1814,27 +1921,38 @@ const handleDeletePoll = async () => {
             aria-label="room tabs"
             variant="fullWidth"
           >
-            <Tab 
-              label="General Chat" 
-              icon={<ChatIcon />} 
-              iconPosition="start"
-              id="room-tab-0" 
-              aria-controls="room-tabpanel-0" 
-            />
-            <Tab 
-              label="Announcements" 
-              icon={<AnnouncementIcon />} 
-              iconPosition="start"
-              id="room-tab-1" 
-              aria-controls="room-tabpanel-1" 
-            />
-            <Tab 
-              label="Polls" 
-              icon={<PollIcon />} 
-              iconPosition="start"
-              id="room-tab-2" 
-              aria-controls="room-tabpanel-2" 
-            />
+            <Tooltip title="General Chat" arrow>
+              <Tab 
+                icon={<ChatIcon />} 
+                id="room-tab-0" 
+                aria-controls="room-tabpanel-0"
+                sx={{ minWidth: 'auto' }}
+              />
+            </Tooltip>
+            <Tooltip title="Announcements" arrow>
+              <Tab 
+                icon={<AnnouncementIcon />} 
+                id="room-tab-1" 
+                aria-controls="room-tabpanel-1"
+                sx={{ minWidth: 'auto' }}
+              />
+            </Tooltip>
+            <Tooltip title="Polls" arrow>
+              <Tab 
+                icon={<PollIcon />} 
+                id="room-tab-2" 
+                aria-controls="room-tabpanel-2"
+                sx={{ minWidth: 'auto' }}
+              />
+            </Tooltip>
+            <Tooltip title="Rules" arrow>
+              <Tab 
+                icon={<LockIcon />} 
+                id="room-tab-3" 
+                aria-controls="room-tabpanel-3"
+                sx={{ minWidth: 'auto' }}
+              />
+            </Tooltip>
           </Tabs>
         </Box>
       </Paper>
@@ -1853,7 +1971,13 @@ const handleDeletePoll = async () => {
         </Box>
       )}
       
-      <Paper elevation={0} sx={{ height: 'calc(100vh - 250px)', mt: 2 }}>
+      <Paper elevation={0} sx={{ 
+        height: { 
+          xs: 'calc(100vh - 280px)', // More space for mobile bottom nav
+          md: 'calc(100vh - 250px)' 
+        }, 
+        mt: 2 
+      }}>
         <TabPanel value={tabValue} index={0}>
           {/* General Chat */}
           <Box sx={{ height: 'calc(100vh - 350px)', overflowY: 'auto', mb: 2 }}>
@@ -2370,6 +2494,226 @@ const handleDeletePoll = async () => {
                   </Paper>
                 ))}
               </List>
+            )}
+          </Box>
+        </TabPanel>
+        
+        <TabPanel value={tabValue} index={3}>
+          {/* Rules */}
+          <Box sx={{ pb: { xs: 2, md: 0 } }}>
+            {roomRules.length === 0 ? (
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                alignItems: 'center', 
+                py: { xs: 2, md: 4 },
+                px: { xs: 1, md: 2 }
+              }}>
+                <Typography 
+                  variant={isDesktop ? "h6" : "subtitle1"} 
+                  color="text.secondary" 
+                  gutterBottom
+                  sx={{ textAlign: 'center' }}
+                >
+                  {isOwner ? "No rules set" : "No rules"}
+                </Typography>
+                {isOwner && (
+                  <Tooltip title="Add first rule" arrow>
+                    <IconButton
+                      color="primary"
+                      onClick={() => setShowAddRuleDialog(true)}
+                      sx={{ 
+                        bgcolor: 'primary.main',
+                        color: 'white',
+                        '&:hover': {
+                          bgcolor: 'primary.dark',
+                        },
+                        width: { xs: 48, md: 56 },
+                        height: { xs: 48, md: 56 }
+                      }}
+                    >
+                      <AddIcon />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Box>
+            ) : (
+              <>
+                {/* Add Rule Button for existing rules - more compact on mobile */}
+                {isOwner && (
+                  <Box sx={{ 
+                    mb: { xs: 1.5, md: 2 }, 
+                    px: { xs: 1, md: 0 },
+                    display: 'flex',
+                    justifyContent: { xs: 'center', md: 'flex-start' }
+                  }}>
+                    <Tooltip title="Add new rule" arrow>
+                      <IconButton
+                        color="primary"
+                        onClick={() => setShowAddRuleDialog(true)}
+                        sx={{ 
+                          bgcolor: 'primary.main',
+                          color: 'white',
+                          '&:hover': {
+                            bgcolor: 'primary.dark',
+                          },
+                          width: { xs: 44, md: 48 },
+                          height: { xs: 44, md: 48 }
+                        }}
+                      >
+                        <AddIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                )}
+                
+                <List sx={{ 
+                  bgcolor: 'background.paper', 
+                  borderRadius: 1,
+                  px: { xs: 1, md: 0 }
+                }}>
+                  {roomRules.map((rule, index) => (
+                    <Paper 
+                      key={index} 
+                      elevation={0} 
+                      sx={{ 
+                        mb: { xs: 1.5, md: 2 }, 
+                        p: { xs: 1.5, md: 2 }, 
+                        bgcolor: 'background.default' 
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                        <Box sx={{ flexGrow: 1, mr: 1 }}>
+                          <Typography 
+                            variant="subtitle2" 
+                            sx={{ 
+                              mb: 1, 
+                              color: 'primary.main',
+                              fontSize: { xs: '0.8rem', md: '0.875rem' }
+                            }}
+                          >
+                            Rule #{index + 1}
+                          </Typography>
+                          <Typography 
+                            variant="body2" 
+                            sx={{ 
+                              fontSize: { xs: '0.875rem', md: '1rem' },
+                              lineHeight: { xs: 1.4, md: 1.5 }
+                            }}
+                          >
+                            {rule}
+                          </Typography>
+                        </Box>
+                        
+                        {isOwner && (
+                          <Box sx={{ 
+                            display: 'flex',
+                            flexDirection: { xs: 'column', md: 'row' },
+                            gap: { xs: 0.5, md: 1 }
+                          }}>
+                            <Tooltip title="Edit rule" arrow>
+                              <IconButton 
+                                size="small"
+                                onClick={() => {
+                                  setEditingRuleIndex(index);
+                                  setEditingRuleText(rule);
+                                }}
+                                sx={{ 
+                                  p: { xs: 0.5, md: 1 }
+                                }}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Delete rule" arrow>
+                              <IconButton 
+                                size="small"
+                                onClick={() => {
+                                  setRuleToDelete(index);
+                                  setShowDeleteRuleDialog(true);
+                                }}
+                                color="error"
+                                sx={{ 
+                                  p: { xs: 0.5, md: 1 }
+                                }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        )}
+                      </Box>
+                      
+                      {editingRuleIndex === index && (
+                        <Box sx={{ 
+                          mt: { xs: 1.5, md: 2 }, 
+                          pt: { xs: 1.5, md: 2 }, 
+                          borderTop: 1, 
+                          borderColor: 'divider' 
+                        }}>
+                          <TextField
+                            fullWidth
+                            multiline
+                            rows={2}
+                            value={editingRuleText}
+                            onChange={(e) => setEditingRuleText(e.target.value)}
+                            sx={{ mb: { xs: 1.5, md: 2 } }}
+                            size={isDesktop ? "medium" : "small"}
+                          />
+                          <Box sx={{ 
+                            display: 'flex', 
+                            gap: 1,
+                            justifyContent: 'center'
+                          }}>
+                            <Tooltip title="Save changes" arrow>
+                              <IconButton
+                                color="primary"
+                                onClick={() => handleUpdateRule(index)}
+                                disabled={!editingRuleText.trim()}
+                                sx={{ 
+                                  bgcolor: 'success.main',
+                                  color: 'white',
+                                  '&:hover': {
+                                    bgcolor: 'success.dark',
+                                  },
+                                  '&:disabled': {
+                                    bgcolor: 'action.disabled',
+                                    color: 'action.disabled'
+                                  },
+                                  width: { xs: 36, md: 40 },
+                                  height: { xs: 36, md: 40 }
+                                }}
+                              >
+                                <CheckIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Cancel editing" arrow>
+                              <IconButton
+                                color="error"
+                                onClick={() => {
+                                  setEditingRuleIndex(null);
+                                  setEditingRuleText('');
+                                }}
+                                sx={{ 
+                                  bgcolor: 'error.main',
+                                  color: 'white',
+                                  '&:hover': {
+                                    bgcolor: 'error.dark',
+                                  },
+                                  width: { xs: 36, md: 40 },
+                                  height: { xs: 36, md: 40 }
+                                }}
+                              >
+                                <CloseIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        </Box>
+                      )}
+                    </Paper>
+                  ))}
+                </List>
+              </>
             )}
           </Box>
         </TabPanel>
@@ -3161,6 +3505,166 @@ const handleDeletePoll = async () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowProfileDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Rule Dialog */}
+      <Dialog
+        open={showAddRuleDialog}
+        onClose={() => setShowAddRuleDialog(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            m: { xs: 1, md: 2 }, // Smaller margins on mobile
+            maxHeight: { xs: '90vh', md: 'none' }
+          }
+        }}
+      >
+        <DialogTitle sx={{ 
+          fontSize: { xs: '1.1rem', md: '1.25rem' },
+          pb: { xs: 1, md: 2 }
+        }}>
+          Add New Rule
+        </DialogTitle>
+        <DialogContent sx={{ px: { xs: 2, md: 3 } }}>
+          <DialogContentText sx={{ 
+            mb: 2, 
+            fontSize: { xs: '0.875rem', md: '1rem' }
+          }}>
+            Add a new rule to help maintain a positive environment in your room.
+          </DialogContentText>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Rule"
+            fullWidth
+            variant="outlined"
+            multiline
+            rows={isDesktop ? 3 : 2}
+            value={newRule}
+            onChange={(e) => setNewRule(e.target.value)}
+            placeholder="Enter a clear and specific rule..."
+            size={isDesktop ? "medium" : "small"}
+          />
+        </DialogContent>
+        <DialogActions sx={{ 
+          px: { xs: 2, md: 3 },
+          pb: { xs: 2, md: 2 },
+          flexDirection: { xs: 'column', sm: 'row' },
+          gap: { xs: 1, sm: 0 }
+        }}>
+          <Button 
+            onClick={() => {
+              setShowAddRuleDialog(false);
+              setNewRule('');
+            }}
+            size={isDesktop ? "medium" : "small"}
+            sx={{ 
+              order: { xs: 2, sm: 1 },
+              width: { xs: '100%', sm: 'auto' }
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleAddRule}
+            variant="contained"
+            disabled={!newRule.trim()}
+            size={isDesktop ? "medium" : "small"}
+            sx={{ 
+              order: { xs: 1, sm: 2 },
+              width: { xs: '100%', sm: 'auto' }
+            }}
+          >
+            Add Rule
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Rule Confirmation Dialog */}
+      <Dialog
+        open={showDeleteRuleDialog}
+        onClose={() => setShowDeleteRuleDialog(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            m: { xs: 1, md: 2 },
+            maxHeight: { xs: '90vh', md: 'none' }
+          }
+        }}
+      >
+        <DialogTitle sx={{ 
+          fontSize: { xs: '1.1rem', md: '1.25rem' },
+          pb: { xs: 1, md: 2 }
+        }}>
+          Delete Rule?
+        </DialogTitle>
+        <DialogContent sx={{ px: { xs: 2, md: 3 } }}>
+          <DialogContentText sx={{ 
+            fontSize: { xs: '0.875rem', md: '1rem' }
+          }}>
+            Are you sure you want to delete this rule? This action cannot be undone.
+          </DialogContentText>
+          {ruleToDelete !== null && roomRules[ruleToDelete] && (
+            <Paper elevation={0} sx={{ 
+              p: { xs: 1.5, md: 2 }, 
+              mt: 2, 
+              bgcolor: 'background.default' 
+            }}>
+              <Typography 
+                variant="subtitle2" 
+                sx={{ 
+                  mb: 1, 
+                  color: 'primary.main',
+                  fontSize: { xs: '0.8rem', md: '0.875rem' }
+                }}
+              >
+                Rule #{ruleToDelete + 1}
+              </Typography>
+              <Typography 
+                variant="body2" 
+                sx={{ 
+                  fontSize: { xs: '0.875rem', md: '1rem' }
+                }}
+              >
+                {roomRules[ruleToDelete]}
+              </Typography>
+            </Paper>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ 
+          px: { xs: 2, md: 3 },
+          pb: { xs: 2, md: 2 },
+          flexDirection: { xs: 'column', sm: 'row' },
+          gap: { xs: 1, sm: 0 }
+        }}>
+          <Button 
+            onClick={() => {
+              setShowDeleteRuleDialog(false);
+              setRuleToDelete(null);
+            }}
+            size={isDesktop ? "medium" : "small"}
+            sx={{ 
+              order: { xs: 2, sm: 1 },
+              width: { xs: '100%', sm: 'auto' }
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleDeleteRule} 
+            color="error" 
+            variant="contained"
+            size={isDesktop ? "medium" : "small"}
+            sx={{ 
+              order: { xs: 1, sm: 2 },
+              width: { xs: '100%', sm: 'auto' }
+            }}
+          >
+            Delete Rule
+          </Button>
         </DialogActions>
       </Dialog>
 

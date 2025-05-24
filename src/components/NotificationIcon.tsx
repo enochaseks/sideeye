@@ -64,7 +64,7 @@ export const NotificationIcon: React.FC = () => {
       return;
     }
 
-    let navigateTo = '/notifications'; // Default fallback
+    let navigateTo = '/notifications';
 
     switch (notification.type) {
       case 'like':
@@ -86,6 +86,12 @@ export const NotificationIcon: React.FC = () => {
       case 'follow':
         if (notification.senderId) {
           navigateTo = `/profile/${notification.senderId}`;
+        }
+        break;
+      case 'user_went_live':
+        // Navigate directly to the live room
+        if (notification.roomId) {
+          navigateTo = `/side-room/${notification.roomId}`;
         }
         break;
       case 'room_invite':

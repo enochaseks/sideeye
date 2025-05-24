@@ -736,6 +736,13 @@ const SideRoomComponent: React.FC = () => {
         profilePic?: string;
     }[]>([]);
     
+    // --- State for Owner Not Live Dialog ---
+    const [showOwnerNotLiveDialog, setShowOwnerNotLiveDialog] = useState(false);
+    const [hasCheckedOwnerPresence, setHasCheckedOwnerPresence] = useState(false);
+    
+    // --- DEBUG: Set to true to disable the owner not live dialog ---
+    const DISABLE_OWNER_NOT_LIVE_DIALOG = false;
+    
     // ... existing code ...
 
     // Camera toggle function for main component
@@ -1035,6 +1042,69 @@ const SideRoomComponent: React.FC = () => {
         }
         return foundOwner;
     }, [room]); // Dependency on `room` is correct as `room.viewers` is part of it
+
+    // --- Effect to check if room owner is LIVE (in Stream call) ---
+    useEffect(() => {
+        // DEBUG: Skip if feature is disabled
+        if (DISABLE_OWNER_NOT_LIVE_DIALOG) {
+            console.log('[Owner Live Check] Feature disabled via debug flag');
+            return;
+        }
+        
+        // Only check for non-owners who have room access and if there's an active stream call
+        if (!room || !currentUser || isRoomOwner || !hasRoomAccess || hasCheckedOwnerPresence || !activeStreamCallInstance) {
+            console.log('[Owner Live Check] Skipping check - conditions not met:', {
+                hasRoom: !!room,
+                hasCurrentUser: !!currentUser,
+                isRoomOwner,
+                hasRoomAccess,
+                hasCheckedOwnerPresence,
+                hasActiveStreamCall: !!activeStreamCallInstance
+            });
+            return;
+        }
+        
+        console.log(`[Owner Live Check] Checking if owner is live in Stream call:`, {
+            roomOwnerId: room.ownerId,
+            currentUserId: currentUser.uid,
+            hasActiveStreamCall: !!activeStreamCallInstance
+        });
+        
+        // The real check: Is the room owner in the Stream call?
+        // We need to access Stream call participants - this will be checked in the InsideStreamCallContent component
+        // For now, we'll check if there's an active call and wait a bit for the owner to join
+        if (activeStreamCallInstance) {
+            console.log('[Owner Live Check] Active stream call found, starting grace period for owner to join...');
+            // Give a grace period for the owner to join the Stream call
+            const timeoutId = setTimeout(() => {
+                // This will be handled by the InsideStreamCallContent component
+                // which has access to Stream participants
+                console.log('[Owner Live Check] Grace period ended, will check Stream participants');
+                setHasCheckedOwnerPresence(true);
+            }, 10000); // 10 second grace period for owner to join Stream call
+            
+            return () => clearTimeout(timeoutId);
+        }
+    }, [room, currentUser, isRoomOwner, hasRoomAccess, hasCheckedOwnerPresence, activeStreamCallInstance]);
+
+    // --- Effect to listen for owner not live events from Stream call ---
+    useEffect(() => {
+        const handleShowOwnerNotLiveDialog = () => {
+            console.log('[Main Component] Received showOwnerNotLiveDialog event from Stream component');
+            if (!isRoomOwner && !showOwnerNotLiveDialog) {
+                setShowOwnerNotLiveDialog(true);
+            }
+        };
+
+        window.addEventListener('showOwnerNotLiveDialog', handleShowOwnerNotLiveDialog);
+
+        return () => {
+            window.removeEventListener('showOwnerNotLiveDialog', handleShowOwnerNotLiveDialog);
+        };
+    }, [isRoomOwner, showOwnerNotLiveDialog]);
+
+    // --- Note: Real owner live monitoring is now handled in InsideStreamCallContent component ---
+    // This checks if owner is actually in the Stream audio/video call, not just present in room
 
     // --- Banned Users Management Functions ---
     const loadBannedUsers = useCallback(async () => {
@@ -1471,6 +1541,114 @@ const SideRoomComponent: React.FC = () => {
 
     }, [attemptToJoinCall, streamClientForProvider, roomId, currentUser?.uid, activeStreamCallInstance]);
 
+
+    // --- Function to notify followers when going live ---
+    const notifyFollowersGoingLive = useCallback(async () => {
+        if (!currentUser || !room || !db) return;
+        
+        try {
+            console.log('[Live Notifications] Room owner went live, notifying followers...');
+            
+            // Get followers list
+            const followersRef = collection(db, 'users', currentUser.uid, 'followers');
+            const followersSnapshot = await getDocs(followersRef);
+            
+            const notifications = [];
+            const emailNotifications = [];
+            
+            // Create notifications for each follower
+            for (const followerDoc of followersSnapshot.docs) {
+                const followerId = followerDoc.id;
+                
+                // Get follower's user data for email
+                const followerUserDoc = await getDoc(doc(db, 'users', followerId));
+                if (!followerUserDoc.exists()) continue;
+                
+                const followerData = followerUserDoc.data();
+                
+                // Create in-app notification
+                const notificationData = {
+                    type: 'user_went_live',
+                    senderId: currentUser.uid,
+                    senderName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone',
+                    senderAvatar: currentUser.photoURL || '',
+                    recipientId: followerId,
+                    content: `${currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone'} is now live in "${room.name}"`,
+                    roomId: room.id,
+                    roomName: room.name,
+                    createdAt: serverTimestamp(),
+                    isRead: false
+                };
+                
+                notifications.push(addDoc(collection(db, 'notifications'), notificationData));
+                
+                // Prepare email notification if follower has email
+                if (followerData.email) {
+                    emailNotifications.push({
+                        to: followerData.email,
+                        recipientName: followerData.name || followerData.username || 'User',
+                        senderName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Someone',
+                        roomName: room.name,
+                        roomId: room.id
+                    });
+                }
+            }
+            
+            // Create all in-app notifications
+            await Promise.all(notifications);
+            console.log(`[Live Notifications] Created ${notifications.length} in-app notifications`);
+            
+            // Send email notifications via backend
+            if (emailNotifications.length > 0) {
+                try {
+                    const backendUrl = 'https://sideeye-backend-production.up.railway.app';
+                    const response = await fetch(`${backendUrl}/api/send-live-notifications`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ notifications: emailNotifications })
+                    });
+                    
+                    if (response.ok) {
+                        console.log(`[Live Notifications] Sent ${emailNotifications.length} email notifications`);
+                    } else {
+                        console.error('[Live Notifications] Failed to send email notifications:', await response.text());
+                    }
+                } catch (emailError) {
+                    console.error('[Live Notifications] Error sending email notifications:', emailError);
+                }
+            }
+            
+        } catch (error) {
+            console.error('[Live Notifications] Error notifying followers:', error);
+        }
+    }, [currentUser, room, db]);
+
+    // --- State to track if we've already sent live notifications ---
+    const [hasNotifiedFollowers, setHasNotifiedFollowers] = useState(false);
+
+    // --- Effect to notify followers when room owner goes live ---
+    useEffect(() => {
+        // Only notify if current user is room owner and just joined the call
+        if (!isRoomOwner || !activeStreamCallInstance || !room || !currentUser || hasNotifiedFollowers) return;
+        
+        // Add a small delay to ensure the call is fully established
+        const timeoutId = setTimeout(() => {
+            console.log('[Live Notifications] Room owner joined Stream call, triggering follower notifications');
+            notifyFollowersGoingLive();
+            setHasNotifiedFollowers(true); // Prevent duplicate notifications
+        }, 2000); // 2 second delay to ensure call is stable
+        
+        return () => clearTimeout(timeoutId);
+    }, [isRoomOwner, activeStreamCallInstance, room, currentUser, hasNotifiedFollowers, notifyFollowersGoingLive]);
+
+    // --- Reset notification flag when leaving the call ---
+    useEffect(() => {
+        if (!activeStreamCallInstance && hasNotifiedFollowers) {
+            setHasNotifiedFollowers(false);
+        }
+    }, [activeStreamCallInstance, hasNotifiedFollowers]);
 
     // --- Effect to Leave Stream Call on Unmount or Room Change ---
     useEffect(() => {
@@ -2725,7 +2903,7 @@ const SideRoomComponent: React.FC = () => {
         if (!isBlockAction) {
             toast.success(`Removing ${name}...`); // Optimistic toast only for manual removal
         }
-    }, [isRoomOwner, roomId, currentUser?.uid, socket]); // Added socket dependency
+    }, [isRoomOwner, roomId, currentUser?.uid, socket]);
 
     // Ban Handler - Permanently bans user from the room
     const handleForceBan = useCallback(async (targetUserId: string, targetUsername?: string) => {
@@ -3679,6 +3857,27 @@ const SideRoomComponent: React.FC = () => {
         setReportRoomDialogOpen(false);
     };
 
+    // --- Handler for Owner Not Live Dialog ---
+    const handleOwnerNotLiveDialogClose = () => {
+        setShowOwnerNotLiveDialog(false);
+        // Leave the call if active
+        if (activeStreamCallInstance) {
+            activeStreamCallInstance.leave()
+                .then(() => {
+                    console.log('[Owner Not Live] Successfully left call, navigating away');
+                    navigate('/side-rooms');
+                })
+                .catch(err => {
+                    console.error('[Owner Not Live] Error leaving call:', err);
+                    // Navigate away even if there's an error leaving the call
+                    navigate('/side-rooms');
+                });
+        } else {
+            // No active call, just navigate away
+            navigate('/side-rooms');
+        }
+    };
+
     
 
     const handleOpenShareViaMessageDialog = () => {
@@ -4508,6 +4707,70 @@ const SideRoomComponent: React.FC = () => {
                         )}
                     </DialogContent>
                 </Dialog>
+
+                {/* Owner Not Live Dialog */}
+                <Dialog
+                    open={showOwnerNotLiveDialog}
+                    onClose={handleOwnerNotLiveDialogClose}
+                    aria-labelledby="owner-not-live-dialog-title"
+                    maxWidth="sm"
+                    fullWidth
+                    disableEscapeKeyDown
+                    sx={{
+                        '& .MuiDialog-paper': {
+                            borderRadius: 2,
+                            boxShadow: theme.shadows[10]
+                        }
+                    }}
+                >
+                    <DialogTitle id="owner-not-live-dialog-title" sx={{ textAlign: 'center', pb: 1 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                            <Box sx={{ 
+                                fontSize: '3rem',
+                                color: theme.palette.warning.main
+                            }}>
+                                🔴
+                            </Box>
+                            <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
+                                Owner Not Live
+                            </Typography>
+                        </Box>
+                    </DialogTitle>
+                    <DialogContent sx={{ textAlign: 'center', py: 3 }}>
+                        <Typography variant="body1" sx={{ mb: 2, fontSize: '1.1rem' }}>
+                            The room owner <strong>{ownerData?.username || 'Unknown'}</strong> is currently not in the room.
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                            Please come back when they are live to enjoy the full room experience!
+                        </Typography>
+                        <Box sx={{ 
+                            backgroundColor: alpha(theme.palette.info.main, 0.1),
+                            border: `1px solid ${alpha(theme.palette.info.main, 0.3)}`,
+                            borderRadius: 1,
+                            p: 2,
+                            mt: 2
+                        }}>
+                            <Typography variant="body2" color="info.main">
+                                💡 Tip: You can check the "Discover" page to find rooms with active hosts!
+                            </Typography>
+                        </Box>
+                    </DialogContent>
+                    <DialogActions sx={{ justifyContent: 'center', pb: 3 }}>
+                        <Button 
+                            onClick={handleOwnerNotLiveDialogClose}
+                            variant="contained"
+                            size="large"
+                            sx={{ 
+                                minWidth: 120,
+                                borderRadius: 2,
+                                textTransform: 'none',
+                                fontSize: '1rem'
+                            }}
+                        >
+                            Okay
+                        </Button>
+                    </DialogActions>
+                </Dialog>
                         </Box>
         </>
     );
@@ -4555,6 +4818,88 @@ const InsideStreamCallContent: React.FC<{
 
     // Add state for desktop detection
     const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024);
+    
+    // State to prevent triggering dialog multiple times
+    const [hasTriggeredOwnerNotLiveDialog, setHasTriggeredOwnerNotLiveDialog] = useState(false);
+
+    // --- Effect to check if room owner is actually LIVE in the Stream call ---
+    useEffect(() => {
+        // DEBUG: Skip if feature is disabled - get from parent component via props
+        // For now, we'll assume it's enabled. This could be passed as a prop if needed.
+        
+        // Only check if we're not the room owner and have participants data
+        if (!room || !currentUser || currentUser.uid === room.ownerId) {
+            return;
+        }
+
+        // Wait for participants to load (but not long)
+        if (!participants) {
+            return;
+        }
+
+        console.log('[Stream Owner Live Check] Checking if room owner is in Stream call:', {
+            roomOwnerId: room.ownerId,
+            currentUserId: currentUser.uid,
+            streamParticipants: participants.map(p => ({ userId: p.userId, name: p.name })),
+            participantCount: participants.length,
+            hasTriggeredBefore: hasTriggeredOwnerNotLiveDialog
+        });
+
+        // Check if room owner is among Stream call participants
+        const ownerInStreamCall = participants.some(participant => participant.userId === room.ownerId);
+
+        console.log('[Stream Owner Live Check] Immediate check result:', {
+            ownerInStreamCall,
+            roomOwnerId: room.ownerId,
+            hasParticipants: participants.length > 0
+        });
+
+        // If owner joins the call, reset the flag
+        if (ownerInStreamCall && hasTriggeredOwnerNotLiveDialog) {
+            console.log('[Stream Owner Live Check] Owner joined the call! Resetting trigger flag.');
+            setHasTriggeredOwnerNotLiveDialog(false);
+            return;
+        }
+
+        // Only trigger dialog if we haven't already triggered it
+        if (!ownerInStreamCall && participants.length > 0 && !hasTriggeredOwnerNotLiveDialog) {
+            // Check immediately if we have multiple participants (meaning data is stable)
+            if (participants.length > 1) {
+                console.log('[Stream Owner Live Check] Multiple participants found, showing dialog IMMEDIATELY');
+                setHasTriggeredOwnerNotLiveDialog(true);
+                window.dispatchEvent(new CustomEvent('showOwnerNotLiveDialog'));
+                return;
+            }
+            
+            // Very short grace period only for data to settle when we only have 1 participant
+            console.log('[Stream Owner Live Check] Only 1 participant, starting minimal grace period...');
+            const timeoutId = setTimeout(() => {
+                // Quick re-check after minimal delay
+                const currentParticipants = participants || [];
+                const ownerStillNotInCall = !currentParticipants.some(p => p.userId === room.ownerId);
+                
+                console.log('[Stream Owner Live Check] Final check after minimal delay:', {
+                    ownerStillNotInCall,
+                    currentParticipantsCount: currentParticipants.length,
+                    participantIds: currentParticipants.map(p => p.userId)
+                });
+
+                if (ownerStillNotInCall && !hasTriggeredOwnerNotLiveDialog) {
+                    console.log('[Stream Owner Live Check] Owner confirmed not in Stream call, showing dialog NOW');
+                    setHasTriggeredOwnerNotLiveDialog(true);
+                    window.dispatchEvent(new CustomEvent('showOwnerNotLiveDialog'));
+                }
+            }, 500); // Further reduced to just 0.5 second grace period
+
+            return () => clearTimeout(timeoutId);
+        } else if (ownerInStreamCall) {
+            console.log('[Stream Owner Live Check] Owner IS in Stream call - they are live! No dialog needed.');
+        } else if (hasTriggeredOwnerNotLiveDialog) {
+            console.log('[Stream Owner Live Check] Dialog already triggered, not checking again.');
+        } else {
+            console.log('[Stream Owner Live Check] No participants yet, waiting for data...');
+        }
+    }, [room, currentUser, participants, hasTriggeredOwnerNotLiveDialog]);
     
 
     // Add state to track PiP visibility separately from camera state

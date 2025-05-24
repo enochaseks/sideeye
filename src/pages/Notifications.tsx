@@ -101,6 +101,7 @@ const NotificationsPage: React.FC = () => {
         }
         break;
       case 'live_stream':
+      case 'user_went_live':
         // Handle live stream notifications - navigate to the side room
         if (notification.roomId) {
           navigateTo = `/side-room/${notification.roomId}`;
@@ -213,7 +214,7 @@ const NotificationsPage: React.FC = () => {
                         {notification.type === 'comment' && <CommentIcon fontSize="small" color="primary" />}
                         {notification.type === 'follow' && <PersonAddIcon fontSize="small" color="primary" />}
                         {notification.type === 'message' && <MessageIcon fontSize="small" color="primary" />}
-                        {notification.type === 'live_stream' && <VideocamIcon fontSize="small" color="error" />}
+                        {(notification.type === 'live_stream' || notification.type === 'user_went_live') && <VideocamIcon fontSize="small" color="error" />}
                         {notification.type === 'room_created' && <GroupIcon fontSize="small" color="primary" />}
                         {notification.type === 'room_announcement' && <AnnouncementIcon fontSize="small" color="warning" />}
                         {notification.type === 'room_poll' && <PollIcon fontSize="small" color="info" />}

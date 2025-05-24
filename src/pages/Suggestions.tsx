@@ -59,6 +59,7 @@ interface Suggestion {
   authorId: string;
   authorName: string;
   authorAvatar?: string;
+  isAnonymous: boolean;
   upvotes: string[];
   downvotes: string[];
   status: 'pending' | 'under_review' | 'in_progress' | 'completed' | 'rejected';
@@ -76,6 +77,7 @@ const Suggestions: React.FC = () => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
+  const [postType, setPostType] = useState('');
   
   // UI states
   const [snackbarOpen, setSnackbarOpen] = useState(false);
@@ -86,6 +88,9 @@ const Suggestions: React.FC = () => {
 
   const categories = [
     'New Features',
+    'New Rooms',
+    'New Gifts',
+    'Categories',
     'UI/UX Improvements',
     'Performance',
     'Bug Reports',
@@ -147,7 +152,7 @@ const Suggestions: React.FC = () => {
   }, [currentUser]);
 
   const handleSubmitSuggestion = async () => {
-    if (!currentUser || !title.trim() || !description.trim() || !category) {
+    if (!currentUser || !title.trim() || !description.trim() || !category || !postType) {
       setSnackbarMessage('Please fill in all fields');
       setSnackbarSeverity('error');
       setSnackbarOpen(true);
@@ -156,13 +161,20 @@ const Suggestions: React.FC = () => {
 
     setSubmitting(true);
     try {
+      const isAnonymousPost = postType === 'anonymous';
+      
       await addDoc(collection(db, 'suggestions'), {
         title: title.trim(),
         description: description.trim(),
         category,
-        authorId: currentUser.uid,
-        authorName: currentUserData.name || currentUserData.username || currentUser.displayName || 'Anonymous User',
-        authorAvatar: currentUserData.profilePic || currentUser.photoURL || '',
+        authorId: currentUser.uid, // Always store real ID for moderation
+        authorName: isAnonymousPost 
+          ? 'Anonymous User' 
+          : (currentUserData.name || currentUserData.username || currentUser.displayName || 'User'),
+        authorAvatar: isAnonymousPost 
+          ? '' 
+          : (currentUserData.profilePic || currentUser.photoURL || ''),
+        isAnonymous: isAnonymousPost,
         upvotes: [],
         downvotes: [],
         status: 'pending',
@@ -173,6 +185,7 @@ const Suggestions: React.FC = () => {
       setTitle('');
       setDescription('');
       setCategory('');
+      setPostType('');
       
       setSnackbarMessage('Suggestion submitted successfully!');
       setSnackbarSeverity('success');
@@ -312,6 +325,26 @@ const Suggestions: React.FC = () => {
               </Select>
             </FormControl>
 
+            <FormControl fullWidth disabled={submitting}>
+              <InputLabel>Post Type</InputLabel>
+              <Select
+                value={postType}
+                label="Post Type"
+                onChange={(e) => setPostType(e.target.value)}
+              >
+                <MenuItem value="public">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    👤 Post Publicly
+                  </Box>
+                </MenuItem>
+                <MenuItem value="anonymous">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    🕶️ Post Anonymously
+                  </Box>
+                </MenuItem>
+              </Select>
+            </FormControl>
+
             <TextField
               label="Description"
               variant="outlined"
@@ -328,7 +361,7 @@ const Suggestions: React.FC = () => {
               variant="contained"
               startIcon={submitting ? <CircularProgress size={20} /> : <SendIcon />}
               onClick={handleSubmitSuggestion}
-              disabled={submitting || !title.trim() || !description.trim() || !category}
+              disabled={submitting || !title.trim() || !description.trim() || !category || !postType}
               sx={{ alignSelf: 'flex-start' }}
             >
               {submitting ? 'Submitting...' : 'Submit Suggestion'}
@@ -357,8 +390,14 @@ const Suggestions: React.FC = () => {
               <React.Fragment key={suggestion.id}>
                 <ListItem alignItems="flex-start" sx={{ py: 2 }}>
                   <ListItemAvatar>
-                    <Avatar src={suggestion.authorAvatar} alt={suggestion.authorName}>
-                      {suggestion.authorName.charAt(0).toUpperCase()}
+                    <Avatar 
+                      src={suggestion.isAnonymous ? undefined : suggestion.authorAvatar} 
+                      alt={suggestion.authorName}
+                      sx={{
+                        bgcolor: suggestion.isAnonymous ? 'grey.500' : undefined
+                      }}
+                    >
+                      {suggestion.isAnonymous ? '🕶️' : suggestion.authorName.charAt(0).toUpperCase()}
                     </Avatar>
                   </ListItemAvatar>
                   <ListItemText
@@ -372,11 +411,18 @@ const Suggestions: React.FC = () => {
                           size="small"
                           variant="outlined"
                         />
-                        <Chip
-                          label={suggestion.status.replace('_', ' ')}
-                          size="small"
-                          color={statusColors[suggestion.status]}
-                        />
+                        {suggestion.isAnonymous && (
+                          <Chip
+                            label="Anonymous"
+                            size="small"
+                            variant="outlined"
+                            sx={{ 
+                              bgcolor: 'grey.100',
+                              color: 'grey.700',
+                              borderColor: 'grey.400'
+                            }}
+                          />
+                        )}
                       </Box>
                     }
                     secondary={
