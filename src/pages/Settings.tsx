@@ -1074,8 +1074,11 @@ const Settings: React.FC = () => {
         maxWidth="xs"
         fullWidth
       >
-        <DialogTitle>Audio Settings</DialogTitle>
+        <DialogTitle>Theme & Audio Settings</DialogTitle>
         <DialogContent>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            Choose your preferred theme and audio settings.
+          </Typography>
           <ListItem disablePadding>
              <ListItemIcon sx={{ minWidth: 40 }}>
                  <DarkModeIcon />
