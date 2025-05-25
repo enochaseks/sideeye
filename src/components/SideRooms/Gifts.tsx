@@ -711,20 +711,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
             
             // Check if Payment Request API is supported
             if (!window.PaymentRequest) {
-                // Fallback for browsers without Payment Request API
-                const confirmed = window.confirm(
-                    `Send ${selectedGift.name} gift for £${giftCost.toFixed(2)}?\n\n` +
-                    `This will be charged to your payment method.\n` +
-                    `The host will receive ${formatSideCoins(calculateHostEarnings(giftCost))} SC.`
-                );
-                
-                if (!confirmed) {
-                    throw new Error('Payment was cancelled');
-                }
-                
-                // Process as fallback payment
-                await processGiftPayment('fallback_confirmation');
-                return;
+                throw new Error('Payment methods not supported in this browser. Please use a modern browser like Chrome or Safari.');
             }
             
             // Use browser's built-in payment methods
@@ -745,7 +732,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                 supportedInstruments.push({
                     supportedMethods: 'https://google.com/pay',
                     data: {
-                        environment: 'TEST', // Change to 'PRODUCTION' when ready
+                        environment: 'PRODUCTION',
                         apiVersion: 2,
                         apiVersionMinor: 0,
                         merchantInfo: {
@@ -761,8 +748,8 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             tokenizationSpecification: {
                                 type: 'PAYMENT_GATEWAY',
                                 parameters: {
-                                    gateway: 'stripe', // You'll need to set up Stripe
-                                    gatewayMerchantId: 'your_stripe_merchant_id'
+                                    gateway: 'stripe',
+                                    gatewayMerchantId: process.env.REACT_APP_STRIPE_MERCHANT_ID || 'your_stripe_merchant_id'
                                 }
                             }
                         }]
@@ -814,49 +801,46 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
             // Show payment UI - this will show the browser's native payment interface
             const paymentResponse = await request.show();
             
-            // Process the payment
+            // Process the payment with your backend
             console.log('Payment response:', paymentResponse);
             console.log('Payment method used:', paymentResponse.methodName);
-            console.log('Payment details:', paymentResponse.details);
             
-            // TODO: In production, you would send the payment details to your payment processor
-            // For now, we'll simulate successful payment processing
+            // Send payment details to backend for processing
+            const backendResponse = await fetch('/api/process-gift-payment', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    giftId: selectedGift.id,
+                    giftName: selectedGift.name,
+                    amount: giftCost,
+                    senderId: currentUser.uid,
+                    senderName: currentUser.displayName || 'Anonymous',
+                    receiverId: roomOwnerId,
+                    roomId: roomId,
+                    paymentMethod: paymentResponse.methodName,
+                    paymentDetails: {
+                        methodName: paymentResponse.methodName,
+                        details: paymentResponse.details
+                    }
+                })
+            });
             
-            // Simulate payment processing delay
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            const result = await backendResponse.json();
+            
+            if (!result.success) {
+                await paymentResponse.complete('fail');
+                throw new Error(result.error || 'Payment processing failed');
+            }
             
             // Complete the payment successfully
             await paymentResponse.complete('success');
             
-            // Only AFTER successful payment, add gift to Firestore
-            const giftData = {
-                giftId: selectedGift.id,
-                giftName: selectedGift.name,
-                giftType: selectedGift.type,
-                value: giftCost,
-                senderId: currentUser.uid,
-                senderName: currentUser.displayName || 'Anonymous',
-                receiverId: roomOwnerId,
-                timestamp: serverTimestamp(),
-                paymentMethod: paymentResponse.methodName,
-                paymentDetails: {
-                    // Don't store sensitive card details, just metadata
-                    methodName: paymentResponse.methodName,
-                    cardType: paymentResponse.details?.cardType || 'unknown'
-                }
-            };
-            
-            // Add to room's gifts collection
-            await addDoc(collection(db, 'sideRooms', roomId, 'gifts'), giftData);
-            
-            // Update host's SideCoins balance
-            const hostRef = doc(db, 'users', roomOwnerId);
-            const hostEarnings = calculateHostEarnings(giftCost);
-            await updateDoc(hostRef, {
-                sideCoins: increment(hostEarnings)
-            });
+            // Gift and balance updates are now handled by the backend
             
             setShowPaymentDialog(false);
+            const hostEarnings = calculateHostEarnings(giftCost);
             toast.success(`Payment successful! 🎁 Gift sent and host earned ${formatSideCoins(hostEarnings)} SC`, {
                 duration: 5000,
                 position: 'top-right',
@@ -882,55 +866,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
         }
     };
     
-    // Helper function to process gift payment
-    const processGiftPayment = async (paymentMethod: string) => {
-        if (!currentUser || !selectedGift || !roomId || !roomOwnerId) return;
-        
-        const giftCost = getGiftCost(selectedGift.id);
-        
-        // Show confirmation for fallback methods
-        if (paymentMethod.includes('fallback')) {
-            const confirmed = window.confirm(
-                `DEMO MODE: Send ${selectedGift.name} gift for £${giftCost.toFixed(2)}?\n\n` +
-                `⚠️ This is a demo - no real money will be charged.\n` +
-                `In production, this would charge your payment method.\n\n` +
-                `The host will receive ${formatSideCoins(calculateHostEarnings(giftCost))} SC.`
-            );
-            
-            if (!confirmed) {
-                throw new Error('Payment was cancelled');
-            }
-        }
-        
-        // Process the gift directly in Firestore (fallback method)
-        const giftData = {
-            giftId: selectedGift.id,
-            giftName: selectedGift.name,
-            giftType: selectedGift.type,
-            value: giftCost,
-            senderId: currentUser.uid,
-            senderName: currentUser.displayName || 'Anonymous',
-            receiverId: roomOwnerId,
-            timestamp: serverTimestamp(),
-            paymentMethod: paymentMethod
-        };
-        
-        // Add to room's gifts collection
-        await addDoc(collection(db, 'sideRooms', roomId, 'gifts'), giftData);
-        
-        // Update host's SideCoins balance
-        const hostRef = doc(db, 'users', roomOwnerId);
-        const hostEarnings = calculateHostEarnings(giftCost);
-        await updateDoc(hostRef, {
-            sideCoins: increment(hostEarnings)
-        });
-        
-        setShowPaymentDialog(false);
-        toast.success(`Gift sent successfully! 🎁 Host earned ${formatSideCoins(hostEarnings)} SC`, {
-            duration: 5000,
-            position: 'top-right',
-        });
-    };
+
 
 
 
@@ -1441,8 +1377,8 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             {/* Payment Method Info */}
                             <Alert severity="info" sx={{ mb: 2 }}>
                                 <Typography variant="body2">
-                                    <strong>Payment Required:</strong> You'll be prompted to pay with Apple Pay (Safari) or Google Pay (Chrome). Real payment processing will be implemented in production.
-                                                </Typography>
+                                    <strong>Secure Payment:</strong> You'll be prompted to pay with your browser's secure payment methods (Apple Pay, Google Pay, or saved cards).
+                                </Typography>
                             </Alert>
 
                             {/* Host Earnings Info */}
