@@ -136,17 +136,17 @@ const GiftsSent: React.FC<GiftsSentProps> = ({ userId, isOwnProfile }) => {
                     });
                     setGiftsSent(allGifts);
                     
-                    // Calculate statistics - only count actual SideCoins spent on paid gifts
-                    const actualCoinsSpent = allGifts.reduce((sum, gift) => {
-                        // Only count SideCoins spent on paid gifts (giftType !== 'basic')
-                        return sum + (gift.giftType !== 'basic' ? gift.value : 0);
+                    // Calculate statistics - show real money spent instead of SC
+                    const totalMoneySpent = allGifts.reduce((sum, gift) => {
+                        // All gifts now cost real money - show actual money spent by user
+                        return sum + (gift.value || 0);
                     }, 0);
                     const totalCount = allGifts.length;
                     const uniqueHosts = new Set(allGifts.map(gift => gift.hostId)).size;
                     
-                    setTotalValue(actualCoinsSpent); // Now shows actual SideCoins spent, not gift values
+                    setTotalValue(totalMoneySpent); // Shows actual money spent by user
                     setGiftCount(totalCount);
-                    console.log('[GiftsSent] Statistics updated:', { actualCoinsSpent, totalCount, uniqueHosts });
+                    console.log('[GiftsSent] Statistics updated:', { totalMoneySpent, totalCount, uniqueHosts });
                 };
 
                 // Set up listeners for each room
@@ -292,13 +292,12 @@ const GiftsSent: React.FC<GiftsSentProps> = ({ userId, isOwnProfile }) => {
                     </Grid>
                     <Grid item xs={6}>
                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
-                            <SCCoinIcon size="medium" />
                             <Typography variant="h4" color="secondary" fontWeight="bold">
-                                {totalValue}
+                                £{totalValue.toFixed(2)}
                             </Typography>
                         </Box>
                         <Typography variant="body2" color="text.secondary">
-                            SideCoins Spent
+                            Money Spent
                         </Typography>
                     </Grid>
                 </Grid>
@@ -340,8 +339,8 @@ const GiftsSent: React.FC<GiftsSentProps> = ({ userId, isOwnProfile }) => {
                         const giftsOfType = groupedGifts[giftType];
                         const firstGift = giftsOfType[0];
                         const giftCount = giftsOfType.length;
-                        const actualCoinsSpentOnType = giftsOfType.reduce((sum, gift) => {
-                            // Only count actual SideCoins spent on paid gifts
+                        const actualMoneySpentOnType = giftsOfType.reduce((sum, gift) => {
+                            // Only count actual money spent on paid gifts
                             return sum + (gift.giftType !== 'basic' ? gift.value : 0);
                         }, 0);
 
@@ -376,9 +375,13 @@ const GiftsSent: React.FC<GiftsSentProps> = ({ userId, isOwnProfile }) => {
                                                 variant="outlined"
                                             />
                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                                <SCCoinIcon size="small" />
                                                 <Typography variant="body2" fontWeight="medium">
-                                                    {actualCoinsSpentOnType > 0 ? `${actualCoinsSpentOnType} spent` : 'Free gifts'}
+                                                    £{actualMoneySpentOnType.toFixed(2)} spent
+                                                </Typography>
+                                            </Box>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.3 }}>
+                                                <Typography variant="caption" color="text.secondary">
+                                                    (Host earned ~{((actualMoneySpentOnType * 0.8) / 0.005).toFixed(0)} SC)
                                                 </Typography>
                                             </Box>
                                         </Box>
@@ -435,9 +438,8 @@ const GiftsSent: React.FC<GiftsSentProps> = ({ userId, isOwnProfile }) => {
                                                     {/* Value and date */}
                                                     <Box sx={{ textAlign: 'right' }}>
                                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end', mb: 0.5 }}>
-                                                            <SCCoinIcon size="small" />
                                                             <Typography variant="body2" fontWeight="bold">
-                                                                {gift.giftType !== 'basic' ? gift.value : 0}
+                                                                £{gift.value.toFixed(2)}
                                                             </Typography>
                                                         </Box>
                                                         <Typography variant="caption" color="text.secondary">

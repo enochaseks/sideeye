@@ -23,6 +23,7 @@ import {
   Psychology,
   Lightbulb as LightbulbIcon,
   AccountBalanceWallet as WalletIcon,
+
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -36,6 +37,8 @@ const Navbar: React.FC = () => {
   const { unreadCount } = useNotifications();
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [isLightbulbLit, setIsLightbulbLit] = useState(false);
+
+
 
   useEffect(() => {
     if (!currentUser?.uid) return;
@@ -278,6 +281,7 @@ const Navbar: React.FC = () => {
               </ListItemIcon>
               <ListItemText primary="Wallet" />
             </MenuItem>
+
             <Divider />
             <MenuItem onClick={handleSignOut}>
               <ListItemIcon>

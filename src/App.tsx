@@ -66,6 +66,9 @@ const SadeAIInfo = lazy(() => import('./pages/SadeAIInfo'));
 const FAQPage = lazy(() => import('./pages/FAQPage'));
 const Suggestions = lazy(() => import('./pages/Suggestions'));
 const Wallet = lazy(() => import('./pages/Wallet'));
+const PaymentSuccess = lazy(() => import('./pages/PaymentSuccess'));
+const PaymentCancelled = lazy(() => import('./pages/PaymentCancelled'));
+
 
 // Loading fallback component
 const LoadingFallback = () => (
@@ -425,6 +428,17 @@ const AppContent: React.FC = () => {
                   <Wallet />
                 </ProtectedRoute>
               } />
+              <Route path="/payment-success" element={
+                <ProtectedRoute>
+                  <PaymentSuccess />
+                </ProtectedRoute>
+              } />
+              <Route path="/payment-cancelled" element={
+                <ProtectedRoute>
+                  <PaymentCancelled />
+                </ProtectedRoute>
+              } />
+
               
               {/* Redirect all other routes to home */}
               <Route path="*" element={<Navigate to="/" replace />} />
