@@ -573,6 +573,14 @@ const Settings: React.FC = () => {
   };
 
   const settingsItems = [
+    // Admin dashboard - only show for contact@sideeye.uk and enochaseks@yahoo.co.uk
+    ...(currentUser?.email === 'contact@sideeye.uk' || currentUser?.email === 'enochaseks@yahoo.co.uk' ? [{
+      title: 'Admin Dashboard',
+      icon: <SecurityIcon />,
+      path: '/admin',
+      description: 'Manage withdrawals, platform fees, and user analytics',
+      isSetting: true
+    }] : []),
     {
       title: 'Theme & Audio Settings',
       icon: <DevicesIcon />,
@@ -670,6 +678,13 @@ const Settings: React.FC = () => {
       icon: <CookieIcon />,
       path: '/cookies',
       description: 'Learn about how we use cookies',
+      isHelp: true
+    },
+    {
+      title: 'Gift Purchasing & Payment Security',
+      icon: <GiftIcon />,
+      path: '/gift-purchasing',
+      description: 'Learn about secure gift purchasing, payment methods, and data protection',
       isHelp: true
     },
     {
@@ -1069,17 +1084,25 @@ const Settings: React.FC = () => {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <GiftIcon color="secondary" fontSize="small" />
                   <Typography variant="body2">
-                    <strong>Receive Gifts:</strong> Earn 0.08 SideCoins for each gift you receive during live streams
+                    <strong>Receive Paid Gifts:</strong> Earn SideCoins when viewers send you paid gifts during live streams
+                  </Typography>
+                </Box>
+                <Box sx={{ pl: 4, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    • Heart Gift (£0.50) → You earn 80 SC<br/>
+                    • Side Eye Gift (£0.75) → You earn 120 SC<br/>
+                    • Confetti Gift (£1.00) → You earn 160 SC<br/>
+                    • Crown Gift (£2.00) → You earn 320 SC
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <VisibilityIcon color="primary" fontSize="small" />
                   <Typography variant="body2">
-                    <strong>Host Live Rooms:</strong> Create engaging content to attract viewers who send gifts
+                    <strong>Host Live Rooms:</strong> Create engaging content to attract viewers who purchase gifts
                   </Typography>
                 </Box>
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 3 }}>
-                  💡 Tip: 1,000 gifts received = 80 SC (8,000 LC) earned!
+                <Typography variant="caption" color="success.main" sx={{ pl: 3, fontWeight: 500 }}>
+                  💰 You earn 80% of each gift's value in SideCoins (withdrawable as real money!)
                 </Typography>
               </Box>
             </Box>
@@ -1138,25 +1161,31 @@ const Settings: React.FC = () => {
             {/* Gift Types Section */}
             <Box>
               <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
-                Gift Types & Costs
+                Gift Types & Real Money Payments
               </Typography>
               <Box sx={{ pl: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <Typography variant="body2">
-                  <strong>Free Gifts:</strong> Hearts, Side Eyes, Confetti, Crowns - Cost 0 SideCoins to send
+                  <strong>Paid Gifts:</strong> All gifts now cost real money - viewers pay with cards, Apple Pay, Google Pay
                 </Typography>
+                <Box sx={{ pl: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    • Heart Gift: £0.50 (viewers pay real money)<br/>
+                    • Side Eye Gift: £0.75 (viewers pay real money)<br/>
+                    • Confetti Gift: £1.00 (viewers pay real money)<br/>
+                    • Crown Gift: £2.00 (viewers pay real money)
+                  </Typography>
+                </Box>
                 <Typography variant="body2">
-                  <strong>Premium Gifts:</strong> Coming soon - Require minimum 100.00 SC to unlock
+                  <strong>Premium Gifts:</strong> Coming soon - Higher value gifts for special occasions
                 </Typography>
-                <Typography variant="body2" color="primary.main" sx={{ pl: 2, fontWeight: 500 }}>
-                  💎 <strong>Premium Threshold:</strong> Need 100.00 SC (10,000 LC) to send premium gifts
+                <Typography variant="body2" color="success.main" sx={{ pl: 2, fontWeight: 500 }}>
+                  💰 <strong>Your Earnings:</strong> You receive 80% of each gift's value as withdrawable SideCoins
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
-                  • Earn 100.00 SC by receiving ~1,250 gifts as a host<br/>
-                  • Premium access shows you're an established creator<br/>
-                  • Makes premium gifts truly special and valuable
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Note: You earn SideCoins from receiving any type of gift, regardless of whether it was free or premium
+                  • Viewers pay real money for gifts<br/>
+                  • You earn SideCoins that convert to real money<br/>
+                  • Withdraw your earnings monthly to your bank account<br/>
+                  • 10% platform fee applies to withdrawals
                 </Typography>
               </Box>
             </Box>

@@ -17,7 +17,8 @@ import {
     Alert,
     Card,
     CardContent,
-    CircularProgress
+    CircularProgress,
+    TextField
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { db } from '../../services/firebase';
@@ -70,6 +71,12 @@ declare global {
         };
         ApplePaySession?: {
             canMakePayments(): boolean;
+        };
+        Stripe?: (key: string) => {
+            confirmCardPayment(clientSecret: string, options?: any): Promise<{
+                error?: { message: string };
+                paymentIntent?: { status: string };
+            }>;
         };
     }
 }
@@ -539,6 +546,148 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
     // Payment processing state
     const [isProcessingPayment, setIsProcessingPayment] = useState(false);
     const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+    const [showPaymentForm, setShowPaymentForm] = useState(false);
+    const [cardDetails, setCardDetails] = useState({
+        cardNumber: '',
+        expiryMonth: '',
+        expiryYear: '',
+        cvc: '',
+        cardholderName: '',
+        email: ''
+    });
+
+    const handleCardPayment = async () => {
+        if (!currentUser || !selectedGift || !roomId || !roomOwnerId) return;
+        
+        setIsProcessingPayment(true);
+        
+        try {
+            const giftCost = getGiftCost(selectedGift.id);
+            
+            // Validate card details
+            if (!cardDetails.cardNumber || !cardDetails.expiryMonth || !cardDetails.expiryYear || !cardDetails.cvc || !cardDetails.email) {
+                throw new Error('Please fill in all card details and email address');
+            }
+            
+            // Clean and validate card number
+            const cleanCardNumber = cardDetails.cardNumber.replace(/\s/g, '');
+            if (cleanCardNumber.length < 13 || cleanCardNumber.length > 19) {
+                throw new Error('Please enter a valid card number');
+            }
+            
+            // Validate expiry date
+            const currentYear = new Date().getFullYear();
+            const currentMonth = new Date().getMonth() + 1;
+            const expiryYear = parseInt(cardDetails.expiryYear);
+            const expiryMonth = parseInt(cardDetails.expiryMonth);
+            
+            if (expiryYear < currentYear || (expiryYear === currentYear && expiryMonth < currentMonth)) {
+                throw new Error('Card has expired');
+            }
+            
+            // Validate CVC
+            if (cardDetails.cvc.length < 3 || cardDetails.cvc.length > 4) {
+                throw new Error('Please enter a valid CVC');
+            }
+            
+            // Validate email
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(cardDetails.email)) {
+                throw new Error('Please enter a valid email address');
+            }
+            
+            // Send payment to backend with real Stripe integration
+            const apiUrl = 'https://sideeye-backend-production.up.railway.app/api/process-gift-payment';
+            
+            console.log('[Gift Payment] Processing real payment for:', {
+                giftId: selectedGift.id,
+                amount: giftCost,
+                currency: 'GBP'
+            });
+            
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    giftId: selectedGift.id,
+                    giftName: selectedGift.name,
+                    amount: giftCost,
+                    currency: 'GBP',
+                    senderId: currentUser.uid,
+                    senderName: currentUser.displayName || 'Anonymous',
+                    receiverId: roomOwnerId,
+                    roomId: roomId,
+                    paymentMethod: 'card',
+                    paymentDetails: {
+                        cardNumber: cleanCardNumber,
+                        expiryMonth: cardDetails.expiryMonth.padStart(2, '0'),
+                        expiryYear: cardDetails.expiryYear,
+                        cvc: cardDetails.cvc,
+                        cardholderName: cardDetails.cardholderName || 'Anonymous'
+                    },
+                    customerEmail: cardDetails.email,
+                    description: `SideEye Gift: ${selectedGift.name}`,
+                    metadata: {
+                        giftId: selectedGift.id,
+                        senderId: currentUser.uid,
+                        receiverId: roomOwnerId,
+                        roomId: roomId,
+                        type: 'gift_payment'
+                    }
+                })
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Payment API Error:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    body: errorText
+                });
+                
+                // Parse error message if possible
+                try {
+                    const errorData = JSON.parse(errorText);
+                    throw new Error(errorData.error || `Payment failed: ${response.status}`);
+                } catch {
+                    throw new Error(`Payment failed: ${response.status} ${response.statusText}`);
+                }
+            }
+
+            const result = await response.json();
+            
+            if (!result.success) {
+                throw new Error(result.error || 'Payment processing failed');
+            }
+            
+            // Clear form on success
+            setShowPaymentForm(false);
+            setCardDetails({
+                cardNumber: '',
+                expiryMonth: '',
+                expiryYear: '',
+                cvc: '',
+                cardholderName: '',
+                email: ''
+            });
+            
+            const hostEarnings = calculateHostEarnings(giftCost);
+            toast.success(`🎉 Payment successful! Gift sent and host earned ${formatSideCoins(hostEarnings)} SC`, {
+                duration: 6000,
+                position: 'top-right',
+            });
+            
+            console.log('[Gift Payment] Payment completed successfully:', result.paymentId);
+            
+        } catch (error: any) {
+            console.error('[Gift Payment] Payment error:', error);
+            toast.error(error.message || 'Payment failed. Please try again.');
+        } finally {
+            setIsProcessingPayment(false);
+        }
+    };
 
     // Check if current user is the room owner
     const isRoomOwner = currentUser?.uid === roomOwnerId;
@@ -709,142 +858,9 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
         try {
             const giftCost = getGiftCost(selectedGift.id);
             
-            // Check if Payment Request API is supported
-            if (!window.PaymentRequest) {
-                throw new Error('Payment methods not supported in this browser. Please use a modern browser like Chrome or Safari.');
-            }
-            
-            // Use browser's built-in payment methods
-            const supportedInstruments = [];
-            
-            // Add Apple Pay for Safari/iOS
-            if (window.ApplePaySession && window.ApplePaySession.canMakePayments()) {
-                supportedInstruments.push({
-                    supportedMethods: 'https://apple.com/apple-pay'
-                });
-            }
-            
-            // Add Google Pay for Chrome (with your merchant ID)
-            const googlePayMerchantId = process.env.REACT_APP_GOOGLE_PAY_MERCHANT_ID;
-            console.log('Google Pay Merchant ID from env:', googlePayMerchantId);
-            
-            if (googlePayMerchantId) {
-                supportedInstruments.push({
-                    supportedMethods: 'https://google.com/pay',
-                    data: {
-                        environment: 'PRODUCTION',
-                        apiVersion: 2,
-                        apiVersionMinor: 0,
-                        merchantInfo: {
-                            merchantName: 'SideEye',
-                            merchantId: googlePayMerchantId
-                        },
-                        allowedPaymentMethods: [{
-                            type: 'CARD',
-                            parameters: {
-                                allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-                                allowedCardNetworks: ['VISA', 'MASTERCARD', 'AMEX']
-                            },
-                            tokenizationSpecification: {
-                                type: 'PAYMENT_GATEWAY',
-                                parameters: {
-                                    gateway: 'stripe',
-                                    gatewayMerchantId: process.env.REACT_APP_STRIPE_MERCHANT_ID || 'your_stripe_merchant_id'
-                                }
-                            }
-                        }]
-                    }
-                });
-            }
-            
-            // If no payment methods available, throw error
-            if (supportedInstruments.length === 0) {
-                throw new Error('No payment methods available. Please use Safari (for Apple Pay) or Chrome (for Google Pay).');
-            }
-            
-            // Payment details
-            const details = {
-                total: {
-                    label: `${selectedGift.name} Gift - SideEye`,
-                    amount: {
-                        currency: 'GBP',
-                        value: giftCost.toFixed(2)
-                    }
-                },
-                displayItems: [
-                    {
-                        label: `${selectedGift.name} Gift`,
-                        amount: {
-                            currency: 'GBP',
-                            value: giftCost.toFixed(2)
-                        }
-                    },
-                    {
-                        label: `Host earns ${formatSideCoins(calculateHostEarnings(giftCost))} SC`,
-                        amount: {
-                            currency: 'GBP',
-                            value: '0.00'
-                        }
-                    }
-                ]
-            };
-            
-            // Create payment request (options removed for TypeScript compatibility)
-            const request = new PaymentRequest(supportedInstruments, details);
-            
-            // Check if payment can be made
-            const canMakePayment = await request.canMakePayment();
-            if (!canMakePayment) {
-                throw new Error('No payment methods available in your browser. Please add a payment method or try a different browser.');
-            }
-            
-            // Show payment UI - this will show the browser's native payment interface
-            const paymentResponse = await request.show();
-            
-            // Process the payment with your backend
-            console.log('Payment response:', paymentResponse);
-            console.log('Payment method used:', paymentResponse.methodName);
-            
-            // Send payment details to backend for processing
-            const backendResponse = await fetch('/api/process-gift-payment', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    giftId: selectedGift.id,
-                    giftName: selectedGift.name,
-                    amount: giftCost,
-                    senderId: currentUser.uid,
-                    senderName: currentUser.displayName || 'Anonymous',
-                    receiverId: roomOwnerId,
-                    roomId: roomId,
-                    paymentMethod: paymentResponse.methodName,
-                    paymentDetails: {
-                        methodName: paymentResponse.methodName,
-                        details: paymentResponse.details
-                    }
-                })
-            });
-            
-            const result = await backendResponse.json();
-            
-            if (!result.success) {
-                await paymentResponse.complete('fail');
-                throw new Error(result.error || 'Payment processing failed');
-            }
-            
-            // Complete the payment successfully
-            await paymentResponse.complete('success');
-            
-            // Gift and balance updates are now handled by the backend
-            
+            // Show payment form
             setShowPaymentDialog(false);
-            const hostEarnings = calculateHostEarnings(giftCost);
-            toast.success(`Payment successful! 🎁 Gift sent and host earned ${formatSideCoins(hostEarnings)} SC`, {
-                duration: 5000,
-                position: 'top-right',
-            });
+            setShowPaymentForm(true);
             
         } catch (error: any) {
             console.error('Error processing gift payment:', error);
@@ -1416,6 +1432,154 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                         startIcon={isProcessingPayment ? <CircularProgress size={20} /> : null}
                         sx={{
                             minWidth: 160,
+                            bgcolor: selectedGift?.color,
+                            '&:hover': {
+                                bgcolor: alpha(selectedGift?.color || '#000', 0.8)
+                            }
+                        }}
+                    >
+                        {isProcessingPayment ? 'Processing...' : `Pay £${selectedGift ? getGiftCost(selectedGift.id).toFixed(2) : '0.00'}`}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Payment Form Dialog */}
+            <Dialog open={showPaymentForm} onClose={() => setShowPaymentForm(false)} maxWidth="sm" fullWidth>
+                <DialogTitle>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {selectedGift && (
+                            <Box sx={{ color: selectedGift.color, fontSize: 32 }}>
+                                {selectedGift.icon}
+                            </Box>
+                        )}
+                        <Typography variant="h6">Payment Details</Typography>
+                    </Box>
+                    <IconButton
+                        aria-label="close"
+                        onClick={() => setShowPaymentForm(false)}
+                        sx={{ position: 'absolute', right: 8, top: 8 }}
+                    >
+                        <CloseIcon />
+                    </IconButton>
+                </DialogTitle>
+                
+                <DialogContent>
+                    {selectedGift && (
+                        <Box>
+                            <Typography variant="h6" gutterBottom>
+                                {selectedGift.name} - £{getGiftCost(selectedGift.id).toFixed(2)}
+                            </Typography>
+                            
+                            <Box 
+                                component="form" 
+                                autoComplete="on"
+                                sx={{ mt: 3 }}
+                                onSubmit={(e) => e.preventDefault()}
+                            >
+                                <TextField
+                                    fullWidth
+                                    label="Card Number"
+                                    name="cardnumber"
+                                    value={cardDetails.cardNumber}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardDetails(prev => ({ ...prev, cardNumber: e.target.value }))}
+                                    placeholder="1234 5678 9012 3456"
+                                    autoComplete="cc-number"
+                                    inputProps={{
+                                        inputMode: 'numeric',
+                                        pattern: '[0-9\\s]{13,19}',
+                                        maxLength: 19
+                                    }}
+                                    sx={{ mb: 2 }}
+                                />
+                                
+                                <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                                    <TextField
+                                        label="Expiry Month"
+                                        name="cc-exp-month"
+                                        value={cardDetails.expiryMonth}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardDetails(prev => ({ ...prev, expiryMonth: e.target.value }))}
+                                        placeholder="MM"
+                                        autoComplete="cc-exp-month"
+                                        inputProps={{
+                                            inputMode: 'numeric',
+                                            pattern: '[0-9]{2}',
+                                            maxLength: 2
+                                        }}
+                                        sx={{ flex: 1 }}
+                                    />
+                                    <TextField
+                                        label="Expiry Year"
+                                        name="cc-exp-year"
+                                        value={cardDetails.expiryYear}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardDetails(prev => ({ ...prev, expiryYear: e.target.value }))}
+                                        placeholder="YYYY"
+                                        autoComplete="cc-exp-year"
+                                        inputProps={{
+                                            inputMode: 'numeric',
+                                            pattern: '[0-9]{4}',
+                                            maxLength: 4
+                                        }}
+                                        sx={{ flex: 1 }}
+                                    />
+                                    <TextField
+                                        label="CVC"
+                                        name="cvc"
+                                        value={cardDetails.cvc}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardDetails(prev => ({ ...prev, cvc: e.target.value }))}
+                                        placeholder="123"
+                                        autoComplete="cc-csc"
+                                        inputProps={{
+                                            inputMode: 'numeric',
+                                            pattern: '[0-9]{3,4}',
+                                            maxLength: 4
+                                        }}
+                                        sx={{ flex: 1 }}
+                                    />
+                                </Box>
+                                
+                                <TextField
+                                    fullWidth
+                                    label="Cardholder Name"
+                                    name="cc-name"
+                                    value={cardDetails.cardholderName}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardDetails(prev => ({ ...prev, cardholderName: e.target.value }))}
+                                    placeholder="John Smith"
+                                    autoComplete="cc-name"
+                                    sx={{ mb: 2 }}
+                                />
+                                
+                                <TextField
+                                    fullWidth
+                                    label="Email Address"
+                                    name="email"
+                                    type="email"
+                                    value={cardDetails.email}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardDetails(prev => ({ ...prev, email: e.target.value }))}
+                                    placeholder="your@email.com"
+                                    autoComplete="email"
+                                    sx={{ mb: 2 }}
+                                />
+                            </Box>
+                            
+                            <Alert severity="info" sx={{ mt: 2 }}>
+                                <Typography variant="body2">
+                                    Your payment will be processed securely. The host will receive {formatSideCoins(calculateHostEarnings(getGiftCost(selectedGift.id)))} SC.
+                                </Typography>
+                            </Alert>
+                        </Box>
+                    )}
+                </DialogContent>
+                
+                <DialogActions sx={{ p: 3 }}>
+                    <Button onClick={() => setShowPaymentForm(false)} variant="outlined">
+                        Cancel
+                    </Button>
+                    <Button 
+                        onClick={handleCardPayment}
+                        variant="contained"
+                        disabled={isProcessingPayment}
+                        startIcon={isProcessingPayment ? <CircularProgress size={20} /> : null}
+                        sx={{
                             bgcolor: selectedGift?.color,
                             '&:hover': {
                                 bgcolor: alpha(selectedGift?.color || '#000', 0.8)

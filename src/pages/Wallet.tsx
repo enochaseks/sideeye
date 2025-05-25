@@ -45,7 +45,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { doc, getDoc, collection, query, where, getDocs, onSnapshot, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, onSnapshot, updateDoc, addDoc, serverTimestamp, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
 import SCCoinIcon from '../components/SCCoinIcon';
 import { Helmet } from 'react-helmet-async';
 import { toast } from 'react-hot-toast';
@@ -81,6 +81,17 @@ interface WithdrawalRequest {
     };
 }
 
+interface SavedBankDetails {
+    id: string;
+    accountName: string;
+    accountNumber: string; // This will be encrypted
+    sortCode: string;
+    bankName: string;
+    isDefault: boolean;
+    createdAt: any;
+    lastUsed?: any;
+}
+
 const Wallet: React.FC = () => {
     const { currentUser } = useAuth();
     const theme = useTheme();
@@ -96,6 +107,7 @@ const Wallet: React.FC = () => {
 
     // Withdrawal state
     const [showWithdrawalDialog, setShowWithdrawalDialog] = useState(false);
+    const [showBankDetailsDialog, setShowBankDetailsDialog] = useState(false);
     const [withdrawalAmount, setWithdrawalAmount] = useState<string>('');
     const [bankDetails, setBankDetails] = useState({
         accountName: '',
@@ -103,9 +115,14 @@ const Wallet: React.FC = () => {
         sortCode: '',
         bankName: ''
     });
+    const [savedBankDetails, setSavedBankDetails] = useState<SavedBankDetails[]>([]);
+    const [selectedBankDetailsId, setSelectedBankDetailsId] = useState<string>('');
     const [isProcessingWithdrawal, setIsProcessingWithdrawal] = useState(false);
     const [withdrawalHistory, setWithdrawalHistory] = useState<WithdrawalRequest[]>([]);
     const [canWithdrawThisMonth, setCanWithdrawThisMonth] = useState(true);
+    const [nextWithdrawalDate, setNextWithdrawalDate] = useState<Date | null>(null);
+    const [isLoadingBankDetails, setIsLoadingBankDetails] = useState(false);
+    const [isSavingBankDetails, setIsSavingBankDetails] = useState(false);
     
 
 
@@ -142,223 +159,202 @@ const Wallet: React.FC = () => {
         return { grossAmount, platformFee, netAmount };
     };
 
-    // Check if user can withdraw this month
+    // Check if user can withdraw this month and calculate next withdrawal date
     const checkWithdrawalEligibility = () => {
         const now = new Date();
         const currentMonth = now.getMonth();
         const currentYear = now.getFullYear();
         
-        // Check if user has already withdrawn this month
-        const hasWithdrawnThisMonth = withdrawalHistory.some(withdrawal => {
-            const withdrawalDate = withdrawal.requestDate.toDate();
-            return withdrawalDate.getMonth() === currentMonth && 
-                   withdrawalDate.getFullYear() === currentYear &&
-                   (withdrawal.status === 'approved' || withdrawal.status === 'completed');
-        });
+        // Find the most recent completed withdrawal
+        const lastWithdrawal = withdrawalHistory
+            .filter(w => w.status === 'completed' || w.status === 'approved')
+            .sort((a, b) => b.requestDate.toDate().getTime() - a.requestDate.toDate().getTime())[0];
         
-        setCanWithdrawThisMonth(!hasWithdrawnThisMonth);
+        if (lastWithdrawal) {
+            const lastWithdrawalDate = lastWithdrawal.requestDate.toDate();
+            const lastWithdrawalMonth = lastWithdrawalDate.getMonth();
+            const lastWithdrawalYear = lastWithdrawalDate.getFullYear();
+            
+            // Check if last withdrawal was this month
+            const hasWithdrawnThisMonth = lastWithdrawalMonth === currentMonth && lastWithdrawalYear === currentYear;
+            
+            setCanWithdrawThisMonth(!hasWithdrawnThisMonth);
+            
+            if (hasWithdrawnThisMonth) {
+                // Calculate next withdrawal date (first day of next month)
+                const nextMonth = new Date(currentYear, currentMonth + 1, 1);
+                setNextWithdrawalDate(nextMonth);
+            } else {
+                setNextWithdrawalDate(null);
+            }
+        } else {
+            setCanWithdrawThisMonth(true);
+            setNextWithdrawalDate(null);
+        }
     };
 
-    // Check if user has premium access (100.00 SC threshold)
-    const hasPremiumAccess = currentBalance >= 100.00;
-    const premiumProgress = Math.min((currentBalance / 100.00) * 100, 100);
+    // Load saved bank details
+    const loadSavedBankDetails = async () => {
+        if (!currentUser?.uid) return;
+        
+        setIsLoadingBankDetails(true);
+        try {
+            const bankDetailsQuery = query(
+                collection(db, 'users', currentUser.uid, 'bankDetails'),
+                orderBy('createdAt', 'desc')
+            );
+            
+            const unsubscribe = onSnapshot(bankDetailsQuery, (snapshot) => {
+                const details: SavedBankDetails[] = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    details.push({
+                        id: doc.id,
+                        accountName: data.accountName,
+                        accountNumber: data.accountNumber, // Will be masked for display
+                        sortCode: data.sortCode,
+                        bankName: data.bankName,
+                        isDefault: data.isDefault || false,
+                        createdAt: data.createdAt,
+                        lastUsed: data.lastUsed
+                    });
+                });
+                setSavedBankDetails(details);
+                
+                // Auto-select default bank details
+                const defaultDetails = details.find(d => d.isDefault);
+                if (defaultDetails && !selectedBankDetailsId) {
+                    setSelectedBankDetailsId(defaultDetails.id);
+                }
+            });
+            
+            return unsubscribe;
+        } catch (error) {
+            console.error('Error loading bank details:', error);
+            toast.error('Failed to load saved bank details');
+        } finally {
+            setIsLoadingBankDetails(false);
+        }
+    };
 
-    // Calculate money value of current balance
-    const currentMoneyValue = convertSCToMoney(currentBalance);
-    const withdrawalCalculation = calculateWithdrawalAmount(currentBalance);
-
-    useEffect(() => {
-        if (!currentUser?.uid) {
-            setLoading(false);
+    // Save new bank details
+    const saveBankDetails = async () => {
+        if (!currentUser?.uid || !bankDetails.accountName || !bankDetails.accountNumber || !bankDetails.sortCode || !bankDetails.bankName) {
+            toast.error('Please fill in all bank details');
             return;
         }
-
-        console.log('[Wallet] Setting up real-time listeners for user:', currentUser.uid);
         
-        // Real-time listener for user's balance
-        const userRef = doc(db, 'users', currentUser.uid);
-        const unsubscribeUser = onSnapshot(userRef, (userDoc) => {
-            if (userDoc.exists()) {
-                const userData = userDoc.data();
-                setCurrentBalance(userData.sideCoins || 0);
-                console.log('[Wallet] Balance updated:', userData.sideCoins || 0);
+        setIsSavingBankDetails(true);
+        try {
+            // Validate sort code format (6 digits)
+            const sortCodeRegex = /^\d{6}$/;
+            if (!sortCodeRegex.test(bankDetails.sortCode.replace(/[-\s]/g, ''))) {
+                toast.error('Sort code must be 6 digits (e.g., 123456 or 12-34-56)');
+                return;
             }
-        });
-
-        // Real-time listener for withdrawal history
-        const withdrawalsQuery = query(
-            collection(db, 'withdrawalRequests'),
-            where('userId', '==', currentUser.uid)
-        );
-        const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
-            const withdrawals: WithdrawalRequest[] = [];
-            snapshot.forEach(doc => {
-                withdrawals.push({ id: doc.id, ...doc.data() } as WithdrawalRequest);
+            
+            // Validate account number (8 digits for UK)
+            const accountNumberRegex = /^\d{8}$/;
+            if (!accountNumberRegex.test(bankDetails.accountNumber)) {
+                toast.error('Account number must be 8 digits');
+                return;
+            }
+            
+            // Check if this is the first bank details (make it default)
+            const isFirstDetails = savedBankDetails.length === 0;
+            
+            // Save to Firestore (account number will be encrypted on backend)
+            const bankDetailsRef = collection(db, 'users', currentUser.uid, 'bankDetails');
+            const docRef = await addDoc(bankDetailsRef, {
+                accountName: bankDetails.accountName,
+                accountNumber: bankDetails.accountNumber, // Backend should encrypt this
+                sortCode: bankDetails.sortCode.replace(/[-\s]/g, ''), // Remove formatting
+                bankName: bankDetails.bankName,
+                isDefault: isFirstDetails,
+                createdAt: serverTimestamp(),
+                encryptionVersion: 1 // For future encryption upgrades
             });
-            setWithdrawalHistory(withdrawals);
-        });
-
-        // Function to calculate gift statistics in real-time
-        const calculateGiftStats = async () => {
-            let totalSent = 0;
-            let totalReceived = 0;
-            let coinsSpent = 0;
             
-            try {
-                console.log('[Wallet] Calculating gift statistics...');
-                
-                // Get all rooms to check their gifts
-                const roomsSnapshot = await getDocs(collection(db, 'sideRooms'));
-                
-                const unsubscribeFunctions: (() => void)[] = [];
-                
-                for (const roomDoc of roomsSnapshot.docs) {
-                    const roomId = roomDoc.id;
-                    
-                    // Real-time listener for gifts sent by user in this room
-                    const giftsSentQuery = query(
-                        collection(db, 'sideRooms', roomId, 'gifts'),
-                        where('senderId', '==', currentUser.uid)
-                    );
-                    
-                    const unsubscribeSent = onSnapshot(giftsSentQuery, (snapshot) => {
-                        let roomSentCount = 0;
-                        let roomCoinsSpent = 0;
-                        
-                        snapshot.forEach(giftDoc => {
-                            const giftData = giftDoc.data();
-                            roomSentCount++;
-                            if (giftData.giftType !== 'basic') {
-                                roomCoinsSpent += giftData.value || 0;
-                            }
-                        });
-                        
-                        // Update totals (this is a simplified approach - in production you'd want to track this more efficiently)
-                        console.log(`[Wallet] Room ${roomId} - Sent: ${roomSentCount}, Spent: ${roomCoinsSpent}`);
-                    });
-                    
-                    unsubscribeFunctions.push(unsubscribeSent);
-                    
-                    // Real-time listener for gifts received by user in this room
-                    const giftsReceivedQuery = query(
-                        collection(db, 'sideRooms', roomId, 'gifts'),
-                        where('receiverId', '==', currentUser.uid)
-                    );
-                    
-                    const unsubscribeReceived = onSnapshot(giftsReceivedQuery, (snapshot) => {
-                        let roomReceivedCount = 0;
-                        
-                        snapshot.forEach(giftDoc => {
-                            roomReceivedCount++;
-                        });
-                        
-                        console.log(`[Wallet] Room ${roomId} - Received: ${roomReceivedCount}`);
-                    });
-                    
-                    unsubscribeFunctions.push(unsubscribeReceived);
-                }
-                
-                // For now, let's do a one-time calculation and then the listeners will update individual rooms
-                // In a production app, you'd want to aggregate this data more efficiently
-                await recalculateAllStats();
-                
-                // Return cleanup function for all gift listeners
-                return () => {
-                    unsubscribeFunctions.forEach(unsub => unsub());
-                };
-                
-            } catch (error) {
-                console.error('[Wallet] Error setting up gift listeners:', error);
-                return () => {}; // Return empty cleanup function
-            }
-        };
-
-        // Function to recalculate all statistics (used initially and when needed)
-        const recalculateAllStats = async () => {
-            let totalSent = 0;
-            let totalReceived = 0;
-            let actualCoinsSpent = 0; // Only count actual SideCoins spent on paid gifts
-            let actualCoinsEarned = 0; // Calculate actual SideCoins earned from gifts received
+            // Clear form
+            setBankDetails({
+                accountName: '',
+                accountNumber: '',
+                sortCode: '',
+                bankName: ''
+            });
             
+            setSelectedBankDetailsId(docRef.id);
+            setShowBankDetailsDialog(false);
+            toast.success('Bank details saved securely');
+            
+        } catch (error) {
+            console.error('Error saving bank details:', error);
+            toast.error('Failed to save bank details');
+        } finally {
+            setIsSavingBankDetails(false);
+        }
+    };
+
+    // Delete saved bank details
+    const deleteBankDetails = async (detailsId: string) => {
+        if (!currentUser?.uid) return;
+        
+        if (window.confirm('Are you sure you want to delete these bank details?')) {
             try {
-                const roomsSnapshot = await getDocs(collection(db, 'sideRooms'));
+                await deleteDoc(doc(db, 'users', currentUser.uid, 'bankDetails', detailsId));
+                toast.success('Bank details deleted');
                 
-                for (const roomDoc of roomsSnapshot.docs) {
-                    const roomId = roomDoc.id;
-                    
-                    // Get gifts sent by user
-                    const giftsSentQuery = query(
-                        collection(db, 'sideRooms', roomId, 'gifts'),
-                        where('senderId', '==', currentUser.uid)
-                    );
-                    
-                    const giftsSentSnapshot = await getDocs(giftsSentQuery);
-                    giftsSentSnapshot.forEach(giftDoc => {
-                        const giftData = giftDoc.data();
-                        totalSent++;
-                        // All gifts now cost SC
-                        actualCoinsSpent += giftData.value || giftData.cost || 0;
-                    });
-                    
-                    // Get gifts received by user
-                    const giftsReceivedQuery = query(
-                        collection(db, 'sideRooms', roomId, 'gifts'),
-                        where('receiverId', '==', currentUser.uid)
-                    );
-                    
-                    const giftsReceivedSnapshot = await getDocs(giftsReceivedQuery);
-                    giftsReceivedSnapshot.forEach(giftDoc => {
-                        const giftData = giftDoc.data();
-                        totalReceived++;
-                        // Calculate actual SideCoins earned: 80% of gift cost
-                        const giftCost = giftData.value || giftData.cost || 0;
-                        actualCoinsEarned += giftCost * 0.8; // Host gets 80%
-                    });
+                // If this was the selected one, clear selection
+                if (selectedBankDetailsId === detailsId) {
+                    setSelectedBankDetailsId('');
                 }
-                
-                setUserStats({
-                    totalGiftsSent: totalSent,
-                    totalGiftsReceived: totalReceived,
-                    totalCoinsEarned: Math.round(actualCoinsEarned * 100) / 100, // Round to 2 decimal places
-                    totalCoinsSpent: actualCoinsSpent
-                });
-                
-                console.log('[Wallet] Statistics updated:', { 
-                    totalSent, 
-                    totalReceived, 
-                    actualCoinsEarned: Math.round(actualCoinsEarned * 100) / 100,
-                    actualCoinsSpent 
-                });
-                
             } catch (error) {
-                console.error('[Wallet] Error calculating statistics:', error);
+                console.error('Error deleting bank details:', error);
+                toast.error('Failed to delete bank details');
             }
-        };
+        }
+    };
 
-        // Set up gift statistics listeners
-        let cleanupGiftListeners: (() => void) | undefined;
-        calculateGiftStats().then(cleanup => {
-            cleanupGiftListeners = cleanup;
-            setLoading(false);
-        });
-
-        // Cleanup function
-        return () => {
-            console.log('[Wallet] Cleaning up listeners');
-            unsubscribeUser();
-            unsubscribeWithdrawals();
-            if (cleanupGiftListeners) {
-                cleanupGiftListeners();
-            }
-        };
-    }, [currentUser?.uid]);
-
-    // Check withdrawal eligibility when withdrawal history changes
-    useEffect(() => {
-        checkWithdrawalEligibility();
-    }, [withdrawalHistory]);
+    // Set bank details as default
+    const setAsDefaultBankDetails = async (detailsId: string) => {
+        if (!currentUser?.uid) return;
+        
+        try {
+            const batch = writeBatch(db);
+            
+            // Remove default from all other bank details
+            savedBankDetails.forEach(details => {
+                if (details.id !== detailsId) {
+                    const ref = doc(db, 'users', currentUser.uid, 'bankDetails', details.id);
+                    batch.update(ref, { isDefault: false });
+                }
+            });
+            
+            // Set this one as default
+            const ref = doc(db, 'users', currentUser.uid, 'bankDetails', detailsId);
+            batch.update(ref, { isDefault: true });
+            
+            await batch.commit();
+            toast.success('Default bank details updated');
+            
+        } catch (error) {
+            console.error('Error setting default bank details:', error);
+            toast.error('Failed to update default bank details');
+        }
+    };
 
     const handleWithdrawalRequest = async () => {
+        // Coming Soon functionality
+        console.log('🚀 Withdrawal feature coming soon!');
+        toast.success('Withdrawal feature coming soon! 🚀', {
+            duration: 3000,
+            position: 'top-center',
+        });
+        setShowWithdrawalDialog(false);
+        return;
+
+        // TODO: Uncomment below when withdrawal system is ready
+        /*
         if (!currentUser?.uid || !withdrawalAmount || isProcessingWithdrawal) return;
 
         const amountSC = parseFloat(withdrawalAmount);
@@ -375,13 +371,21 @@ const Wallet: React.FC = () => {
         }
 
         if (!canWithdrawThisMonth) {
-            toast.error('You can only withdraw once per month');
+            const nextDateStr = nextWithdrawalDate ? nextWithdrawalDate.toLocaleDateString() : 'next month';
+            toast.error(`You can only withdraw once per month. Next withdrawal available: ${nextDateStr}`);
             return;
         }
 
-        // Validate bank details
-        if (!bankDetails.accountName || !bankDetails.accountNumber || !bankDetails.sortCode || !bankDetails.bankName) {
-            toast.error('Please fill in all bank details');
+        // Check if bank details are selected
+        if (!selectedBankDetailsId) {
+            toast.error('Please select or add bank details for withdrawal');
+            setShowBankDetailsDialog(true);
+            return;
+        }
+
+        const selectedDetails = savedBankDetails.find(d => d.id === selectedBankDetailsId);
+        if (!selectedDetails) {
+            toast.error('Selected bank details not found');
             return;
         }
 
@@ -390,7 +394,7 @@ const Wallet: React.FC = () => {
         try {
             const calculation = calculateWithdrawalAmount(amountSC);
             
-            // Create withdrawal request
+            // Create withdrawal request with reference to saved bank details
             const withdrawalRequest = {
                 userId: currentUser.uid,
                 amount: amountSC,
@@ -399,12 +403,20 @@ const Wallet: React.FC = () => {
                 grossAmount: calculation.grossAmount,
                 status: 'pending',
                 requestDate: serverTimestamp(),
-                bankDetails: bankDetails,
+                bankDetailsId: selectedBankDetailsId, // Reference to saved bank details
                 userEmail: currentUser.email,
-                userName: currentUser.displayName || 'Unknown User'
+                userName: currentUser.displayName || 'Unknown User',
+                withdrawalMonth: new Date().getMonth(),
+                withdrawalYear: new Date().getFullYear()
             };
 
             await addDoc(collection(db, 'withdrawalRequests'), withdrawalRequest);
+
+            // Update last used timestamp for bank details
+            const bankDetailsRef = doc(db, 'users', currentUser.uid, 'bankDetails', selectedBankDetailsId);
+            await updateDoc(bankDetailsRef, {
+                lastUsed: serverTimestamp()
+            });
 
             // Deduct the amount from user's balance immediately (pending approval)
             const userRef = doc(db, 'users', currentUser.uid);
@@ -416,12 +428,6 @@ const Wallet: React.FC = () => {
             toast.success(`Withdrawal request submitted! You'll receive £${calculation.netAmount.toFixed(2)} after processing.`);
             setShowWithdrawalDialog(false);
             setWithdrawalAmount('');
-            setBankDetails({
-                accountName: '',
-                accountNumber: '',
-                sortCode: '',
-                bankName: ''
-            });
 
         } catch (error) {
             console.error('Error submitting withdrawal request:', error);
@@ -429,6 +435,7 @@ const Wallet: React.FC = () => {
         } finally {
             setIsProcessingWithdrawal(false);
         }
+        */
     };
 
     const freeGiftTips: GiftTip[] = [
@@ -474,7 +481,134 @@ const Wallet: React.FC = () => {
         }
     };
 
+    // Load data on component mount
+    useEffect(() => {
+        if (!currentUser?.uid) {
+            setLoading(false);
+            return;
+        }
 
+        console.log('[Wallet] Setting up real-time listeners for user:', currentUser.uid);
+        
+        // Real-time listener for user's balance
+        const userRef = doc(db, 'users', currentUser.uid);
+        const unsubscribeUser = onSnapshot(userRef, (userDoc) => {
+            if (userDoc.exists()) {
+                const userData = userDoc.data();
+                setCurrentBalance(userData.sideCoins || 0);
+                console.log('[Wallet] Balance updated:', userData.sideCoins || 0);
+            }
+        });
+
+        // Real-time listener for withdrawal history
+        const withdrawalsQuery = query(
+            collection(db, 'withdrawalRequests'),
+            where('userId', '==', currentUser.uid),
+            orderBy('requestDate', 'desc')
+        );
+        const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
+            const withdrawals: WithdrawalRequest[] = [];
+            snapshot.forEach(doc => {
+                withdrawals.push({ id: doc.id, ...doc.data() } as WithdrawalRequest);
+            });
+            setWithdrawalHistory(withdrawals);
+        });
+
+        // Load saved bank details
+        let unsubscribeBankDetails: (() => void) | undefined;
+        loadSavedBankDetails().then(unsub => {
+            unsubscribeBankDetails = unsub;
+        });
+
+        // Load user stats
+        const loadUserStats = async () => {
+            try {
+                console.log('[Wallet] Loading user stats for:', currentUser.uid);
+                
+                // Get all rooms first
+                const roomsSnapshot = await getDocs(collection(db, 'sideRooms'));
+                
+                let totalCoinsEarned = 0;
+                let totalCoinsSpent = 0;
+                let totalGiftsSent = 0;
+                let totalGiftsReceived = 0;
+                
+                // Check gifts in each room's subcollection
+                for (const roomDoc of roomsSnapshot.docs) {
+                    const roomId = roomDoc.id;
+                    
+                    // Get gifts sent by this user in this room
+                    const sentQuery = query(
+                        collection(db, 'sideRooms', roomId, 'gifts'),
+                        where('senderId', '==', currentUser.uid)
+                    );
+                    const sentSnapshot = await getDocs(sentQuery);
+                    
+                    // Get gifts received by this user in this room
+                    const receivedQuery = query(
+                        collection(db, 'sideRooms', roomId, 'gifts'),
+                        where('receiverId', '==', currentUser.uid)
+                    );
+                    const receivedSnapshot = await getDocs(receivedQuery);
+                    
+                    // Count sent gifts and calculate spent amount
+                    totalGiftsSent += sentSnapshot.size;
+                    sentSnapshot.forEach(doc => {
+                        const gift = doc.data();
+                        if (gift.value) {
+                            totalCoinsSpent += gift.value; // Amount spent on gifts
+                        }
+                    });
+                    
+                    // Count received gifts and calculate earned SideCoins
+                    totalGiftsReceived += receivedSnapshot.size;
+                    receivedSnapshot.forEach(doc => {
+                        const gift = doc.data();
+                        if (gift.value) {
+                            // Host earns 80% of gift value in SideCoins
+                            const hostEarning = (gift.value * 0.8) / 0.005; // Convert to SideCoins
+                            totalCoinsEarned += hostEarning;
+                        }
+                    });
+                }
+                
+                console.log('[Wallet] Stats calculated:', {
+                    totalGiftsSent,
+                    totalGiftsReceived,
+                    totalCoinsEarned,
+                    totalCoinsSpent
+                });
+                
+                setUserStats({
+                    totalGiftsSent,
+                    totalGiftsReceived,
+                    totalCoinsEarned,
+                    totalCoinsSpent
+                });
+                
+            } catch (error) {
+                console.error('[Wallet] Error loading user stats:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadUserStats();
+
+        // Cleanup function
+        return () => {
+            unsubscribeUser();
+            unsubscribeWithdrawals();
+            if (unsubscribeBankDetails) {
+                unsubscribeBankDetails();
+            }
+        };
+    }, [currentUser?.uid]);
+
+    // Check withdrawal eligibility when withdrawal history changes
+    useEffect(() => {
+        checkWithdrawalEligibility();
+    }, [withdrawalHistory]);
 
     const premiumGifts = [
         {
@@ -548,13 +682,13 @@ const Wallet: React.FC = () => {
                                 {/* Money Value Display */}
                                 <Box sx={{ mb: 2, p: 2, bgcolor: alpha('#fff', 0.1), borderRadius: 1 }}>
                                     <Typography variant="h4" component="div" fontWeight="bold" sx={{ color: '#FFD700' }}>
-                                        £{currentMoneyValue.toFixed(2)}
+                                        £{convertSCToMoney(currentBalance).toFixed(2)}
                                     </Typography>
                                     <Typography variant="body2" sx={{ opacity: 0.9 }}>
                                         Current Money Value
                                     </Typography>
                                     <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                                        After 10% platform fee: £{withdrawalCalculation.netAmount.toFixed(2)}
+                                        After 10% platform fee: £{calculateWithdrawalAmount(currentBalance).netAmount.toFixed(2)}
                                     </Typography>
                                 </Box>
 
@@ -563,7 +697,7 @@ const Wallet: React.FC = () => {
                                     variant="contained"
                                     fullWidth
                                     onClick={() => setShowWithdrawalDialog(true)}
-                                    disabled={currentBalance < MIN_WITHDRAWAL_SC || !canWithdrawThisMonth}
+                                    disabled={false} // Always enabled for "Coming Soon" demo
                                     startIcon={<BankIcon />}
                                     sx={{
                                         bgcolor: '#FFD700',
@@ -571,52 +705,20 @@ const Wallet: React.FC = () => {
                                         fontWeight: 'bold',
                                         '&:hover': {
                                             bgcolor: '#FFC107'
-                                        },
-                                        '&:disabled': {
-                                            bgcolor: alpha('#fff', 0.2),
-                                            color: alpha('#fff', 0.5)
                                         }
                                     }}
                                 >
-                                    {!canWithdrawThisMonth ? 'Already Withdrawn This Month' : 
-                                     currentBalance < MIN_WITHDRAWAL_SC ? `Need ${MIN_WITHDRAWAL_SC} SC to Withdraw` : 
-                                     'Withdraw Money'}
+                                    Withdraw Money (Coming Soon)
                                 </Button>
 
                                 {/* Premium Status */}
                                 <Box sx={{ mt: 2 }}>
-                                    {hasPremiumAccess ? (
+                                    {nextWithdrawalDate && (
                                         <Chip 
-                                            label="💎 Premium Access Unlocked" 
-                                            sx={{ 
-                                                backgroundColor: alpha('#FFD700', 0.2),
-                                                color: '#FFD700',
-                                                fontWeight: 'bold'
-                                            }}
+                                            label={`Next Withdrawal: ${nextWithdrawalDate.toLocaleDateString()}`}
+                                            color="info"
+                                            size="small"
                                         />
-                                    ) : (
-                                        <Box>
-                                            <Typography variant="body2" sx={{ opacity: 0.9, mb: 1 }}>
-                                                Premium Access Progress: {premiumProgress.toFixed(1)}%
-                                            </Typography>
-                                            <Box sx={{ 
-                                                width: '100%', 
-                                                height: 6, 
-                                                backgroundColor: alpha('#fff', 0.2), 
-                                                borderRadius: 3,
-                                                overflow: 'hidden'
-                                            }}>
-                                                <Box sx={{ 
-                                                    width: `${premiumProgress}%`, 
-                                                    height: '100%', 
-                                                    backgroundColor: '#FFD700',
-                                                    transition: 'width 0.3s ease'
-                                                }} />
-                                            </Box>
-                                            <Typography variant="caption" sx={{ opacity: 0.8, mt: 0.5, display: 'block' }}>
-                                                Need {formatSideCoins(100 - currentBalance)} SC more for premium gifts
-                                            </Typography>
-                                        </Box>
                                     )}
                                 </Box>
                                 
@@ -885,9 +987,15 @@ const Wallet: React.FC = () => {
                     <DialogContent>
                         <Alert severity="info" sx={{ mb: 3 }}>
                             <Typography variant="body2">
-                                <strong>Available:</strong> {formatSideCoins(currentBalance)} SC (£{currentMoneyValue.toFixed(2)})
+                                <strong>Available:</strong> {formatSideCoins(currentBalance)} SC (£{convertSCToMoney(currentBalance).toFixed(2)})
                                 <br />
                                 <strong>Platform Fee:</strong> 10% • <strong>Minimum:</strong> {MIN_WITHDRAWAL_SC} SC
+                                {!canWithdrawThisMonth && nextWithdrawalDate && (
+                                    <>
+                                        <br />
+                                        <strong>Next Withdrawal:</strong> {nextWithdrawalDate.toLocaleDateString()}
+                                    </>
+                                )}
                             </Typography>
                         </Alert>
 
@@ -899,6 +1007,7 @@ const Wallet: React.FC = () => {
                             onChange={(e) => setWithdrawalAmount(e.target.value)}
                             sx={{ mb: 2 }}
                             inputProps={{ min: MIN_WITHDRAWAL_SC, max: currentBalance }}
+                            disabled={!canWithdrawThisMonth}
                         />
 
                         {withdrawalAmount && parseFloat(withdrawalAmount) >= MIN_WITHDRAWAL_SC && (
@@ -920,39 +1029,54 @@ const Wallet: React.FC = () => {
 
                         <Divider sx={{ my: 2 }} />
                         
-                        <Typography variant="h6" gutterBottom>Bank Details</Typography>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                            <Typography variant="h6">Bank Details</Typography>
+                            <Button 
+                                variant="outlined" 
+                                size="small"
+                                onClick={() => setShowBankDetailsDialog(true)}
+                                startIcon={<BankIcon />}
+                            >
+                                Add New
+                            </Button>
+                        </Box>
                         
-                        <TextField
-                            fullWidth
-                            label="Account Holder Name"
-                            value={bankDetails.accountName}
-                            onChange={(e) => setBankDetails(prev => ({ ...prev, accountName: e.target.value }))}
-                            sx={{ mb: 2 }}
-                        />
-                        
-                        <TextField
-                            fullWidth
-                            label="Account Number"
-                            value={bankDetails.accountNumber}
-                            onChange={(e) => setBankDetails(prev => ({ ...prev, accountNumber: e.target.value }))}
-                            sx={{ mb: 2 }}
-                        />
-                        
-                        <TextField
-                            fullWidth
-                            label="Sort Code"
-                            value={bankDetails.sortCode}
-                            onChange={(e) => setBankDetails(prev => ({ ...prev, sortCode: e.target.value }))}
-                            sx={{ mb: 2 }}
-                        />
-                        
-                        <TextField
-                            fullWidth
-                            label="Bank Name"
-                            value={bankDetails.bankName}
-                            onChange={(e) => setBankDetails(prev => ({ ...prev, bankName: e.target.value }))}
-                            sx={{ mb: 2 }}
-                        />
+                        {isLoadingBankDetails ? (
+                            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                                <CircularProgress size={24} />
+                            </Box>
+                        ) : savedBankDetails.length === 0 ? (
+                            <Alert severity="warning" sx={{ mb: 2 }}>
+                                <Typography variant="body2">
+                                    No saved bank details found. Please add your bank details to proceed with withdrawal.
+                                </Typography>
+                            </Alert>
+                        ) : (
+                            <FormControl fullWidth sx={{ mb: 2 }}>
+                                <InputLabel>Select Bank Account</InputLabel>
+                                <Select
+                                    value={selectedBankDetailsId}
+                                    onChange={(e) => setSelectedBankDetailsId(e.target.value)}
+                                    label="Select Bank Account"
+                                >
+                                    {savedBankDetails.map((details) => (
+                                        <MenuItem key={details.id} value={details.id}>
+                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                                                <Box>
+                                                    <Typography variant="body2" fontWeight="bold">
+                                                        {details.accountName}
+                                                    </Typography>
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        {details.bankName} • ****{details.accountNumber.slice(-4)}
+                                                        {details.isDefault && ' (Default)'}
+                                                    </Typography>
+                                                </Box>
+                                            </Box>
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        )}
 
                         <Alert severity="warning" sx={{ mt: 2 }}>
                             <Typography variant="body2">
@@ -969,23 +1093,154 @@ const Wallet: React.FC = () => {
                                 !withdrawalAmount || 
                                 parseFloat(withdrawalAmount) < MIN_WITHDRAWAL_SC || 
                                 parseFloat(withdrawalAmount) > currentBalance ||
-                                !bankDetails.accountName ||
-                                !bankDetails.accountNumber ||
-                                !bankDetails.sortCode ||
-                                !bankDetails.bankName ||
+                                !selectedBankDetailsId ||
+                                !canWithdrawThisMonth ||
                                 isProcessingWithdrawal
                             }
                             startIcon={isProcessingWithdrawal ? <CircularProgress size={20} /> : <BankIcon />}
                         >
                             {isProcessingWithdrawal ? 'Processing...' : 'Submit Withdrawal Request'}
-                                            </Button>
-                </DialogActions>
-            </Dialog>
+                        </Button>
+                    </DialogActions>
+                </Dialog>
 
+                {/* Bank Details Management Dialog */}
+                <Dialog open={showBankDetailsDialog} onClose={() => setShowBankDetailsDialog(false)} maxWidth="sm" fullWidth>
+                    <DialogTitle>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <BankIcon />
+                            <Typography variant="h6">Bank Details</Typography>
+                        </Box>
+                    </DialogTitle>
+                    <DialogContent>
+                        <Alert severity="info" sx={{ mb: 3 }}>
+                            <Typography variant="body2">
+                                Your bank details are encrypted and stored securely. We only use this information for processing withdrawals.
+                            </Typography>
+                        </Alert>
 
-        </Container>
-    </>
-);
+                        {/* Add New Bank Details Form */}
+                        <Box sx={{ mb: 3 }}>
+                            <Typography variant="subtitle1" gutterBottom>Add New Bank Account</Typography>
+                            
+                            <TextField
+                                fullWidth
+                                label="Account Holder Name"
+                                value={bankDetails.accountName}
+                                onChange={(e) => setBankDetails(prev => ({ ...prev, accountName: e.target.value }))}
+                                sx={{ mb: 2 }}
+                                placeholder="John Smith"
+                            />
+                            
+                            <TextField
+                                fullWidth
+                                label="Account Number"
+                                value={bankDetails.accountNumber}
+                                onChange={(e) => setBankDetails(prev => ({ ...prev, accountNumber: e.target.value.replace(/\D/g, '') }))}
+                                sx={{ mb: 2 }}
+                                placeholder="12345678"
+                                inputProps={{ maxLength: 8 }}
+                            />
+                            
+                            <TextField
+                                fullWidth
+                                label="Sort Code"
+                                value={bankDetails.sortCode}
+                                onChange={(e) => {
+                                    let value = e.target.value.replace(/\D/g, '');
+                                    if (value.length > 2 && value.length <= 4) {
+                                        value = value.slice(0, 2) + '-' + value.slice(2);
+                                    } else if (value.length > 4) {
+                                        value = value.slice(0, 2) + '-' + value.slice(2, 4) + '-' + value.slice(4, 6);
+                                    }
+                                    setBankDetails(prev => ({ ...prev, sortCode: value }));
+                                }}
+                                sx={{ mb: 2 }}
+                                placeholder="12-34-56"
+                                inputProps={{ maxLength: 8 }}
+                            />
+                            
+                            <TextField
+                                fullWidth
+                                label="Bank Name"
+                                value={bankDetails.bankName}
+                                onChange={(e) => setBankDetails(prev => ({ ...prev, bankName: e.target.value }))}
+                                sx={{ mb: 2 }}
+                                placeholder="Barclays Bank"
+                            />
+
+                            <Button
+                                variant="contained"
+                                onClick={saveBankDetails}
+                                disabled={isSavingBankDetails || !bankDetails.accountName || !bankDetails.accountNumber || !bankDetails.sortCode || !bankDetails.bankName}
+                                startIcon={isSavingBankDetails ? <CircularProgress size={20} /> : <BankIcon />}
+                                fullWidth
+                            >
+                                {isSavingBankDetails ? 'Saving...' : 'Save Bank Details'}
+                            </Button>
+                        </Box>
+
+                        {/* Saved Bank Details List */}
+                        {savedBankDetails.length > 0 && (
+                            <>
+                                <Divider sx={{ my: 2 }} />
+                                <Typography variant="subtitle1" gutterBottom>Saved Bank Accounts</Typography>
+                                
+                                {savedBankDetails.map((details) => (
+                                    <Paper key={details.id} elevation={1} sx={{ p: 2, mb: 2 }}>
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                            <Box sx={{ flex: 1 }}>
+                                                <Typography variant="body1" fontWeight="bold">
+                                                    {details.accountName}
+                                                    {details.isDefault && (
+                                                        <Chip label="Default" size="small" color="primary" sx={{ ml: 1 }} />
+                                                    )}
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    {details.bankName}
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    Account: ****{details.accountNumber.slice(-4)} • Sort: {details.sortCode}
+                                                </Typography>
+                                                {details.lastUsed && (
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        Last used: {details.lastUsed.toDate().toLocaleDateString()}
+                                                    </Typography>
+                                                )}
+                                            </Box>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                                {!details.isDefault && (
+                                                    <Button
+                                                        size="small"
+                                                        variant="outlined"
+                                                        onClick={() => setAsDefaultBankDetails(details.id)}
+                                                    >
+                                                        Set Default
+                                                    </Button>
+                                                )}
+                                                <Button
+                                                    size="small"
+                                                    variant="outlined"
+                                                    color="error"
+                                                    onClick={() => deleteBankDetails(details.id)}
+                                                >
+                                                    Delete
+                                                </Button>
+                                            </Box>
+                                        </Box>
+                                    </Paper>
+                                ))}
+                            </>
+                        )}
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={() => setShowBankDetailsDialog(false)}>Close</Button>
+                    </DialogActions>
+                </Dialog>
+
+            </Container>
+        </>
+    );
 };
 
 export default Wallet; 

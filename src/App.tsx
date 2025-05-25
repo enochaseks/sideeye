@@ -68,6 +68,8 @@ const Suggestions = lazy(() => import('./pages/Suggestions'));
 const Wallet = lazy(() => import('./pages/Wallet'));
 const PaymentSuccess = lazy(() => import('./pages/PaymentSuccess'));
 const PaymentCancelled = lazy(() => import('./pages/PaymentCancelled'));
+const GiftPurchasing = lazy(() => import('./pages/GiftPurchasing'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 
 
 // Loading fallback component
@@ -324,6 +326,8 @@ const AppContent: React.FC = () => {
               <Route path="/terms" element={<TermsOfService />} />
               <Route path="/cookies" element={<CookiePolicy />} />
               <Route path="/faq" element={<FAQPage />} />
+              <Route path="/gift-purchasing" element={<GiftPurchasing />} />
+              <Route path="/admin" element={<AdminDashboard />} />
               
               {/* Protected routes */}
               <Route path="/" element={

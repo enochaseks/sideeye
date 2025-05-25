@@ -66,11 +66,11 @@
   },
   "scripts": {
     "start": "cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts start",
-    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts build",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 REACT_APP_BACKEND_URL=https://sideeye-backend-production.up.railway.app react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
-    "deploy": "npm run build && firebase deploy --only hosting",
+    "deploy": "cross-env REACT_APP_BACKEND_URL=https://sideeye-backend-production.up.railway.app npm run build && firebase deploy --only hosting",
     "deploy:functions": "firebase deploy --only functions",
     "deploy:all": "npm run build && firebase deploy",
     "server": "ts-node server.ts",

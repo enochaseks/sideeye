@@ -257,7 +257,60 @@ const TermsOfService: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            19. Contact Information
+            19. Gift Purchasing and Payment Processing
+          </Typography>
+          <Typography variant="body1" paragraph>
+            SideEye offers a gift purchasing system where users can send paid gifts to hosts during live streams. By using this feature, you agree that:
+          </Typography>
+          <ul>
+            <li>All gift purchases require real money payment through secure payment processors including Stripe and other certified providers</li>
+            <li>We do not store, process, or have access to your payment card details on our servers</li>
+            <li>Payment processing is handled by certified, PCI-compliant third-party providers with bank-level encryption</li>
+            <li>Payment forms support secure browser autofill for saved payment methods without compromising security</li>
+            <li>Hosts receive SideCoins (platform currency) equivalent to 80% of the gift's value, which can be withdrawn as real money</li>
+            <li>We retain 10% of each transaction as a platform fee for service provision and payment processing</li>
+            <li>All transactions are final unless eligible for refund under our refund policy</li>
+            <li>You will receive an automated email receipt for each purchase via our email service provider</li>
+            <li>Refund requests must be submitted within 24 hours to support@sideeye.uk with valid transaction details</li>
+            <li>Gift values range from £0.50 to £2.00 per individual gift with no daily purchase limits</li>
+            <li>Payment confirmation is required before gift delivery and host earnings are credited</li>
+          </ul>
+          <Typography variant="body1" paragraph>
+            We reserve the right to suspend or terminate the gift purchasing feature for users who violate these terms, engage in fraudulent activity, 
+            or attempt to circumvent our payment systems. All payment disputes must be resolved through our customer support channels.
+          </Typography>
+        </Box>
+
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            20. SideCoins and Withdrawals
+          </Typography>
+          <Typography variant="body1" paragraph>
+            SideCoins are our platform currency that hosts earn from receiving paid gifts. By earning and withdrawing SideCoins, you agree that:
+          </Typography>
+          <ul>
+            <li>SideCoins can be withdrawn as real money once per calendar month with no exceptions for early withdrawals</li>
+            <li>A 10% platform fee applies to all withdrawals to cover processing costs and platform maintenance</li>
+            <li>Minimum withdrawal amount is 1000 SideCoins (£5) with no maximum limit per withdrawal</li>
+            <li>Withdrawals are processed within 5-7 business days after admin approval and verification</li>
+            <li>You must provide accurate UK bank account details including account name, 8-digit account number, 6-digit sort code, and bank name</li>
+            <li>You can save multiple bank accounts in your profile and set a default account for convenience</li>
+            <li>Bank account information is encrypted and stored securely with access limited to authorized personnel</li>
+            <li>We may request identity verification documents for large withdrawals to comply with financial regulations</li>
+            <li>All withdrawal requests require manual admin approval before processing</li>
+            <li>SideCoins have no cash value outside of our official withdrawal system</li>
+            <li>Conversion rate is fixed at 1 SideCoins = £0.005 (0.5 pence)</li>
+            <li>You are responsible for any tax obligations related to withdrawn earnings in your jurisdiction</li>
+          </ul>
+          <Typography variant="body1" paragraph>
+            We reserve the right to modify withdrawal terms, fees, processing times, or minimum amounts with 30 days notice to users. 
+            Withdrawal requests may be rejected if bank details are incorrect, if fraud is suspected, or if account verification is incomplete.
+          </Typography>
+        </Box>
+
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            21. Contact Information
           </Typography>
           <Typography variant="body1" paragraph>
             If you have any questions about these Terms, please contact us at:

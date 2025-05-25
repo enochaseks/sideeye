@@ -195,7 +195,58 @@ const PrivacyPolicy: React.FC = () => {
 
         <Box sx={{ mt: 4 }}>
           <Typography variant="h5" gutterBottom>
-            13. Contact Us
+            13. Payment Information and Gift Purchases
+          </Typography>
+          <Typography variant="body1" paragraph>
+            When you purchase gifts on our platform, we handle payment information as follows:
+          </Typography>
+          <ul>
+            <li><strong>Payment Card Data:</strong> We do not store, process, or have access to your credit card numbers, CVV codes, or other sensitive payment information on our servers</li>
+            <li><strong>Payment Processing:</strong> All payment processing is handled by certified, PCI-compliant third-party providers including Stripe and other secure payment processors</li>
+            <li><strong>Browser Autofill:</strong> Payment forms use standard HTML attributes to enable secure browser autofill for saved payment methods, but we never access this data</li>
+            <li><strong>Transaction Records:</strong> We store transaction IDs, purchase amounts, gift details, recipient information, and receipt data for customer support and legal compliance</li>
+            <li><strong>Email Receipts:</strong> We collect your email address to send automated purchase receipts and transaction confirmations via Mailgun</li>
+            <li><strong>Platform Fees:</strong> We record 10% platform fees from each transaction for accounting and business analytics</li>
+            <li><strong>Host Earnings:</strong> We track SideCoins earned by hosts (80% of gift value) for withdrawal processing</li>
+            <li><strong>Refund Processing:</strong> Transaction information is retained to process refunds and handle customer support requests within 24 hours of purchase</li>
+          </ul>
+          <Typography variant="body1" paragraph>
+            Your payment data is transmitted directly to our payment processors using bank-level encryption without passing through our servers. 
+            We only receive confirmation of successful payments and basic transaction details needed for gift delivery, host earnings calculation, and customer support.
+          </Typography>
+        </Box>
+
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            14. SideCoins and Withdrawal Information
+          </Typography>
+          <Typography variant="body1" paragraph>
+            For users who earn SideCoins through hosting and wish to withdraw earnings, we collect and process:
+          </Typography>
+          <ul>
+            <li><strong>Bank Account Details:</strong> Account holder name, 8-digit account number, 6-digit sort code, and bank name stored securely in encrypted format</li>
+            <li><strong>Withdrawal Requests:</strong> Amount in SideCoins, converted GBP amount, platform fees (10%), and processing status</li>
+            <li><strong>Monthly Limits:</strong> We track withdrawal frequency to enforce our once-per-month withdrawal policy</li>
+            <li><strong>Default Account Settings:</strong> Users can save multiple bank accounts and set a default for convenience</li>
+            <li><strong>Transaction History:</strong> Complete records of withdrawal requests, approval status, processing dates, and completion confirmations</li>
+            <li><strong>Identity Verification:</strong> We may request identity documents for large withdrawals to comply with financial regulations and anti-money laundering requirements</li>
+            <li><strong>Tax Information:</strong> We may be required to collect tax-related information for earnings above certain thresholds as required by law</li>
+            <li><strong>Admin Processing:</strong> Withdrawal requests are reviewed by authorized personnel before bank transfer processing</li>
+          </ul>
+          <Typography variant="body1" paragraph>
+            This information is used solely for processing withdrawals and complying with financial regulations. 
+            We use secure, encrypted storage for all financial information with access limited to authorized personnel only. 
+            Bank account numbers are encrypted in our database and only decrypted during the withdrawal processing workflow.
+          </Typography>
+          <Typography variant="body1" paragraph>
+            <strong>Withdrawal Process:</strong> Users can withdraw earnings once per month with a minimum of 1000 SideCoins (£5). 
+            A 10% platform fee applies to all withdrawals. Processing typically takes 5-7 business days after admin approval.
+          </Typography>
+        </Box>
+
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            15. Contact Us
           </Typography>
           <Typography variant="body1" paragraph>
             If you have any questions about this Privacy Policy, please contact us at:
