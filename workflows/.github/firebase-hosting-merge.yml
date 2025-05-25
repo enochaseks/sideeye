@@ -23,6 +23,7 @@ jobs:
         env:
           REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL }}
           REACT_APP_STREAM_API_KEY: ${{ secrets.REACT_APP_STREAM_API_KEY }}
+          REACT_APP_GOOGLE_PAY_MERCHANT_ID: ${{ secrets.REACT_APP_GOOGLE_PAY_MERCHANT_ID }}
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}

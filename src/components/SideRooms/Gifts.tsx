@@ -68,6 +68,9 @@ declare global {
         google?: {
             payments?: any;
         };
+        ApplePaySession?: {
+            canMakePayments(): boolean;
+        };
     }
 }
 
@@ -724,39 +727,42 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                 return;
             }
             
-            // Try to use browser payment methods, but gracefully fall back
+            // Use browser's built-in payment methods
             const supportedInstruments = [];
             
-            // Only add Apple Pay if we're on Safari/iOS
-            if (window.navigator.userAgent.includes('Safari') && !window.navigator.userAgent.includes('Chrome')) {
+            // Add Apple Pay for Safari/iOS
+            if (window.ApplePaySession && window.ApplePaySession.canMakePayments()) {
                 supportedInstruments.push({
                     supportedMethods: 'https://apple.com/apple-pay'
                 });
             }
             
-            // Only add Google Pay if we have proper merchant setup
-            if (process.env.REACT_APP_GOOGLE_PAY_MERCHANT_ID) {
+            // Add Google Pay for Chrome (with your merchant ID)
+            const googlePayMerchantId = process.env.REACT_APP_GOOGLE_PAY_MERCHANT_ID;
+            console.log('Google Pay Merchant ID from env:', googlePayMerchantId);
+            
+            if (googlePayMerchantId) {
                 supportedInstruments.push({
                     supportedMethods: 'https://google.com/pay',
                     data: {
-                        environment: process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'TEST',
+                        environment: 'TEST', // Change to 'PRODUCTION' when ready
                         apiVersion: 2,
                         apiVersionMinor: 0,
                         merchantInfo: {
                             merchantName: 'SideEye',
-                            merchantId: process.env.REACT_APP_GOOGLE_PAY_MERCHANT_ID
+                            merchantId: googlePayMerchantId
                         },
                         allowedPaymentMethods: [{
                             type: 'CARD',
                             parameters: {
                                 allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-                                allowedCardNetworks: ['VISA', 'MASTERCARD', 'AMEX', 'DISCOVER']
+                                allowedCardNetworks: ['VISA', 'MASTERCARD', 'AMEX']
                             },
                             tokenizationSpecification: {
                                 type: 'PAYMENT_GATEWAY',
                                 parameters: {
-                                    gateway: 'stripe',
-                                    gatewayMerchantId: process.env.REACT_APP_STRIPE_MERCHANT_ID || 'demo'
+                                    gateway: 'stripe', // You'll need to set up Stripe
+                                    gatewayMerchantId: 'your_stripe_merchant_id'
                                 }
                             }
                         }]
@@ -764,7 +770,10 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                 });
             }
             
-            // If no payment methods available, we'll fall back to confirmation dialog
+            // If no payment methods available, throw error
+            if (supportedInstruments.length === 0) {
+                throw new Error('No payment methods available. Please use Safari (for Apple Pay) or Chrome (for Google Pay).');
+            }
             
             // Payment details
             const details = {
@@ -793,68 +802,65 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                 ]
             };
             
-            // If no payment methods configured, fall back to confirmation
-            if (supportedInstruments.length === 0) {
-                console.log('No payment methods configured, using confirmation fallback');
-                await processGiftPayment('no_payment_methods_configured');
-                return;
-            }
-            
             // Create payment request (options removed for TypeScript compatibility)
             const request = new PaymentRequest(supportedInstruments, details);
             
             // Check if payment can be made
             const canMakePayment = await request.canMakePayment();
             if (!canMakePayment) {
-                console.log('No payment methods available, using confirmation fallback');
-                await processGiftPayment('no_payment_methods_available');
-                return;
+                throw new Error('No payment methods available in your browser. Please add a payment method or try a different browser.');
             }
             
-            // Show payment UI
+            // Show payment UI - this will show the browser's native payment interface
             const paymentResponse = await request.show();
             
             // Process the payment
             console.log('Payment response:', paymentResponse);
+            console.log('Payment method used:', paymentResponse.methodName);
+            console.log('Payment details:', paymentResponse.details);
             
-            // Process the gift directly in Firestore (since backend endpoint doesn't exist yet)
-            try {
-                // Complete the payment successfully first
-                await paymentResponse.complete('success');
-                
-                // Add gift to Firestore
-                const giftData = {
-                    giftId: selectedGift.id,
-                    giftName: selectedGift.name,
-                    giftType: selectedGift.type,
-                    value: giftCost,
-                    senderId: currentUser.uid,
-                    senderName: currentUser.displayName || 'Anonymous',
-                    receiverId: roomOwnerId,
-                    timestamp: serverTimestamp(),
-                    paymentMethod: paymentResponse.methodName
-                };
-                
-                // Add to room's gifts collection
-                await addDoc(collection(db, 'sideRooms', roomId, 'gifts'), giftData);
-                
-                // Update host's SideCoins balance
-                const hostRef = doc(db, 'users', roomOwnerId);
-                const hostEarnings = calculateHostEarnings(giftCost);
-                await updateDoc(hostRef, {
-                    sideCoins: increment(hostEarnings)
-                });
-                
-                setShowPaymentDialog(false);
-                toast.success(`Gift sent successfully! 🎁 Host earned ${formatSideCoins(hostEarnings)} SC`, {
-                    duration: 5000,
-                    position: 'top-right',
-                });
-                
-            } catch (firestoreError) {
-                await paymentResponse.complete('fail');
-                throw new Error('Failed to record gift payment');
-            }
+            // TODO: In production, you would send the payment details to your payment processor
+            // For now, we'll simulate successful payment processing
+            
+            // Simulate payment processing delay
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Complete the payment successfully
+            await paymentResponse.complete('success');
+            
+            // Only AFTER successful payment, add gift to Firestore
+            const giftData = {
+                giftId: selectedGift.id,
+                giftName: selectedGift.name,
+                giftType: selectedGift.type,
+                value: giftCost,
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || 'Anonymous',
+                receiverId: roomOwnerId,
+                timestamp: serverTimestamp(),
+                paymentMethod: paymentResponse.methodName,
+                paymentDetails: {
+                    // Don't store sensitive card details, just metadata
+                    methodName: paymentResponse.methodName,
+                    cardType: paymentResponse.details?.cardType || 'unknown'
+                }
+            };
+            
+            // Add to room's gifts collection
+            await addDoc(collection(db, 'sideRooms', roomId, 'gifts'), giftData);
+            
+            // Update host's SideCoins balance
+            const hostRef = doc(db, 'users', roomOwnerId);
+            const hostEarnings = calculateHostEarnings(giftCost);
+            await updateDoc(hostRef, {
+                sideCoins: increment(hostEarnings)
+            });
+            
+            setShowPaymentDialog(false);
+            toast.success(`Payment successful! 🎁 Gift sent and host earned ${formatSideCoins(hostEarnings)} SC`, {
+                duration: 5000,
+                position: 'top-right',
+            });
             
         } catch (error: any) {
             console.error('Error processing gift payment:', error);
@@ -863,13 +869,9 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
             if (error.name === 'AbortError') {
                 toast.error('Payment was cancelled by user');
             } else if (error.name === 'NotSupportedError') {
-                // Fallback to simple confirmation
-                console.log('Payment method not supported, falling back to confirmation');
-                await processGiftPayment('not_supported_fallback');
+                toast.error('Payment method not supported in your browser. Please try a different browser or device.');
             } else if (error.message?.includes('No payment methods available')) {
-                // Fallback to simple confirmation
-                console.log('No payment methods available, falling back to confirmation');
-                await processGiftPayment('no_methods_fallback');
+                toast.error('No payment methods available. Please add a payment method to your browser or try a different device.');
             } else if (error?.message === 'Payment was cancelled') {
                 toast.error('Payment was cancelled');
             } else {
@@ -889,8 +891,9 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
         // Show confirmation for fallback methods
         if (paymentMethod.includes('fallback')) {
             const confirmed = window.confirm(
-                `Send ${selectedGift.name} gift for £${giftCost.toFixed(2)}?\n\n` +
-                `This will be charged to your payment method.\n` +
+                `DEMO MODE: Send ${selectedGift.name} gift for £${giftCost.toFixed(2)}?\n\n` +
+                `⚠️ This is a demo - no real money will be charged.\n` +
+                `In production, this would charge your payment method.\n\n` +
                 `The host will receive ${formatSideCoins(calculateHostEarnings(giftCost))} SC.`
             );
             
@@ -1275,9 +1278,9 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                                     Secure payment via multiple methods available
                                         </Typography>
                             </Box>
-                                                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                             Your browser will show available payment methods (cards, Apple Pay, Google Pay)
-                        </Typography>
+                                        </Typography>
                         </Box>
                     )}
                 </DialogContent>
@@ -1370,7 +1373,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             </Paper>
 
                             {/* What Happens */}
-                            <Box sx={{ mb: 3 }}>
+                        <Box sx={{ mb: 3 }}>
                                 <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
                                     What happens when you pay:
                                 </Typography>
@@ -1388,7 +1391,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                                             fontWeight: 'bold'
                                         }}>
                                             1
-                                        </Box>
+                                    </Box>
                                         <Typography variant="body2">
                                             Your payment method will be charged £{getGiftCost(selectedGift.id).toFixed(2)}
                                         </Typography>
@@ -1408,12 +1411,12 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                                             2
                                         </Box>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                            <Typography variant="body2">
+                                        <Typography variant="body2">
                                                 Host receives {formatSideCoins(calculateHostEarnings(getGiftCost(selectedGift.id)))} SC
-                                            </Typography>
+                                        </Typography>
                                             <SCCoinIcon size="small" />
-                                        </Box>
                                     </Box>
+                                </Box>
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                         <Box sx={{ 
                                             width: 32, 
@@ -1430,7 +1433,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                                         </Box>
                                         <Typography variant="body2">
                                             Gift animation plays in the room
-                                        </Typography>
+                            </Typography>
                                     </Box>
                                 </Box>
                             </Box>
@@ -1438,8 +1441,8 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             {/* Payment Method Info */}
                             <Alert severity="info" sx={{ mb: 2 }}>
                                 <Typography variant="body2">
-                                    <strong>Browser Payment:</strong> Your browser will attempt to show available payment methods (Apple Pay, Google Pay, saved cards). If not available, you'll see a confirmation dialog.
-                                </Typography>
+                                    <strong>Payment Required:</strong> You'll be prompted to pay with Apple Pay (Safari) or Google Pay (Chrome). Real payment processing will be implemented in production.
+                                                </Typography>
                             </Alert>
 
                             {/* Host Earnings Info */}
@@ -1451,10 +1454,10 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             }}>
                                 <Typography variant="body2" color="success.main" fontWeight="bold">
                                     💰 Host can withdraw SideCoins as real money monthly!
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
                                     {formatSideCoins(calculateHostEarnings(getGiftCost(selectedGift.id)))} SC = £{(calculateHostEarnings(getGiftCost(selectedGift.id)) * SC_TO_MONEY_RATE).toFixed(2)} withdrawable
-                                </Typography>
+                                    </Typography>
                             </Box>
                         </Box>
                     )}
@@ -1471,7 +1474,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                     </Button>
                     <Button 
                         onClick={handleConfirmPayment}
-                        variant="contained"
+                        variant="contained" 
                         size="large"
                         disabled={isProcessingPayment}
                         startIcon={isProcessingPayment ? <CircularProgress size={20} /> : null}
