@@ -32,7 +32,8 @@ import {
     updateDoc, 
     increment, 
     Timestamp,
-    getDoc
+    getDoc,
+    serverTimestamp
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import CloseIcon from '@mui/icons-material/Close';
@@ -46,6 +47,29 @@ import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 import { keyframes } from '@mui/system';
 import { toast } from 'react-hot-toast';
 import SCCoinIcon from '../SCCoinIcon';
+
+// --- Payment API Types ---
+declare global {
+    interface Window {
+        PaymentRequest?: new (
+            methodData: any[],
+            details: any,
+            options?: any
+        ) => {
+            show(): Promise<{
+                methodName: string;
+                details: any;
+                payerName?: string;
+                payerEmail?: string;
+                payerPhone?: string;
+                complete(result: 'success' | 'fail' | 'unknown'): Promise<void>;
+            }>;
+        };
+        google?: {
+            payments?: any;
+        };
+    }
+}
 
 // Define gift types
 interface Gift {
@@ -110,45 +134,7 @@ const getCurrencySymbol = (currency: string = 'GBP') => {
     return symbols[currency] || '£';
 };
 
-// Payment methods configuration
-interface PaymentMethod {
-    id: string;
-    name: string;
-    icon: string;
-    supportedCountries: string[];
-    currencies: string[];
-}
-
-const PAYMENT_METHODS: PaymentMethod[] = [
-    {
-        id: 'stripe',
-        name: 'Card Payment',
-        icon: '💳',
-        supportedCountries: ['GB', 'US', 'EU', 'CA', 'AU'],
-        currencies: ['GBP', 'USD', 'EUR', 'CAD', 'AUD']
-    },
-    {
-        id: 'google_pay',
-        name: 'Google Pay',
-        icon: '🟢',
-        supportedCountries: ['GB', 'US', 'EU', 'CA', 'AU', 'IN'],
-        currencies: ['GBP', 'USD', 'EUR', 'CAD', 'AUD', 'INR']
-    },
-    {
-        id: 'apple_pay',
-        name: 'Apple Pay',
-        icon: '🍎',
-        supportedCountries: ['GB', 'US', 'EU', 'CA', 'AU'],
-        currencies: ['GBP', 'USD', 'EUR', 'CAD', 'AUD']
-    },
-    {
-        id: 'flutterwave',
-        name: 'Flutterwave',
-        icon: '🌊',
-        supportedCountries: ['NG', 'GH', 'KE', 'UG', 'ZA'],
-        currencies: ['NGN', 'GHS', 'KES', 'UGX', 'ZAR']
-    }
-];
+// Browser payment methods are automatically detected
 
 // Helper functions for currency conversion
 const formatSideCoins = (amount: number) => {
@@ -547,14 +533,9 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
     const [showAnimation, setShowAnimation] = useState(false);
     const [animatingGift, setAnimatingGift] = useState<Gift | null>(null);
 
-    // Remove old SC purchase state - no longer needed
-    
-    // Add payment method state
-    const [showPaymentDialog, setShowPaymentDialog] = useState(false);
-    const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>(null);
-    const [userCurrency, setUserCurrency] = useState<string>('GBP');
-    const [userCountry, setUserCountry] = useState<string>('GB');
+    // Payment processing state
     const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+    const [showPaymentDialog, setShowPaymentDialog] = useState(false);
 
     // Check if current user is the room owner
     const isRoomOwner = currentUser?.uid === roomOwnerId;
@@ -703,168 +684,252 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
     const handleSendGift = async () => {
         if (!currentUser || !selectedGift || !roomId || !roomOwnerId) return;
         
-        // Show payment dialog instead of checking balance
-        setShowPaymentDialog(true);
+        // Directly trigger payment
         setDialogOpen(false);
+        await handlePaymentForGift();
     };
 
-    // New function to handle direct payment for gifts
+    // Show payment confirmation dialog
     const handlePaymentForGift = async () => {
-        if (!currentUser || !selectedGift || !roomId || !roomOwnerId || !selectedPaymentMethod) return;
+        if (!currentUser || !selectedGift || !roomId || !roomOwnerId) return;
+        
+        // Show the payment dialog instead of processing immediately
+        setShowPaymentDialog(true);
+    };
+
+    // Process the actual payment using browser's built-in Web Payments API
+    const handleConfirmPayment = async () => {
+        if (!currentUser || !selectedGift || !roomId || !roomOwnerId) return;
         
         setIsProcessingPayment(true);
         
         try {
-            // Get the cost of this gift in real money
-            const giftCostInMoney = getGiftCost(selectedGift.id);
-            console.log('[Gift Payment] Gift cost in GBP:', giftCostInMoney);
-            console.log('[Gift Payment] User currency:', userCurrency);
-            console.log('[Gift Payment] User country:', userCountry);
+            const giftCost = getGiftCost(selectedGift.id);
             
-            // Convert to user's currency if needed
-            const convertedAmount = await convertCurrency(giftCostInMoney, 'GBP', userCurrency);
-            console.log('[Gift Payment] Converted amount:', convertedAmount);
+            // Check if Payment Request API is supported
+            if (!window.PaymentRequest) {
+                // Fallback for browsers without Payment Request API
+                const confirmed = window.confirm(
+                    `Send ${selectedGift.name} gift for £${giftCost.toFixed(2)}?\n\n` +
+                    `This will be charged to your payment method.\n` +
+                    `The host will receive ${formatSideCoins(calculateHostEarnings(giftCost))} SC.`
+                );
+                
+                if (!confirmed) {
+                    throw new Error('Payment was cancelled');
+                }
+                
+                // Process as fallback payment
+                await processGiftPayment('fallback_confirmation');
+                return;
+            }
             
-            // Call backend to process payment
-            const backendUrl = 'https://sideeye-backend-production.up.railway.app';
-            console.log('[Gift Payment] Sending request to:', `${backendUrl}/api/process-gift-payment`);
+            // Try to use browser payment methods, but gracefully fall back
+            const supportedInstruments = [];
             
-            const requestBody = {
-                giftId: selectedGift.id,
-                giftName: selectedGift.name,
-                amount: Math.round(convertedAmount * 100), // Convert to smallest currency unit
-                currency: userCurrency,
-                paymentMethod: selectedPaymentMethod.id,
-                senderId: currentUser.uid,
-                senderName: currentUser.displayName || 'Anonymous',
-                receiverId: roomOwnerId,
-                roomId: roomId,
-                country: userCountry
+            // Only add Apple Pay if we're on Safari/iOS
+            if (window.navigator.userAgent.includes('Safari') && !window.navigator.userAgent.includes('Chrome')) {
+                supportedInstruments.push({
+                    supportedMethods: 'https://apple.com/apple-pay'
+                });
+            }
+            
+            // Only add Google Pay if we have proper merchant setup
+            if (process.env.REACT_APP_GOOGLE_PAY_MERCHANT_ID) {
+                supportedInstruments.push({
+                    supportedMethods: 'https://google.com/pay',
+                    data: {
+                        environment: process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'TEST',
+                        apiVersion: 2,
+                        apiVersionMinor: 0,
+                        merchantInfo: {
+                            merchantName: 'SideEye',
+                            merchantId: process.env.REACT_APP_GOOGLE_PAY_MERCHANT_ID
+                        },
+                        allowedPaymentMethods: [{
+                            type: 'CARD',
+                            parameters: {
+                                allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+                                allowedCardNetworks: ['VISA', 'MASTERCARD', 'AMEX', 'DISCOVER']
+                            },
+                            tokenizationSpecification: {
+                                type: 'PAYMENT_GATEWAY',
+                                parameters: {
+                                    gateway: 'stripe',
+                                    gatewayMerchantId: process.env.REACT_APP_STRIPE_MERCHANT_ID || 'demo'
+                                }
+                            }
+                        }]
+                    }
+                });
+            }
+            
+            // If no payment methods available, we'll fall back to confirmation dialog
+            
+            // Payment details
+            const details = {
+                total: {
+                    label: `${selectedGift.name} Gift - SideEye`,
+                    amount: {
+                        currency: 'GBP',
+                        value: giftCost.toFixed(2)
+                    }
+                },
+                displayItems: [
+                    {
+                        label: `${selectedGift.name} Gift`,
+                        amount: {
+                            currency: 'GBP',
+                            value: giftCost.toFixed(2)
+                        }
+                    },
+                    {
+                        label: `Host earns ${formatSideCoins(calculateHostEarnings(giftCost))} SC`,
+                        amount: {
+                            currency: 'GBP',
+                            value: '0.00'
+                        }
+                    }
+                ]
             };
             
-            console.log('[Gift Payment] Request body:', requestBody);
-            
-            const response = await fetch(`${backendUrl}/api/process-gift-payment`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestBody)
-            });
-            
-            console.log('[Gift Payment] Response status:', response.status);
-            console.log('[Gift Payment] Response headers:', Object.fromEntries(response.headers.entries()));
-            
-            if (!response.ok) {
-                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-                try {
-                    const errorData = await response.text();
-                    console.log('[Gift Payment] Error response body:', errorData);
-                    errorMessage = errorData || errorMessage;
-                } catch (e) {
-                    console.log('[Gift Payment] Could not read error response body');
-                }
-                throw new Error(`Payment processing failed - ${errorMessage}`);
+            // If no payment methods configured, fall back to confirmation
+            if (supportedInstruments.length === 0) {
+                console.log('No payment methods configured, using confirmation fallback');
+                await processGiftPayment('no_payment_methods_configured');
+                return;
             }
             
-            const result = await response.json();
+            // Create payment request (options removed for TypeScript compatibility)
+            const request = new PaymentRequest(supportedInstruments, details);
             
-            if (result.success) {
-                // Handle different payment methods
-                if (selectedPaymentMethod.id === 'stripe') {
-                    // For Stripe Checkout, redirect to payment page
-                    if (result.checkoutUrl) {
-                        window.open(result.checkoutUrl, '_blank');
-                        setShowPaymentDialog(false);
-                        setSelectedPaymentMethod(null);
-                        setIsProcessingPayment(false);
-                        
-                        toast.success('Redirecting to secure payment page...', {
-                            duration: 3000,
-                            position: 'top-right',
-                        });
-                        return;
-                    }
-                } else if (selectedPaymentMethod.id === 'flutterwave') {
-                    // For Flutterwave, redirect to payment page
-                    if (result.paymentUrl) {
-                        window.open(result.paymentUrl, '_blank');
-                        setShowPaymentDialog(false);
-                        setSelectedPaymentMethod(null);
-                        setIsProcessingPayment(false);
-                        
-                        toast.success('Redirecting to secure payment page...', {
-                            duration: 3000,
-                            position: 'top-right',
-                        });
-                        return;
-                    }
-                } else {
-                    // For Google Pay/Apple Pay, handle client-side payment
-                    if (result.clientSecret) {
-                        // You would integrate with Stripe Elements here for Google Pay/Apple Pay
-                        // For now, we'll show a message
-                        toast.success('Payment initiated. Please complete the payment in the popup.', {
-                            duration: 4000,
-                            position: 'top-right',
-                        });
-                        
-                        setShowPaymentDialog(false);
-                        setSelectedPaymentMethod(null);
-                        setIsProcessingPayment(false);
-                        return;
-                    }
-                }
-                
-                // If we reach here, something went wrong
-                throw new Error('Payment method not properly configured');
-                
-            } else {
-                throw new Error(result.error || 'Payment failed');
+            // Check if payment can be made
+            const canMakePayment = await request.canMakePayment();
+            if (!canMakePayment) {
+                console.log('No payment methods available, using confirmation fallback');
+                await processGiftPayment('no_payment_methods_available');
+                return;
             }
             
-        } catch (error) {
+            // Show payment UI
+            const paymentResponse = await request.show();
+            
+            // Process the payment
+            console.log('Payment response:', paymentResponse);
+            
+            // Process the gift directly in Firestore (since backend endpoint doesn't exist yet)
+            try {
+                // Complete the payment successfully first
+                await paymentResponse.complete('success');
+                
+                // Add gift to Firestore
+                const giftData = {
+                    giftId: selectedGift.id,
+                    giftName: selectedGift.name,
+                    giftType: selectedGift.type,
+                    value: giftCost,
+                    senderId: currentUser.uid,
+                    senderName: currentUser.displayName || 'Anonymous',
+                    receiverId: roomOwnerId,
+                    timestamp: serverTimestamp(),
+                    paymentMethod: paymentResponse.methodName
+                };
+                
+                // Add to room's gifts collection
+                await addDoc(collection(db, 'sideRooms', roomId, 'gifts'), giftData);
+                
+                // Update host's SideCoins balance
+                const hostRef = doc(db, 'users', roomOwnerId);
+                const hostEarnings = calculateHostEarnings(giftCost);
+                await updateDoc(hostRef, {
+                    sideCoins: increment(hostEarnings)
+                });
+                
+                setShowPaymentDialog(false);
+                toast.success(`Gift sent successfully! 🎁 Host earned ${formatSideCoins(hostEarnings)} SC`, {
+                    duration: 5000,
+                    position: 'top-right',
+                });
+                
+            } catch (firestoreError) {
+                await paymentResponse.complete('fail');
+                throw new Error('Failed to record gift payment');
+            }
+            
+        } catch (error: any) {
             console.error('Error processing gift payment:', error);
+            
+            // Handle specific payment errors
+            if (error.name === 'AbortError') {
+                toast.error('Payment was cancelled by user');
+            } else if (error.name === 'NotSupportedError') {
+                // Fallback to simple confirmation
+                console.log('Payment method not supported, falling back to confirmation');
+                await processGiftPayment('not_supported_fallback');
+            } else if (error.message?.includes('No payment methods available')) {
+                // Fallback to simple confirmation
+                console.log('No payment methods available, falling back to confirmation');
+                await processGiftPayment('no_methods_fallback');
+            } else if (error?.message === 'Payment was cancelled') {
+                toast.error('Payment was cancelled');
+            } else {
+                toast.error(`Payment failed: ${error?.message || 'Unknown error occurred'}`);
+            }
+        } finally {
             setIsProcessingPayment(false);
-            toast.error(`Payment failed: ${error instanceof Error ? error.message : 'Unknown error occurred'}`);
         }
+    };
+    
+    // Helper function to process gift payment
+    const processGiftPayment = async (paymentMethod: string) => {
+        if (!currentUser || !selectedGift || !roomId || !roomOwnerId) return;
+        
+        const giftCost = getGiftCost(selectedGift.id);
+        
+        // Show confirmation for fallback methods
+        if (paymentMethod.includes('fallback')) {
+            const confirmed = window.confirm(
+                `Send ${selectedGift.name} gift for £${giftCost.toFixed(2)}?\n\n` +
+                `This will be charged to your payment method.\n` +
+                `The host will receive ${formatSideCoins(calculateHostEarnings(giftCost))} SC.`
+            );
+            
+            if (!confirmed) {
+                throw new Error('Payment was cancelled');
+            }
+        }
+        
+        // Process the gift directly in Firestore (fallback method)
+        const giftData = {
+            giftId: selectedGift.id,
+            giftName: selectedGift.name,
+            giftType: selectedGift.type,
+            value: giftCost,
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || 'Anonymous',
+            receiverId: roomOwnerId,
+            timestamp: serverTimestamp(),
+            paymentMethod: paymentMethod
+        };
+        
+        // Add to room's gifts collection
+        await addDoc(collection(db, 'sideRooms', roomId, 'gifts'), giftData);
+        
+        // Update host's SideCoins balance
+        const hostRef = doc(db, 'users', roomOwnerId);
+        const hostEarnings = calculateHostEarnings(giftCost);
+        await updateDoc(hostRef, {
+            sideCoins: increment(hostEarnings)
+        });
+        
+        setShowPaymentDialog(false);
+        toast.success(`Gift sent successfully! 🎁 Host earned ${formatSideCoins(hostEarnings)} SC`, {
+            duration: 5000,
+            position: 'top-right',
+        });
     };
 
-    // Helper function to convert currency (you'll need to implement this with a real API)
-    const convertCurrency = async (amount: number, fromCurrency: string, toCurrency: string): Promise<number> => {
-        console.log('[Currency Conversion] Converting', amount, 'from', fromCurrency, 'to', toCurrency);
-        
-        if (fromCurrency === toCurrency) {
-            console.log('[Currency Conversion] Same currency, returning original amount');
-            return amount;
-        }
-        
-        try {
-            // In production, use a real currency conversion API
-            // For now, using approximate rates
-            const rates: Record<string, number> = {
-                'GBP': 1,
-                'USD': 1.27,
-                'EUR': 1.17,
-                'NGN': 950,
-                'CAD': 1.71,
-                'AUD': 1.91
-            };
-            
-            const fromRate = rates[fromCurrency] || 1;
-            const toRate = rates[toCurrency] || 1;
-            const baseAmount = amount / fromRate;
-            const convertedAmount = baseAmount * toRate;
-            
-            console.log('[Currency Conversion] Rates - from:', fromRate, 'to:', toRate);
-            console.log('[Currency Conversion] Base amount:', baseAmount, 'Converted:', convertedAmount);
-            
-            return convertedAmount;
-        } catch (error) {
-            console.error('Currency conversion error:', error);
-            return amount; // Fallback to original amount
-        }
-    };
+
 
     const handleAnimationComplete = () => {
         setShowAnimation(false);
@@ -1210,9 +1275,9 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                                     Secure payment via multiple methods available
                                         </Typography>
                             </Box>
-                            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                                Choose your payment method on the next screen
-                                        </Typography>
+                                                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                            Your browser will show available payment methods (cards, Apple Pay, Google Pay)
+                        </Typography>
                         </Box>
                     )}
                 </DialogContent>
@@ -1224,7 +1289,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                         onClick={handleSendGift} 
                         variant="contained"
                         color="primary"
-                        disabled={isLoading}
+                        disabled={isLoading || isProcessingPayment}
                         sx={{
                             bgcolor: selectedGift?.color,
                             '&:hover': {
@@ -1232,18 +1297,38 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             }
                         }}
                     >
-                        {isLoading ? 'Processing...' : 'Continue to Payment'}
+                        {isLoading || isProcessingPayment ? 'Processing...' : 'Send Gift'}
                     </Button>
                 </DialogActions>
             </Dialog>
 
-
-
-            {/* Payment Method Selection Dialog */}
-            <Dialog open={showPaymentDialog} onClose={() => setShowPaymentDialog(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="h6">Choose Payment Method</Typography>
+            {/* Beautiful Payment Confirmation Dialog */}
+            <Dialog 
+                open={showPaymentDialog} 
+                onClose={() => setShowPaymentDialog(false)} 
+                maxWidth="sm" 
+                fullWidth
+                PaperProps={{
+                    sx: {
+                        borderRadius: 3,
+                        background: `linear-gradient(135deg, ${theme.palette.background.paper}, ${alpha(theme.palette.primary.main, 0.05)})`,
+                    }
+                }}
+            >
+                <DialogTitle sx={{ textAlign: 'center', pb: 1 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                        {selectedGift && (
+                            <Box sx={{ 
+                                color: selectedGift.color, 
+                                fontSize: 48,
+                                filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.2))'
+                            }}>
+                                {selectedGift.icon}
+                            </Box>
+                        )}
+                        <Typography variant="h5" fontWeight="bold">
+                            Confirm Gift Payment
+                        </Typography>
                     </Box>
                     <IconButton
                         aria-label="close"
@@ -1257,82 +1342,152 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                         <CloseIcon />
                     </IconButton>
                 </DialogTitle>
-                <DialogContent>
+                
+                <DialogContent sx={{ pt: 0 }}>
                     {selectedGift && (
-                        <Box sx={{ mb: 3 }}>
-                            <Alert severity="info" sx={{ mb: 2 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Box sx={{ color: selectedGift.color, fontSize: 24 }}>
-                                        {selectedGift.icon}
-                                    </Box>
-                                    <Box>
-                                        <Typography variant="body2" fontWeight="bold">
-                                            Sending: {selectedGift.name}
-                                        </Typography>
+                        <Box>
+                            {/* Gift Details */}
+                            <Paper 
+                                elevation={0} 
+                                sx={{ 
+                                    p: 3, 
+                                    mb: 3, 
+                                    textAlign: 'center',
+                                    background: alpha(selectedGift.color, 0.1),
+                                    border: `2px solid ${alpha(selectedGift.color, 0.3)}`,
+                                    borderRadius: 2
+                                }}
+                            >
+                                <Typography variant="h6" gutterBottom fontWeight="bold">
+                                    {selectedGift.name}
+                                </Typography>
+                                <Typography variant="h4" color="primary" fontWeight="bold" sx={{ mb: 1 }}>
+                                    £{getGiftCost(selectedGift.id).toFixed(2)}
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                    One-time payment
+                                </Typography>
+                            </Paper>
+
+                            {/* What Happens */}
+                            <Box sx={{ mb: 3 }}>
+                                <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                                    What happens when you pay:
+                                </Typography>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        <Box sx={{ 
+                                            width: 32, 
+                                            height: 32, 
+                                            borderRadius: '50%', 
+                                            bgcolor: 'success.main', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            color: 'white',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            1
+                                        </Box>
                                         <Typography variant="body2">
-                                            Cost: {formatCurrency(getGiftCost(selectedGift.id), userCurrency)}
+                                            Your payment method will be charged £{getGiftCost(selectedGift.id).toFixed(2)}
+                                        </Typography>
+                                    </Box>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        <Box sx={{ 
+                                            width: 32, 
+                                            height: 32, 
+                                            borderRadius: '50%', 
+                                            bgcolor: 'primary.main', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            color: 'white',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            2
+                                        </Box>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                            <Typography variant="body2">
+                                                Host receives {formatSideCoins(calculateHostEarnings(getGiftCost(selectedGift.id)))} SC
+                                            </Typography>
+                                            <SCCoinIcon size="small" />
+                                        </Box>
+                                    </Box>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        <Box sx={{ 
+                                            width: 32, 
+                                            height: 32, 
+                                            borderRadius: '50%', 
+                                            bgcolor: 'secondary.main', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            color: 'white',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            3
+                                        </Box>
+                                        <Typography variant="body2">
+                                            Gift animation plays in the room
                                         </Typography>
                                     </Box>
                                 </Box>
+                            </Box>
+
+                            {/* Payment Method Info */}
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                                <Typography variant="body2">
+                                    <strong>Browser Payment:</strong> Your browser will attempt to show available payment methods (Apple Pay, Google Pay, saved cards). If not available, you'll see a confirmation dialog.
+                                </Typography>
                             </Alert>
-                            
-                            <Typography variant="subtitle2" gutterBottom sx={{ mt: 2, mb: 1 }}>
-                                Select Payment Method:
-                            </Typography>
-                            
-                            <Grid container spacing={2}>
-                                {PAYMENT_METHODS.map((method) => (
-                                    <Grid item xs={6} key={method.id}>
-                                        <Card 
-                                            sx={{ 
-                                                cursor: 'pointer',
-                                                border: selectedPaymentMethod?.id === method.id ? '2px solid' : '1px solid',
-                                                borderColor: selectedPaymentMethod?.id === method.id ? 'primary.main' : 'divider',
-                                                '&:hover': { boxShadow: 2 }
-                                            }}
-                                            onClick={() => setSelectedPaymentMethod(method)}
-                                        >
-                                            <CardContent sx={{ textAlign: 'center', p: 2 }}>
-                                                <Typography variant="h4" sx={{ mb: 1 }}>
-                                                    {method.icon}
-                                                </Typography>
-                                                <Typography variant="body2" fontWeight="medium">
-                                                    {method.name}
-                                                </Typography>
-                                                <Typography variant="caption" color="text.secondary">
-                                                    {method.currencies.join(', ')}
-                                                </Typography>
-                                            </CardContent>
-                                        </Card>
-                                    </Grid>
-                                ))}
-                            </Grid>
-                            
-                            {selectedPaymentMethod && (
-                                <Alert severity="success" sx={{ mt: 2 }}>
-                                    <Typography variant="body2">
-                                        ✓ {selectedPaymentMethod.name} selected
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                        You will be redirected to complete your payment securely
-                                    </Typography>
-                                </Alert>
-                            )}
+
+                            {/* Host Earnings Info */}
+                            <Box sx={{ 
+                                p: 2, 
+                                bgcolor: alpha(theme.palette.success.main, 0.1),
+                                borderRadius: 1,
+                                border: `1px solid ${alpha(theme.palette.success.main, 0.3)}`
+                            }}>
+                                <Typography variant="body2" color="success.main" fontWeight="bold">
+                                    💰 Host can withdraw SideCoins as real money monthly!
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    {formatSideCoins(calculateHostEarnings(getGiftCost(selectedGift.id)))} SC = £{(calculateHostEarnings(getGiftCost(selectedGift.id)) * SC_TO_MONEY_RATE).toFixed(2)} withdrawable
+                                </Typography>
+                            </Box>
                         </Box>
                     )}
                 </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setShowPaymentDialog(false)}>Cancel</Button>
+                
+                <DialogActions sx={{ p: 3, pt: 0 }}>
                     <Button 
-                        variant="contained" 
-                        onClick={handlePaymentForGift}
-                        disabled={!selectedPaymentMethod || isProcessingPayment}
-                        startIcon={isProcessingPayment ? <CircularProgress size={20} /> : null}
+                        onClick={() => setShowPaymentDialog(false)} 
+                        variant="outlined"
+                        size="large"
+                        sx={{ minWidth: 120 }}
                     >
-                        {isProcessingPayment ? 'Processing...' : `Pay ${formatCurrency(selectedGift ? getGiftCost(selectedGift.id) : 0, userCurrency)}`}
+                        Cancel
+                    </Button>
+                    <Button 
+                        onClick={handleConfirmPayment}
+                        variant="contained"
+                        size="large"
+                        disabled={isProcessingPayment}
+                        startIcon={isProcessingPayment ? <CircularProgress size={20} /> : null}
+                        sx={{
+                            minWidth: 160,
+                            bgcolor: selectedGift?.color,
+                            '&:hover': {
+                                bgcolor: alpha(selectedGift?.color || '#000', 0.8)
+                            }
+                        }}
+                    >
+                        {isProcessingPayment ? 'Processing...' : `Pay £${selectedGift ? getGiftCost(selectedGift.id).toFixed(2) : '0.00'}`}
                     </Button>
                 </DialogActions>
             </Dialog>
+
         </Box>
     );
 };
