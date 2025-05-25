@@ -278,6 +278,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: Timestamp.fromDate(new Date()),
           lastLogin: Timestamp.fromDate(new Date()),
           dateOfBirth: Timestamp.fromDate(new Date(2000, 0, 1)), // Default date
+          sideCoins: 100, // Initial SideCoins balance for new users
           settings: {
             theme: 'light',
             notifications: true,
@@ -412,6 +413,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: Timestamp.fromDate(new Date()),
           lastLogin: Timestamp.fromDate(new Date()),
           dateOfBirth: dateOfBirth,
+          sideCoins: 100, // Initial SideCoins balance for new users
           settings: {
             theme: 'light',
             notifications: true,

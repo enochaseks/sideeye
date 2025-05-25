@@ -28,7 +28,9 @@ import {
   ListItemIcon,
   ListItemText,
   List,
-  ListItem
+  ListItem,
+  Tabs,
+  Tab
 } from '@mui/material';
 import { 
   Edit as EditIcon,
@@ -42,7 +44,9 @@ import {
   MoreVert as MoreVertIcon,
   Block as BlockIcon,
   Report as ReportIcon,
-  VerifiedUser as VerifiedUserIcon
+  VerifiedUser as VerifiedUserIcon,
+  Home as HomeIcon,
+  CardGiftcard as CardGiftcardIcon
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, writeBatch, Timestamp } from 'firebase/firestore';
@@ -53,6 +57,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useFirestore } from '../context/FirestoreContext';
 import { toast } from 'react-hot-toast';
 import { Firestore } from 'firebase/firestore';
+import GiftsSent from '../components/GiftsSent';
 
 interface ProfileProps {
   userId?: string;
@@ -114,6 +119,9 @@ const Profile: React.FC = () => {
   const [usernameOptions, setUsernameOptions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const originalUsername = useRef<string>('');
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'sideRooms' | 'giftsSent'>('sideRooms');
 
   const userId = targetUserId || currentUser?.uid || '';
 
@@ -1193,214 +1201,235 @@ const Profile: React.FC = () => {
           )} 
         </Paper>
         
-        {/* Tabs for content - keep only the profile icon */}
-        {(!isPrivate || canViewFullProfile || currentUser?.uid === targetUserId) && (
-          <Box sx={{ 
-            display: 'flex',
-            borderTop: 1,
-            borderColor: 'divider',
-            justifyContent: 'center', 
-            pt: 1,
-            mb: 2
-          }}>
-            <IconButton component={Link} to={`/profile/${userId}`}>
-              <Box sx={{ 
-                width: 24, 
-                height: 24, 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center'
-              }}>
-                <svg height="12" viewBox="0 0 24 24" width="12">
-                  <path d="M12 1a11 11 0 1 0 11 11A11.013 11.013 0 0 0 12 1zm0 20a9 9 0 1 1 9-9 9.01 9.01 0 0 1-9 9zm3-11a3 3 0 1 1-3-3 3 3 0 0 1 3 3zm-3 5a8.949 8.949 0 0 0-4.951 1.488A3.987 3.987 0 0 1 6 13.1a6 6 0 1 1 12 0 3.987 3.987 0 0 1-1.049 2.688A8.954 8.954 0 0 0 12 15z" fill="currentColor"></path>
-                </svg>
-              </Box>
-            </IconButton>
-          </Box>
-        )}
         
-        {/* Original Side Rooms Display */}
-        {(!isPrivate || canViewFullProfile || currentUser?.uid === userId) && (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {createdRooms.length > 0 && (
-              <Box>
-                <Typography variant="h6" sx={{ mb: 2 }}>
-                  Created Rooms
-                </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-                  {createdRooms.map((room) => (
-                    <Card 
-                      key={room.id}
-                      sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        height: '100%',
-                        '&:hover': {
-                          boxShadow: 6,
-                          transform: 'translateY(-2px)',
-                          transition: 'all 0.2s ease-in-out'
-                        }
-                      }}
-                    >
-                      {room.thumbnailUrl && (
-                        <CardMedia
-                          component="img"
-                          height="140"
-                          image={room.thumbnailUrl}
-                          alt={room.name}
-                          sx={{ objectFit: 'cover' }}
-                        />
-                      )}
-                      <CardContent sx={{ flexGrow: 1 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                          <Typography variant="h6" component="div">
-                            {room.name}
-                          </Typography>
-                          <Chip size="small" label="Owner" color="primary" />
-                        </Box>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          {room.description}
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip
-                            size="small"
-                            label={`${room.memberCount || 0} members`}
-                            icon={<Group />}
-                          />
-                          {room.category && (
-                            <Chip
-                              size="small"
-                              label={room.category}
-                              variant="outlined"
-                            />
-                          )}
-                          {room.isPrivate && (
-                            <Chip
-                              size="small"
-                              icon={<Lock />}
-                              label="Private"
-                              variant="outlined"
-                            />
-                          )}
-                        </Box>
-                      </CardContent>
-                      <CardActions>
-                        <Button
-                          size="small"
-                          component={Link}
-                          to={`/side-room/${room.id}`}
-                          variant="contained"
-                          fullWidth
-                        >
-                          Enter Room
-                        </Button>
-                      </CardActions>
-                    </Card>
-                  ))}
-                </Box>
-              </Box>
-            )}
+        {/* Tabbed Content Interface */}
+        {(!isPrivate || canViewFullProfile || currentUser?.uid === targetUserId) && (
+          <Paper elevation={0} sx={{ borderRadius: 2, backgroundColor: 'background.paper' }}>
+            {/* Tab Navigation */}
+            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+              <Tabs 
+                value={activeTab} 
+                onChange={(_, newValue) => setActiveTab(newValue)}
+                variant="fullWidth"
+                sx={{
+                  '& .MuiTab-root': {
+                    textTransform: 'none',
+                    fontWeight: 500,
+                  }
+                }}
+              >
+                <Tab 
+                  label="Side Rooms" 
+                  value="sideRooms" 
+                  icon={<HomeIcon />}
+                  iconPosition="start"
+                />
+                <Tab 
+                  label="Gifts Sent" 
+                  value="giftsSent" 
+                  icon={<CardGiftcardIcon />}
+                  iconPosition="start"
+                />
+              </Tabs>
+            </Box>
 
-            {joinedRooms.length > 0 && (
-              <Box>
-                <Typography variant="h6" sx={{ mb: 2 }}>
-                  Joined Rooms
-                </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-                  {joinedRooms.map((room) => (
-                    <Card 
-                      key={room.id}
-                      sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        height: '100%',
-                        '&:hover': {
-                          boxShadow: 6,
-                          transform: 'translateY(-2px)',
-                          transition: 'all 0.2s ease-in-out'
-                        }
-                      }}
-                    >
-                      {room.thumbnailUrl && (
-                        <CardMedia
-                          component="img"
-                          height="140"
-                          image={room.thumbnailUrl}
-                          alt={room.name}
-                          sx={{ objectFit: 'cover' }}
-                        />
-                      )}
-                      <CardContent sx={{ flexGrow: 1 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                          <Typography variant="h6" component="div">
-                            {room.name}
-                          </Typography>
-                          <Chip size="small" label="Member" />
-                        </Box>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          {room.description}
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip
-                            size="small"
-                            label={`${room.memberCount || 0} members`}
-                            icon={<Group />}
-                          />
-                          {room.category && (
-                            <Chip
-                              size="small"
-                              label={room.category}
-                              variant="outlined"
-                            />
-                          )}
-                          {room.isPrivate && (
-                            <Chip
-                              size="small"
-                              icon={<Lock />}
-                              label="Private"
-                              variant="outlined"
-                            />
-                          )}
-                        </Box>
-                      </CardContent>
-                      <CardActions>
-                        <Button
-                          size="small"
-                          component={Link}
-                          to={`/side-room/${room.id}`}
-                          variant="contained"
-                          fullWidth
-                        >
-                          Enter Room
-                        </Button>
-                      </CardActions>
-                    </Card>
-                  ))}
-                </Box>
-              </Box>
-            )}
+            {/* Tab Content */}
+            <Box sx={{ p: 3 }}>
+              {/* Side Rooms Tab */}
+              {activeTab === 'sideRooms' && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {createdRooms.length > 0 && (
+                    <Box>
+                      <Typography variant="h6" sx={{ mb: 2 }}>
+                        Created Rooms
+                      </Typography>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                        {createdRooms.map((room) => (
+                          <Card 
+                            key={room.id}
+                            sx={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              height: '100%',
+                              '&:hover': {
+                                boxShadow: 6,
+                                transform: 'translateY(-2px)',
+                                transition: 'all 0.2s ease-in-out'
+                              }
+                            }}
+                          >
+                            {room.thumbnailUrl && (
+                              <CardMedia
+                                component="img"
+                                height="140"
+                                image={room.thumbnailUrl}
+                                alt={room.name}
+                                sx={{ objectFit: 'cover' }}
+                              />
+                            )}
+                            <CardContent sx={{ flexGrow: 1 }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                                <Typography variant="h6" component="div">
+                                  {room.name}
+                                </Typography>
+                                <Chip size="small" label="Owner" color="primary" />
+                              </Box>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                {room.description}
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                <Chip
+                                  size="small"
+                                  label={`${room.memberCount || 0} members`}
+                                  icon={<Group />}
+                                />
+                                {room.category && (
+                                  <Chip
+                                    size="small"
+                                    label={room.category}
+                                    variant="outlined"
+                                  />
+                                )}
+                                {room.isPrivate && (
+                                  <Chip
+                                    size="small"
+                                    icon={<Lock />}
+                                    label="Private"
+                                    variant="outlined"
+                                  />
+                                )}
+                              </Box>
+                            </CardContent>
+                            <CardActions>
+                              <Button
+                                size="small"
+                                component={Link}
+                                to={`/side-room/${room.id}`}
+                                variant="contained"
+                                fullWidth
+                              >
+                                Enter Room
+                              </Button>
+                            </CardActions>
+                          </Card>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
 
-            {createdRooms.length === 0 && joinedRooms.length === 0 && (
-              <Box sx={{ textAlign: 'center', py: 4 }}>
-                <Typography variant="body1" color="text.secondary">
-                  {currentUser?.uid === targetUserId 
-                    ? "You have not created any side rooms yet."
-                    : `${name || username || 'This person'} does not have an active room.`}
-                </Typography>
-                {currentUser?.uid === targetUserId && (
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    component={Link}
-                    to="/side-rooms"
-                    sx={{ marginTop: 2 }}
-                  >
-                    Create Side Rooms
-                  </Button>
-                )}
-              </Box>
-            )}
-          </Box>
+                  {joinedRooms.length > 0 && (
+                    <Box>
+                      <Typography variant="h6" sx={{ mb: 2 }}>
+                        Joined Rooms
+                      </Typography>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                        {joinedRooms.map((room) => (
+                          <Card 
+                            key={room.id}
+                            sx={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              height: '100%',
+                              '&:hover': {
+                                boxShadow: 6,
+                                transform: 'translateY(-2px)',
+                                transition: 'all 0.2s ease-in-out'
+                              }
+                            }}
+                          >
+                            {room.thumbnailUrl && (
+                              <CardMedia
+                                component="img"
+                                height="140"
+                                image={room.thumbnailUrl}
+                                alt={room.name}
+                                sx={{ objectFit: 'cover' }}
+                              />
+                            )}
+                            <CardContent sx={{ flexGrow: 1 }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                                <Typography variant="h6" component="div">
+                                  {room.name}
+                                </Typography>
+                                <Chip size="small" label="Member" />
+                              </Box>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                {room.description}
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                <Chip
+                                  size="small"
+                                  label={`${room.memberCount || 0} members`}
+                                  icon={<Group />}
+                                />
+                                {room.category && (
+                                  <Chip
+                                    size="small"
+                                    label={room.category}
+                                    variant="outlined"
+                                  />
+                                )}
+                                {room.isPrivate && (
+                                  <Chip
+                                    size="small"
+                                    icon={<Lock />}
+                                    label="Private"
+                                    variant="outlined"
+                                  />
+                                )}
+                              </Box>
+                            </CardContent>
+                            <CardActions>
+                              <Button
+                                size="small"
+                                component={Link}
+                                to={`/side-room/${room.id}`}
+                                variant="contained"
+                                fullWidth
+                              >
+                                Enter Room
+                              </Button>
+                            </CardActions>
+                          </Card>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+
+                  {createdRooms.length === 0 && joinedRooms.length === 0 && (
+                    <Box sx={{ textAlign: 'center', py: 4 }}>
+                      <Typography variant="body1" color="text.secondary">
+                        {currentUser?.uid === targetUserId 
+                          ? "You have not created any side rooms yet."
+                          : `${name || username || 'This person'} does not have an active room.`}
+                      </Typography>
+                      {currentUser?.uid === targetUserId && (
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          component={Link}
+                          to="/side-rooms"
+                          sx={{ marginTop: 2 }}
+                        >
+                          Create Side Rooms
+                        </Button>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+              )}
+
+              {/* Gifts Sent Tab */}
+              {activeTab === 'giftsSent' && (
+                <Box>
+                  <GiftsSent 
+                    userId={userId} 
+                    isOwnProfile={currentUser?.uid === targetUserId} 
+                  />
+                </Box>
+              )}
+            </Box>
+          </Paper>
         )}
       </Box>
 

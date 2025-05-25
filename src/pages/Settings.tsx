@@ -49,6 +49,10 @@ import {
   Chat as ChatIcon,
   SmartToy as SmartToyIcon,
   Block as BlockIcon,
+  AccountBalanceWallet as WalletIcon,
+  CardGiftcard as GiftIcon,
+  TrendingUp as TrendingUpIcon,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -58,6 +62,7 @@ import { doc, updateDoc, arrayRemove, getDoc, setDoc, deleteDoc, collection, get
 import { toast } from 'react-hot-toast';
 import type { UserProfile } from '../types';
 import bcrypt from 'bcryptjs';
+import SCCoinIcon from '../components/SCCoinIcon';
 
 interface FollowRequest {
   id: string;
@@ -319,6 +324,30 @@ const Settings: React.FC = () => {
   const [loadingRequestId, setLoadingRequestId] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  // Handle hash navigation for SideCoins guide
+  useEffect(() => {
+    const handleHashNavigation = () => {
+      if (window.location.hash === '#sidecoins-guide') {
+        setTimeout(() => {
+          const element = document.querySelector('[data-section="sidecoins-guide"]');
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100); // Small delay to ensure page is rendered
+      }
+    };
+
+    // Check on component mount
+    handleHashNavigation();
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashNavigation);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashNavigation);
+    };
+  }, []);
+
   const handlePrivacyToggle = async () => {
     if (!currentUser?.uid) return;
     const newPrivacyState = !isPrivate;
@@ -545,10 +574,23 @@ const Settings: React.FC = () => {
 
   const settingsItems = [
     {
-      title: 'Audio Settings',
+      title: 'Theme & Audio Settings',
       icon: <DevicesIcon />,
-      description: 'Manage your audio devices and microphone settings',
+      description: 'Manage your theme and audio devices and microphone settings',
       onClick: () => setShowDeviceDialog(true),
+      isSetting: true
+    },
+    {
+      title: 'SideCoins & Earnings Guide',
+      icon: <WalletIcon />,
+      description: 'Learn how to earn SideCoins and where to find your earnings',
+      onClick: () => {
+        // Scroll to the SideCoins guide section
+        const element = document.querySelector('[data-section="sidecoins-guide"]');
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth' });
+        }
+      },
       isSetting: true
     },
     {
@@ -967,6 +1009,182 @@ const Settings: React.FC = () => {
                 onChange={() => handleEmailNotificationToggle('followNotifications')}
                 color="primary"
               />
+            </Box>
+          </Box>
+        </Paper>
+      </Box>
+
+      <Box sx={{ mb: 4 }} data-section="sidecoins-guide">
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>SideCoins & Earnings Guide</Typography>
+        <Paper elevation={0} sx={{ p: 3, borderRadius: 2, border: `1px solid ${theme.palette.divider}` }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {/* Header with SideCoin icon */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+              <SCCoinIcon size="large" />
+              <Box>
+                <Typography variant="h6" gutterBottom>
+                  Understanding SideCoins
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Learn how to earn and track your SideCoins through gifting and live streaming
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* SideCoins Value Section */}
+            <Box>
+              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
+                💰 SideCoins Currency System
+              </Typography>
+              <Box sx={{ pl: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography variant="body2">
+                  <strong>Two-Tier Currency:</strong> SideCoins work like real money with main units and fractional units
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ pl: 2 }}>
+                  • <strong>SideCoins (SC)</strong> = Main currency (like £1, $1)<br/>
+                  • <strong>LittleCoins (LC)</strong> = Fractional currency (like pence, cents)<br/>
+                  • <strong>1 SideCoin = 100 LittleCoins</strong>
+                </Typography>
+                <Typography variant="body2" sx={{ pl: 2, mt: 1 }}>
+                  <strong>Examples:</strong>
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ pl: 4 }}>
+                  • 11 gifts received = 0.88 SC = 88 LC<br/>
+                  • Each gift = 0.08 SC = 8 LC<br/>
+                  • 1,000 gifts = 80 SC = 8,000 LC
+                </Typography>
+                <Typography variant="caption" color="primary.main" sx={{ pl: 2, fontWeight: 500 }}>
+                  💡 Think of it like pounds and pence - your earnings have real fractional value!
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* How to Earn Section */}
+            <Box>
+              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <TrendingUpIcon color="primary" />
+                How to Earn SideCoins
+              </Typography>
+              <Box sx={{ pl: 4, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <GiftIcon color="secondary" fontSize="small" />
+                  <Typography variant="body2">
+                    <strong>Receive Gifts:</strong> Earn 0.08 SideCoins for each gift you receive during live streams
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <VisibilityIcon color="primary" fontSize="small" />
+                  <Typography variant="body2">
+                    <strong>Host Live Rooms:</strong> Create engaging content to attract viewers who send gifts
+                  </Typography>
+                </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 3 }}>
+                  💡 Tip: 1,000 gifts received = 80 SC (8,000 LC) earned!
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* Where to Find Earnings Section */}
+            <Box>
+              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <WalletIcon color="primary" />
+                Where to Find Your Earnings
+              </Typography>
+              <Box sx={{ pl: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    📊 Your Wallet (Main Menu)
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ pl: 2 }}>
+                    • View your current SideCoins balance<br/>
+                    • See total coins earned and spent<br/>
+                    • Track your gift activity statistics
+                  </Typography>
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    component={Link} 
+                    to="/wallet"
+                    startIcon={<WalletIcon />}
+                    sx={{ alignSelf: 'flex-start', mt: 1 }}
+                  >
+                    Open Wallet
+                  </Button>
+                </Box>
+
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    🎁 Your Profile → Gifts Sent Tab
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ pl: 2 }}>
+                    • View detailed history of all gifts you've sent<br/>
+                    • See how much you've spent on premium gifts<br/>
+                    • Track gifts sent across all rooms
+                  </Typography>
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    component={Link} 
+                    to="/profile"
+                    startIcon={<GiftIcon />}
+                    sx={{ alignSelf: 'flex-start', mt: 1 }}
+                  >
+                    View Profile
+                  </Button>
+                </Box>
+              </Box>
+            </Box>
+
+            {/* Gift Types Section */}
+            <Box>
+              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
+                Gift Types & Costs
+              </Typography>
+              <Box sx={{ pl: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography variant="body2">
+                  <strong>Free Gifts:</strong> Hearts, Side Eyes, Confetti, Crowns - Cost 0 SideCoins to send
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Premium Gifts:</strong> Coming soon - Require minimum 100.00 SC to unlock
+                </Typography>
+                <Typography variant="body2" color="primary.main" sx={{ pl: 2, fontWeight: 500 }}>
+                  💎 <strong>Premium Threshold:</strong> Need 100.00 SC (10,000 LC) to send premium gifts
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
+                  • Earn 100.00 SC by receiving ~1,250 gifts as a host<br/>
+                  • Premium access shows you're an established creator<br/>
+                  • Makes premium gifts truly special and valuable
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Note: You earn SideCoins from receiving any type of gift, regardless of whether it was free or premium
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* Quick Access Buttons */}
+            <Box sx={{ 
+              display: 'flex', 
+              gap: 2, 
+              flexWrap: 'wrap',
+              pt: 2,
+              borderTop: `1px solid ${theme.palette.divider}`
+            }}>
+              <Button 
+                variant="contained" 
+                component={Link} 
+                to="/discover"
+                startIcon={<VisibilityIcon />}
+              >
+                Find Live Rooms
+              </Button>
+              <Button 
+                variant="outlined" 
+                component={Link} 
+                to="/wallet"
+                startIcon={<WalletIcon />}
+              >
+                Check Balance
+              </Button>
             </Box>
           </Box>
         </Paper>

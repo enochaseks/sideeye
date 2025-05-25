@@ -1,4 +1,4 @@
-import React, { useState, Suspense, lazy } from 'react';
+import React, { useState, Suspense, lazy, useEffect } from 'react';
 import { 
   Routes, 
   Route, 
@@ -31,6 +31,9 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import CookieConsent from './components/CookieConsent';
 import CreateSideRoom from './components/CreateSideRoom';
+import ProfileSetupDialog from './components/ProfileSetupDialog';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from './services/firebase';
 
 // Lazy load larger page components
 const Profile = lazy(() => import('./pages/Profile'));
@@ -62,6 +65,7 @@ const ReportPage = lazy(() => import('./pages/ReportPage'));
 const SadeAIInfo = lazy(() => import('./pages/SadeAIInfo'));
 const FAQPage = lazy(() => import('./pages/FAQPage'));
 const Suggestions = lazy(() => import('./pages/Suggestions'));
+const Wallet = lazy(() => import('./pages/Wallet'));
 
 // Loading fallback component
 const LoadingFallback = () => (
@@ -104,9 +108,139 @@ const AppContent: React.FC = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isVibitsPage = location.pathname === '/vibits';
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const { currentUser } = useAuth();
   
   // Global state for create room dialog
   const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false);
+  
+  // Profile setup dialog state
+  const [showProfileSetupDialog, setShowProfileSetupDialog] = useState(false);
+  const [profileSetupChecked, setProfileSetupChecked] = useState(false);
+  const [lastProfileCheck, setLastProfileCheck] = useState<number>(0);
+
+  // Check if user needs to complete profile setup
+  useEffect(() => {
+    const checkProfileSetup = async () => {
+      if (!currentUser?.uid || profileSetupChecked) return;
+      
+      // Skip profile check for auth pages
+      const authPages = ['/login', '/register', '/reset-password', '/verify-email', '/setup-source-code', '/enter-source-code'];
+      if (authPages.includes(location.pathname)) {
+        setProfileSetupChecked(true);
+        return;
+      }
+
+      try {
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          
+          // Check if user needs to complete profile setup
+          const needsProfileSetup = !userData.profileCompleted && !userData.profilePic;
+          
+          // Check when they were last prompted (use the most recent timestamp)
+          const lastPromptTime = userData.lastProfileSetupPrompt ? 
+            new Date(userData.lastProfileSetupPrompt).getTime() : 
+            (userData.profileSetupSkippedAt ? new Date(userData.profileSetupSkippedAt).getTime() : 0);
+          
+          // Show dialog if user still hasn't completed profile AND either:
+          // 1. They've never been prompted before, OR
+          // 2. It's been more than 24 hours since last prompt
+          const shouldShowDialog = needsProfileSetup && (
+            lastPromptTime === 0 || 
+            (Date.now() - lastPromptTime) > 24 * 60 * 60 * 1000 // 24 hours
+          );
+          
+          if (shouldShowDialog) {
+            // Small delay to ensure the app is fully loaded
+            setTimeout(() => {
+              setShowProfileSetupDialog(true);
+            }, 1000);
+          }
+        } else {
+          // New user with no Firestore document - definitely needs setup
+          setTimeout(() => {
+            setShowProfileSetupDialog(true);
+          }, 1000);
+        }
+        
+        setProfileSetupChecked(true);
+        setLastProfileCheck(Date.now());
+      } catch (error) {
+        console.error('Error checking profile setup status:', error);
+        setProfileSetupChecked(true);
+      }
+    };
+
+    checkProfileSetup();
+  }, [currentUser?.uid, location.pathname, profileSetupChecked]);
+
+  // Periodic check for existing users (every 24 hours) - even if they stay logged in
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+
+    const checkProfilePeriodically = async () => {
+      const now = Date.now();
+      const timeSinceLastCheck = now - lastProfileCheck;
+      
+      // Only check if it's been more than 23 hours since last check (slightly less than 24 to account for timing)
+      if (timeSinceLastCheck < 23 * 60 * 60 * 1000) return;
+
+      // Skip profile check for auth pages
+      const authPages = ['/login', '/register', '/reset-password', '/verify-email', '/setup-source-code', '/enter-source-code'];
+      if (authPages.includes(location.pathname)) return;
+
+      try {
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          
+          // Check if user still needs to complete profile setup
+          const needsProfileSetup = !userData.profileCompleted && !userData.profilePic;
+          
+          // Check when they were last prompted (use the most recent timestamp)
+          const lastPromptTime = userData.lastProfileSetupPrompt ? 
+            new Date(userData.lastProfileSetupPrompt).getTime() : 
+            (userData.profileSetupSkippedAt ? new Date(userData.profileSetupSkippedAt).getTime() : 0);
+          
+          // Show dialog if user still hasn't completed profile AND either:
+          // 1. They've never been prompted before, OR
+          // 2. It's been more than 24 hours since last prompt
+          const shouldShowDialog = needsProfileSetup && (
+            lastPromptTime === 0 || 
+            (Date.now() - lastPromptTime) > 24 * 60 * 60 * 1000 // 24 hours
+          );
+          
+          if (shouldShowDialog) {
+            console.log('[Profile Setup] Showing periodic reminder dialog');
+            setShowProfileSetupDialog(true);
+          }
+        }
+        
+        setLastProfileCheck(now);
+      } catch (error) {
+        console.error('Error in periodic profile check:', error);
+      }
+    };
+
+    // Set up interval to check every hour
+    const intervalId = setInterval(checkProfilePeriodically, 60 * 60 * 1000); // Check every hour
+
+    // Also run the check immediately if enough time has passed
+    checkProfilePeriodically();
+
+    return () => clearInterval(intervalId);
+  }, [currentUser?.uid, lastProfileCheck, location.pathname]);
+
+  // Reset profile setup check when user changes or logs out
+  useEffect(() => {
+    if (!currentUser?.uid) {
+      setProfileSetupChecked(false);
+      setLastProfileCheck(0);
+    }
+  }, [currentUser?.uid]);
 
   // Create a global function for the create room dialog
   React.useEffect(() => {
@@ -115,9 +249,16 @@ const AppContent: React.FC = () => {
       setShowCreateRoomDialog(true);
     };
     
+    // @ts-ignore - Adding a global function for profile setup
+    window.openProfileSetupDialog = () => {
+      setShowProfileSetupDialog(true);
+    };
+    
     return () => {
       // @ts-ignore - Clean up on unmount
       delete window.openCreateRoomDialog;
+      // @ts-ignore - Clean up on unmount
+      delete window.openProfileSetupDialog;
     };
   }, []);
 
@@ -279,6 +420,11 @@ const AppContent: React.FC = () => {
                   <Suggestions />
                 </ProtectedRoute>
               } />
+              <Route path="/wallet" element={
+                <ProtectedRoute>
+                  <Wallet />
+                </ProtectedRoute>
+              } />
               
               {/* Redirect all other routes to home */}
               <Route path="*" element={<Navigate to="/" replace />} />
@@ -303,6 +449,17 @@ const AppContent: React.FC = () => {
       <CreateSideRoom
         open={showCreateRoomDialog}
         onClose={() => setShowCreateRoomDialog(false)}
+      />
+      
+      {/* Profile Setup Dialog for new users */}
+      <ProfileSetupDialog
+        open={showProfileSetupDialog}
+        onClose={() => {
+          setShowProfileSetupDialog(false);
+          // Reset the check so it can re-evaluate on next app load if still incomplete
+          setProfileSetupChecked(false);
+        }}
+        canSkip={true}
       />
     </Box>
   );

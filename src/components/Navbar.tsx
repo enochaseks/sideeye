@@ -22,6 +22,7 @@ import {
   Notifications as NotificationsIcon,
   Psychology,
   Lightbulb as LightbulbIcon,
+  AccountBalanceWallet as WalletIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -270,6 +271,12 @@ const Navbar: React.FC = () => {
                 <SettingsIcon />
               </ListItemIcon>
               <ListItemText primary="Settings" />
+            </MenuItem>
+            <MenuItem onClick={() => handleNavigation('/wallet')}>
+              <ListItemIcon>
+                <WalletIcon />
+              </ListItemIcon>
+              <ListItemText primary="Wallet" />
             </MenuItem>
             <Divider />
             <MenuItem onClick={handleSignOut}>

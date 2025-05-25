@@ -26,6 +26,7 @@ import {
 import { collection, query, where, orderBy, limit, getDocs, doc, getDoc, DocumentData, collectionGroup } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { Link } from 'react-router-dom';
+import SCCoinIcon from '../SCCoinIcon';
 
 interface TopGiftersProps {
     roomId: string;
@@ -531,7 +532,7 @@ const TopGifters: React.FC<TopGiftersProps> = ({ roomId, roomOwnerId, theme, roo
                                                 fontFamily: roomStyle?.font || 'inherit'
                                             }}
                                         >
-                                            {gifter.totalValue} pts
+                                            <SCCoinIcon size="small" value={gifter.totalValue} />
                                         </Typography>
                                         <RankBadge rank={index + 1} />
                                     </Box>

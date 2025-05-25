@@ -27,7 +27,8 @@ import {
     doc, 
     updateDoc, 
     increment, 
-    Timestamp
+    Timestamp,
+    getDoc
 } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import CloseIcon from '@mui/icons-material/Close';
@@ -39,6 +40,8 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import CelebrationIcon from '@mui/icons-material/Celebration';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 import { keyframes } from '@mui/system';
+import { toast } from 'react-hot-toast';
+import SCCoinIcon from '../SCCoinIcon';
 
 // Define gift types
 interface Gift {
@@ -69,6 +72,18 @@ interface GiftsProps {
     theme: any;
     roomStyle?: any;
 }
+
+// Helper functions for currency conversion
+const formatSideCoins = (amount: number) => {
+    return amount.toFixed(2);
+};
+
+const formatLittleCoins = (sideCoins: number) => {
+    return Math.round(sideCoins * 100);
+};
+
+// Gift earning rate: 0.08 SC (8 LC) per gift received
+const GIFT_EARNING_RATE = 0.08;
 
 // Define animations
 const floatAnimation = keyframes`
@@ -591,6 +606,24 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
         setIsLoading(true);
         
         try {
+            // Check if sender has enough coins (for paid gifts - free gifts don't cost anything)
+            if (selectedGift.type !== 'basic') {
+                // Get sender's current balance
+                const senderRef = doc(db, 'users', currentUser.uid);
+                const senderDoc = await getDoc(senderRef);
+                
+                if (senderDoc.exists()) {
+                    const senderData = senderDoc.data();
+                    const currentBalance = senderData.sideCoins || 0;
+                    
+                    if (currentBalance < selectedGift.value) {
+                        toast.error('Insufficient SideCoins! Visit your wallet to learn how to earn more.');
+                        setIsLoading(false);
+                        return;
+                    }
+                }
+            }
+            
             // Add gift to the gift history
             await addDoc(collection(db, 'sideRooms', roomId, 'gifts'), {
                 giftId: selectedGift.id,
@@ -603,12 +636,36 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                 value: selectedGift.value
             });
             
-            // Update room owner's gift count/value
-            const userRef = doc(db, 'users', roomOwnerId);
-            await updateDoc(userRef, {
+            // Update room owner's gift count/value (existing stats tracking)
+            const ownerRef = doc(db, 'users', roomOwnerId);
+            await updateDoc(ownerRef, {
                 giftCount: increment(1),
                 giftValue: increment(selectedGift.value)
             });
+            
+            // NEW: Update sender's gift statistics as well
+            const senderRef = doc(db, 'users', currentUser.uid);
+            if (selectedGift.type !== 'basic') {
+                // For paid gifts: deduct from sender's balance and update their spending stats
+                await updateDoc(senderRef, {
+                    sideCoins: increment(-selectedGift.value), // Deduct the gift cost
+                    giftsSent: increment(1), // Track gifts sent
+                    coinsSpent: increment(selectedGift.value) // Track total coins spent
+                });
+            } else {
+                // For free gifts: just update the count
+                await updateDoc(senderRef, {
+                    giftsSent: increment(1) // Track gifts sent
+                });
+            }
+            
+            // Add coins to receiver's balance (flat rate per gift instead of percentage)
+            const coinsEarned = GIFT_EARNING_RATE; // Flat rate: ~80 coins per 1000 gifts received
+            await updateDoc(ownerRef, {
+                sideCoins: increment(coinsEarned) // Add earned coins to receiver
+            });
+            
+            console.log(`[Gift Transaction] ${selectedGift.name} sent from ${currentUser.uid} to ${roomOwnerId}. Receiver earned ${formatSideCoins(coinsEarned)} SC (${formatLittleCoins(coinsEarned)} LC). Sender stats updated.`);
             
             setDialogOpen(false);
             setIsLoading(false);
@@ -617,9 +674,15 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
             setAnimatingGift(selectedGift);
             setShowAnimation(true);
             
+            toast.success(`Gift sent! Host earned ${formatSideCoins(coinsEarned)} SC (${formatLittleCoins(coinsEarned)} LC)`, {
+                duration: 4000,
+                position: 'top-right',
+            });
+            
         } catch (error) {
             console.error('Error sending gift:', error);
             setIsLoading(false);
+            toast.error('Failed to send gift. Please try again.');
         }
     };
 
@@ -682,6 +745,12 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                         }}>
                             Free Gifts
                         </Typography>
+                        <Typography variant="caption" sx={{ 
+                            color: alpha(roomStyle?.textColor || theme.palette.text.secondary, 0.8),
+                            fontFamily: roomStyle?.font || 'inherit'
+                        }}>
+                            Free to send • Host earns {formatSideCoins(GIFT_EARNING_RATE)} SC ({formatLittleCoins(GIFT_EARNING_RATE)} LC) per gift
+                        </Typography>
                         <Grid container spacing={2} sx={{ mt: 0.5 }}>
                             {freeGifts.map((gift) => (
                                 <Grid item xs={6} sm={3} key={gift.id}>
@@ -718,14 +787,29 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                                         </Typography>
                                         <Chip 
                                             size="small" 
-                                            label="Gift" 
+                                            label="Free" 
                                             sx={{ 
                                                 mt: 1, 
-                                                bgcolor: alpha(gift.color, 0.2),
-                                                color: gift.color,
+                                                bgcolor: alpha(theme.palette.success.main, 0.2),
+                                                color: theme.palette.success.main,
                                                 fontWeight: 'bold'
                                             }} 
                                         />
+                                        <Box sx={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center', 
+                                            gap: 0.3, 
+                                            mt: 0.5 
+                                        }}>
+                                            <SCCoinIcon size="small" />
+                                            <Typography variant="caption" sx={{ 
+                                                color: alpha(roomStyle?.textColor || theme.palette.text.secondary, 0.7),
+                                                fontSize: '0.65rem'
+                                            }}>
+                                                +{formatSideCoins(GIFT_EARNING_RATE)} SC
+                                            </Typography>
+                                        </Box>
                                     </Paper>
                                 </Grid>
                             ))}
@@ -767,9 +851,24 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             fontStyle: 'italic'
                         }}>
                             <CardGiftcardIcon sx={{ fontSize: 40, mb: 1, opacity: 0.4 }} />
-                            <Typography variant="body2">
+                            <Typography variant="body2" sx={{ mb: 1 }}>
                                 Premium gifts will be available soon! Stay tuned for exciting new ways to show your support.
                             </Typography>
+                            <Box sx={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center', 
+                                gap: 0.5, 
+                                mt: 1 
+                            }}>
+                                <SCCoinIcon size="small" />
+                                <Typography variant="caption" sx={{ 
+                                    color: alpha(roomStyle?.textColor || theme.palette.text.secondary, 0.8),
+                                    fontWeight: 'medium'
+                                }}>
+                                    Requires 100.00 SC (10,000 LC) to unlock
+                                </Typography>
+                            </Box>
                         </Box>
                     </Box>
                 )}
@@ -793,7 +892,7 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             color: alpha(roomStyle?.textColor || theme.palette.text.secondary, 0.7),
                             fontFamily: roomStyle?.font || 'inherit'
                         }}>
-                            As the room owner, you can view gifts that others have sent to you.
+                            As the room owner, you can view gifts that others have sent to you. You earn {formatSideCoins(GIFT_EARNING_RATE)} SC ({formatLittleCoins(GIFT_EARNING_RATE)} LC) for each gift received!
                         </Typography>
                     </Box>
                 )}
@@ -914,6 +1013,28 @@ const Gifts: React.FC<GiftsProps> = ({ roomId, roomOwnerId, theme, roomStyle }) 
                             <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                                 Are you sure you want to send this gift to the room owner?
                             </Typography>
+                            {selectedGift.type === 'basic' && (
+                                <Box sx={{ 
+                                    mt: 2, 
+                                    p: 1.5, 
+                                    bgcolor: alpha(theme.palette.success.main, 0.1),
+                                    borderRadius: 1,
+                                    border: `1px solid ${alpha(theme.palette.success.main, 0.3)}`
+                                }}>
+                                    <Typography variant="body2" color="success.main" sx={{ fontWeight: 'medium', mb: 0.5 }}>
+                                        ✨ Free Gift
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                        <Typography variant="caption" color="text.secondary">
+                                            Host earns:
+                                        </Typography>
+                                        <SCCoinIcon size="small" />
+                                        <Typography variant="caption" color="success.main" sx={{ fontWeight: 'bold' }}>
+                                            +{formatSideCoins(GIFT_EARNING_RATE)} SC ({formatLittleCoins(GIFT_EARNING_RATE)} LC)
+                                        </Typography>
+                                    </Box>
+                                </Box>
+                            )}
                         </Box>
                     )}
                 </DialogContent>

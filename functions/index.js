@@ -502,7 +502,7 @@ exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId
                   ${notificationContent}
                 </p>
                 <div style="margin: 30px 0;">
-                  <a href="https://sideeye.app/notifications" 
+                  <a href="https://sideeye.uk/notifications" 
                      style="background-color: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">
                     View Notification
                   </a>
@@ -511,7 +511,7 @@ exports.sendEmailNotification = onDocumentCreated("notifications/{notificationId
                   You're receiving this email because you have enabled notifications on SideEye.
                   <br><br>
                   To unsubscribe from these notifications, update your email preferences in your 
-                  <a href="https://sideeye.app/settings" style="color: #1976d2; text-decoration: none;">SideEye settings</a>.
+                  <a href="https://sideeye.uk/settings" style="color: #1976d2; text-decoration: none;">SideEye settings</a>.
                 </p>
               </div>
             `,
@@ -743,7 +743,7 @@ exports.sendLiveNotificationEmails = onCall(async (request) => {
               Don't miss out! Join now to watch and interact with the stream.
             </p>
             <div style="margin: 30px 0;">
-              <a href="https://sideeye.app/side-room/${roomId}" 
+              <a href="https://sideeye.uk/side-room/${roomId}" 
                  style="background-color: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">
                 Join Stream Now
               </a>
@@ -752,7 +752,7 @@ exports.sendLiveNotificationEmails = onCall(async (request) => {
               You're receiving this email because you follow ${userName} on SideEye and have enabled live notifications.
               <br><br>
               To unsubscribe from these notifications, update your email preferences in your 
-              <a href="https://sideeye.app/settings" style="color: #1976d2; text-decoration: none;">SideEye settings</a>.
+              <a href="https://sideeye.uk/settings" style="color: #1976d2; text-decoration: none;">SideEye settings</a>.
             </p>
           </div>
         `

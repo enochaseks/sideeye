@@ -127,7 +127,16 @@ const SetupSourceCode: React.FC = () => {
       localStorage.setItem('deviceId', deviceId);
 
       setSuccess('Device registration successful! Redirecting...');
-      setTimeout(() => navigate('/'), 1500);
+      setTimeout(() => {
+        navigate('/');
+        // Trigger profile setup dialog after navigation
+        setTimeout(() => {
+          // @ts-ignore - Global function added in App.tsx
+          if (window.openProfileSetupDialog) {
+            window.openProfileSetupDialog();
+          }
+        }, 1000);
+      }, 1500);
     } catch (err: any) {
       console.error('Setup error:', err);
       setError(err.code === 'permission-denied' 

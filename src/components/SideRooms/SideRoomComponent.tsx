@@ -160,6 +160,8 @@ import ReportContent from '../ReportContent/ReportContent';
 import ShareRoomViaMessageDialog from './ShareRoomViaMessageDialog'; // Import the new dialog
 import Gifts from './Gifts'; // Add this import
 import TopGifters from './TopGifters';
+import TimeFrame from './TimeFrame'; // Add TimeFrame import
+//  // Add AutoRecording import
 
 // --- YouTube Iframe Player API Types (Basic) ---
 declare global {
@@ -718,6 +720,9 @@ const SideRoomComponent: React.FC = () => {
     const [showJoinRoomChatDialog, setShowJoinRoomChatDialog] = useState(false);
     const [serverChatRoom, setServerChatRoom] = useState<{id: string, name: string} | null>(null);
     
+    // Add this new state to track if user has declined the dialog
+    const [hasDeclinedServerChat, setHasDeclinedServerChat] = useState(false);
+    
     // ... existing code ...
 
     // --- State for Heart and Heartbreak Animations ---
@@ -744,6 +749,49 @@ const SideRoomComponent: React.FC = () => {
     const DISABLE_OWNER_NOT_LIVE_DIALOG = false;
     
     // ... existing code ...
+
+    // --- State for balance notifications ---
+    const [lastKnownBalance, setLastKnownBalance] = useState<number | null>(null);
+
+    // --- Effect to listen for balance changes and show notifications ---
+    useEffect(() => {
+        if (!currentUser?.uid || !db) return;
+
+        console.log('[SideRoomComponent] Setting up balance listener for user:', currentUser.uid);
+        
+        const userRef = doc(db, 'users', currentUser.uid);
+        const unsubscribe = onSnapshot(userRef, (userDoc) => {
+            if (userDoc.exists()) {
+                const userData = userDoc.data();
+                const currentBalance = userData.sideCoins || 0;
+                
+                // If this is not the first time we're getting the balance
+                if (lastKnownBalance !== null) {
+                    // Check if balance increased (user received a gift)
+                    if (currentBalance > lastKnownBalance) {
+                        const increase = currentBalance - lastKnownBalance;
+                        toast.success(`+${increase.toFixed(2)} SideCoins earned from gifts! 🎁`, {
+                            duration: 4000,
+                            position: 'top-right',
+                        });
+                    }
+                    // Could also check for balance decrease (user spent coins) if needed
+                    else if (currentBalance < lastKnownBalance) {
+                        const decrease = lastKnownBalance - currentBalance;
+                        console.log(`[Balance] User spent ${decrease} SideCoins`);
+                        // Don't show notification for spending, as it's already handled in gift dialog
+                    }
+                }
+                
+                setLastKnownBalance(currentBalance);
+            }
+        });
+
+        return () => {
+            console.log('[SideRoomComponent] Cleaning up balance listener');
+            unsubscribe();
+        };
+    }, [currentUser?.uid, lastKnownBalance, db]);
 
     // Camera toggle function for main component
     const toggleCamera = useCallback(() => {
@@ -802,6 +850,11 @@ const SideRoomComponent: React.FC = () => {
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
     }, []);
+    
+    // Reset the decline preference when room changes
+    useEffect(() => {
+        setHasDeclinedServerChat(false);
+    }, [roomId]);
     
     // --- Effect to sync camera state with Stream SDK
     useEffect(() => {
@@ -1280,7 +1333,7 @@ const SideRoomComponent: React.FC = () => {
                 console.log(`[Presence Effect B - Cleanup] Cleanup called but effectUserId or effectRoomId is missing. Skipping Firestore update. UID: ${effectUserId}, RoomID: ${effectRoomId}`);
             }
         };
-    }, [roomId, currentUser?.uid, db]); // Dependencies: cleanup runs if room or user changes, or on unmount.
+    }, [roomId, currentUser?.uid, db]);
 
     // --- Audio Handlers ---
     // const handleJoinAudio = useCallback(async () => { // REMOVED ENTIRE FUNCTION
@@ -1841,7 +1894,7 @@ const SideRoomComponent: React.FC = () => {
 
     // --- Follow Request Acceptance Listener (for private profiles) ---
     useEffect(() => {
-        if (!currentUser?.uid || !room?.ownerId) return;
+        if (!currentUser?.uid || !room?.ownerId || hasDeclinedServerChat) return; // Add hasDeclinedServerChat check
         
         // Only set up this listener if the room owner is not the current user
         const checkFollowStatus = async () => {
@@ -1866,7 +1919,7 @@ const SideRoomComponent: React.FC = () => {
                 if (userFollowingDoc.exists() && !followRequestDoc.exists()) {
                     // Check if the room owner has a server chat room
                     const ownerChatRoom = await checkForServerChatRoom(room.ownerId);
-                    if (ownerChatRoom) {
+                    if (ownerChatRoom && !hasDeclinedServerChat) { // Add hasDeclinedServerChat check
                         setServerChatRoom(ownerChatRoom);
                         setShowJoinRoomChatDialog(true);
                     }
@@ -1882,11 +1935,11 @@ const SideRoomComponent: React.FC = () => {
         // Set up a listener for the user's following collection
         const userFollowingRef = doc(db, "users", currentUser.uid, "following", room.ownerId);
         const unsubscribe = onSnapshot(userFollowingRef, (docSnapshot) => {
-            if (docSnapshot.exists()) {
+            if (docSnapshot.exists() && !hasDeclinedServerChat) { // Add hasDeclinedServerChat check
                 // The user is now following the room owner (request was accepted)
                 // Check for server chat room
                 checkForServerChatRoom(room.ownerId).then(chatRoom => {
-                    if (chatRoom) {
+                    if (chatRoom && !hasDeclinedServerChat) { // Add hasDeclinedServerChat check
                         setServerChatRoom(chatRoom);
                         setShowJoinRoomChatDialog(true);
                     }
@@ -1895,7 +1948,7 @@ const SideRoomComponent: React.FC = () => {
         });
         
         return () => unsubscribe();
-    }, [currentUser, room, db, navigate, checkForServerChatRoom]);
+    }, [currentUser, room, db, navigate, checkForServerChatRoom, hasDeclinedServerChat]); // Add hasDeclinedServerChat to dependencies
 
     // --- Presence Listener (Effect 1: Reading other users' presence) ---
     useEffect(() => {
@@ -2457,7 +2510,7 @@ const SideRoomComponent: React.FC = () => {
             toast.error("Cannot send invite: connection or user data issue.");
             setIsInvitingUser(false); // Reset processing state immediately on client-side error
         }
-    }, [currentUser?.uid, roomId, selectedInviteeForInvite, socket, db]); // Added db to dependencies
+    }, [currentUser?.uid, roomId, selectedInviteeForInvite, socket, db]);
 
     const handleDeleteRoom = useCallback(async () => {
         if (!roomId || !isRoomOwner) return;
@@ -2605,7 +2658,7 @@ const SideRoomComponent: React.FC = () => {
                                             
                                             // Check if the room owner has a server chat room
                                             const ownerChatRoom = await checkForServerChatRoom(room.ownerId);
-                                            if (ownerChatRoom) {
+                                            if (ownerChatRoom && !hasDeclinedServerChat) { // Add hasDeclinedServerChat check
                                                 setServerChatRoom(ownerChatRoom);
                                                 setShowJoinRoomChatDialog(true);
                                             }
@@ -3695,7 +3748,7 @@ const SideRoomComponent: React.FC = () => {
                             userId: currentUser.uid,
                             username: currentUser.displayName || currentUser.email || 'User',
                             role: 'viewer',
-                            joinedAt: serverTimestamp()
+                            joinedAt: Date.now() // Fixed: Use Date.now() instead of serverTimestamp()
                         }]
                     });
                 }
@@ -3847,6 +3900,7 @@ const SideRoomComponent: React.FC = () => {
     // Handle declining to join the server chat room
     const handleDeclineServerChat = () => {
         setShowJoinRoomChatDialog(false);
+        setHasDeclinedServerChat(true); // Add this line to remember the user declined
     };
 
     const handleOpenReportRoom = () => {
@@ -5169,6 +5223,21 @@ const InsideStreamCallContent: React.FC<{
         ].filter(Boolean); 
     }, [participants, room?.ownerId, pinnedUserIds]);
 
+    // Fetch Firestore data for all participants when they change
+    useEffect(() => {
+        if (!participants || participants.length === 0) return;
+        
+        console.log('[InsideStreamCallContent] Fetching Firestore data for participants:', participants.map(p => p.userId));
+        
+        // Fetch Firestore data for all participants
+        participants.forEach(participant => {
+            if (participant.userId && !firestoreUserData[participant.userId]) {
+                fetchUserFirestoreData(participant.userId);
+            }
+        });
+    }, [participants, fetchUserFirestoreData, firestoreUserData]);
+
+
     // Reset PiP visibility when camera is enabled
     useEffect(() => {
         if (isCameraEnabled) {
@@ -5234,6 +5303,32 @@ const handleLeaveCall = () => {
                 // Removing overflowY to fix double scrollbar issue
                 // overflowY: 'auto', 
             }}>
+                {/* TimeFrame - Show host live session duration */}
+                <TimeFrame 
+                    isHostLive={participants.some(p => p.userId === room.ownerId)}
+                    roomStyle={room?.style}
+                    hostName={participants.find(p => p.userId === room.ownerId)?.name || 'Host'}
+                    isCurrentUserHost={isRoomOwner}
+                    onStopLive={() => {
+                        if (call) {
+                            console.log('[TimeFrame] Host stopping live session...');
+                            call.leave()
+                                .then(() => {
+                                    console.log('[TimeFrame] Successfully ended live session');
+                                    navigate('/side-rooms');
+                                })
+                                .catch(err => {
+                                    console.error('[TimeFrame] Error ending live session:', err);
+                                    navigate('/side-rooms'); // Navigate anyway
+                                });
+                        } else {
+                            navigate('/side-rooms');
+                        }
+                    }}
+                />
+
+              
+
                 {/* Screen Share Display - Shows when someone is sharing */}
                 {screenSharingParticipant && (
                     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 3 }}>
@@ -5815,6 +5910,7 @@ const handleLeaveCall = () => {
                                     isPinned={pinnedUserIds.includes(p.userId)} 
                                              roomStyle={room?.style}
                                     navigate={navigate}
+                                    firestoreUserData={firestoreUserData}
                                 />
                             </Grid>
                         ); 
@@ -6183,6 +6279,7 @@ interface StreamParticipantCardProps {
     isPinned?: boolean; 
     roomStyle?: RoomStyle;
     navigate: Function; // Add this line
+    firestoreUserData: {[key: string]: {username: string, avatar?: string}}; // Add this line
 }
 
 const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo(({ 
@@ -6199,7 +6296,8 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
     onPinToggle,      
     isPinned,
     roomStyle,
-    navigate
+    navigate,
+    firestoreUserData
 }) => {
     const theme = useTheme();
     const { isSpeaking, publishedTracks } = participant;
@@ -6277,26 +6375,22 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
     let displayName: string;
     let avatarUrl: string | undefined;
 
-    interface StreamCustomParticipantData {
-        displayName?: string;
-        customAvatarUrl?: string;
-    }
-
-    const customData = participant.custom as StreamCustomParticipantData | undefined;
-
-    if (isLocalParticipant && localUserAuthData) { 
+    // PRIORITY 1: Use Firestore data if available
+    const firestoreData = firestoreUserData[participant.userId];
+    if (firestoreData) {
+        displayName = firestoreData.username;
+        avatarUrl = firestoreData.avatar || undefined;
+        console.log(`[StreamParticipantCard] Using Firestore data for ${participant.userId}:`, { displayName, avatarUrl });
+    } else if (isLocalParticipant && localUserAuthData) { 
+        // PRIORITY 2: Use local user auth data for current user
         displayName = localUserAuthData.displayName || localUserAuthData.email || participant.userId; 
         avatarUrl = localUserAuthData.photoURL || participant.image || undefined; 
-    } else if (customData && typeof customData.displayName === 'string' && customData.displayName.trim() !== '') {
-        displayName = customData.displayName;
-        if (customData.customAvatarUrl && typeof customData.customAvatarUrl === 'string' && customData.customAvatarUrl.trim() !== '') {
-            avatarUrl = customData.customAvatarUrl;
-        } else {
-            avatarUrl = participant.image || undefined;
-        }
+        console.log(`[StreamParticipantCard] Using local auth data for current user:`, { displayName, avatarUrl });
     } else {
+        // PRIORITY 3: Fall back to Stream SDK data
         displayName = participant.name || participant.userId;
         avatarUrl = participant.image || undefined;
+        console.log(`[StreamParticipantCard] Using Stream SDK fallback for ${participant.userId}:`, { displayName, avatarUrl });
     }
 
     console.log('[StreamParticipantCard] Rendering with props:', { participant, isRoomOwner, isLocalParticipant, localUserAuthData });
@@ -6308,6 +6402,8 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
     // Add these state variables within the StreamParticipantCard component
     const [showReportDialog, setShowReportDialog] = useState(false);
     const [isLocallyBlocked, setIsLocallyBlocked] = useState(false);
+
+    
     
     // Check if this user is already blocked on component mount
     useEffect(() => {
@@ -6648,4 +6744,8 @@ const StreamParticipantCard: React.FC<StreamParticipantCardProps> = React.memo((
         </Box>
     );
 });
+
+// Add this useEffect right after the existing useEffects in InsideStreamCallContent, before the handlers
+    
+    // Screen sharing detection using Stream's built-in functionality
 
