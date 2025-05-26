@@ -42,7 +42,8 @@ import {
   Public as PublicIcon,
   VerifiedUser as VerifiedUserIcon,
   EmojiEvents as TrophyIcon,
-  VisibilityOutlined as EyeIcon
+  VisibilityOutlined as EyeIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -72,6 +73,7 @@ import { toast } from 'react-hot-toast';
 import { formatTimestamp } from '../utils/dateUtils';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 import Popper from '@mui/material/Popper';
+import Peeks from '../components/Peeks';
 
 interface UserProfile {
   id: string;
@@ -169,6 +171,7 @@ const Discover: React.FC = () => {
   const [popularRoomSearchQuery, setPopularRoomSearchQuery] = useState('');
   const [selectedPopularRoomCategory, setSelectedPopularRoomCategory] = useState<string>('All');
   const [isSearchingPopularRooms, setIsSearchingPopularRooms] = useState(false);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
 
   const categories = [
     'ASMR',
@@ -1121,6 +1124,9 @@ const Discover: React.FC = () => {
 
   const handleClickAway = () => {
     setShowDropdown(false);
+    if (!searchQuery.trim()) {
+      setIsSearchExpanded(false);
+    }
   };
 
   const handleCategoryChange = (event: React.SyntheticEvent, newValue: string) => {
@@ -1296,175 +1302,227 @@ const Discover: React.FC = () => {
         top: 0,
         backgroundColor: theme.palette.background.default,
         zIndex: 1000,
-        pt: 2,
-        pb: 2,
+        pt: 0.5,
+        pb: 0.5,
         borderBottom: 1,
         borderColor: 'divider'
       }}>
         <Container maxWidth={false} sx={{ maxWidth: '1440px' }}>
-          <Box sx={{ 
-            display: 'flex', 
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            mb: 2
-          }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Typography 
-                variant={isMobile ? "h5" : "h4"} 
-                component="h1"
-                sx={{ fontWeight: 600 }}
-              >
-                {isSearchView ? 'Search Results' : 'Discover'}
-              </Typography>
-            </Box>
-            <ClickAwayListener onClickAway={handleClickAway}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, position: 'relative' }}>
-                <Box ref={searchRef}>
-                  <TextField
-                    size="small"
-                    placeholder="Search rooms and users..."
-                    value={searchQuery}
-                    onChange={(e) => {
-                      handleInstantSearch(e.target.value);
-                      handleSearch(e.target.value);
-                    }}
-                    onKeyDown={handleSearchSubmit}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchIcon />
-                        </InputAdornment>
-                      ),
-                    }}
-                    sx={{ 
-                      backgroundColor: 'background.paper',
-                      borderRadius: 1,
-                      width: isMobile ? '230px' : '300px',
-                      '& .MuiOutlinedInput-root': {
-                        borderRadius: 1,
-                      }
-                    }}
-                  />
-                  {/* Dropdown Results */}
-                  <Popper
-                    open={showDropdown && dropdownUsers.length > 0}
-                    anchorEl={searchRef.current}
-                    placement="bottom-start"
-                    style={{ width: searchRef.current?.offsetWidth, zIndex: 1400 }}
-                  >
-                    <Paper 
-                      elevation={3}
-                      sx={{ 
-                        mt: 1,
-                        maxHeight: '300px',
-                        overflowY: 'auto',
-                        borderRadius: 1
-                      }}
+          {/* Collapsible Search Section */}
+          <Box sx={{ mb: 0.5 }}>
+            {/* Search Icon Button */}
+            {!isSearchExpanded && !isSearchView && (
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.5 }}>
+                <IconButton
+                  onClick={() => setIsSearchExpanded(true)}
+                  sx={{
+                    bgcolor: 'background.paper',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    '&:hover': {
+                      bgcolor: 'action.hover'
+                    }
+                  }}
+                >
+                  <SearchIcon />
+                </IconButton>
+              </Box>
+            )}
+
+            {/* Expanded Search Bar */}
+            {(isSearchExpanded || isSearchView) && (
+              <ClickAwayListener onClickAway={() => {
+                if (!searchQuery.trim()) {
+                  setIsSearchExpanded(false);
+                  setShowDropdown(false);
+                }
+              }}>
+                <Box sx={{ 
+                  position: 'relative',
+                  mb: 0.5,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1
+                }}>
+                  {isSearchView && (
+                    <Typography 
+                      variant={isMobile ? "h6" : "h5"} 
+                      component="h1"
+                      sx={{ fontWeight: 600, mr: 2 }}
                     >
-                      <List sx={{ p: 0 }}>
-                        {dropdownUsers.map((user, index) => (
-                          <React.Fragment key={user.id}>
-                            <ListItem
-                              button
+                      Search Results
+                    </Typography>
+                  )}
+                  <Box ref={searchRef} sx={{ flex: 1 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      placeholder="Search rooms and users..."
+                      value={searchQuery}
+                      onChange={(e) => {
+                        handleInstantSearch(e.target.value);
+                        handleSearch(e.target.value);
+                      }}
+                      onKeyDown={handleSearchSubmit}
+                      autoFocus={isSearchExpanded}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon />
+                          </InputAdornment>
+                        ),
+                        endAdornment: (isSearchExpanded || isSearchView) && (
+                          <InputAdornment position="end">
+                            <IconButton
+                              size="small"
                               onClick={() => {
-                                navigate(`/profile/${user.id}`);
+                                setSearchQuery('');
+                                setIsSearchExpanded(false);
+                                setIsSearchView(false);
                                 setShowDropdown(false);
-                              }}
-                              sx={{ 
-                                py: 1,
-                                px: 2,
-                                '&:hover': {
-                                  backgroundColor: 'action.hover'
-                                }
+                                setUsers([]);
+                                setRooms([]);
                               }}
                             >
-                              <ListItemAvatar>
-                                <Avatar 
-                                  src={user.isActive === false ? undefined : user.profilePic}
-                                  alt={user.name}
-                                  sx={{ width: 32, height: 32 }}
-                                >
-                                  {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
-                                </Avatar>
-                              </ListItemAvatar>
-                              <ListItemText
-                                primary={
-                                  <Typography variant="body1" component="div">
-                                    {user.name}
-                                    {user.isVerified && (
-                                      <VerifiedUserIcon 
-                                        sx={{ 
-                                          ml: 0.5, 
-                                          color: 'primary.main',
-                                          fontSize: '0.9rem',
-                                          verticalAlign: 'middle'
-                                        }} 
-                                      />
-                                    )}
-                                  </Typography>
-                                }
-                                secondary={
-                                  <>
-                                    <Typography variant="body2" component="span" color="text.secondary">
-                                      @{user.username}
+                              <CloseIcon fontSize="small" />
+                            </IconButton>
+                          </InputAdornment>
+                        ),
+                      }}
+                      sx={{ 
+                        backgroundColor: 'background.paper',
+                        borderRadius: 2,
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 2,
+                        }
+                      }}
+                    />
+                    {/* Dropdown Results */}
+                    <Popper
+                      open={showDropdown && dropdownUsers.length > 0}
+                      anchorEl={searchRef.current}
+                      placement="bottom-start"
+                      style={{ width: searchRef.current?.offsetWidth, zIndex: 1400 }}
+                    >
+                      <Paper 
+                        elevation={3}
+                        sx={{ 
+                          mt: 1,
+                          maxHeight: '300px',
+                          overflowY: 'auto',
+                          borderRadius: 2
+                        }}
+                      >
+                        <List sx={{ p: 0 }}>
+                          {dropdownUsers.map((user, index) => (
+                            <React.Fragment key={user.id}>
+                              <ListItem
+                                button
+                                onClick={() => {
+                                  navigate(`/profile/${user.id}`);
+                                  setShowDropdown(false);
+                                }}
+                                sx={{ 
+                                  py: 1,
+                                  px: 2,
+                                  '&:hover': {
+                                    backgroundColor: 'action.hover'
+                                  }
+                                }}
+                              >
+                                <ListItemAvatar>
+                                  <Avatar 
+                                    src={user.isActive === false ? undefined : user.profilePic}
+                                    alt={user.name}
+                                    sx={{ width: 32, height: 32 }}
+                                  >
+                                    {(user.isActive !== false && !user.profilePic) ? user.name?.[0]?.toUpperCase() : null}
+                                  </Avatar>
+                                </ListItemAvatar>
+                                <ListItemText
+                                  primary={
+                                    <Typography variant="body1" component="div">
+                                      {user.name}
+                                      {user.isVerified && (
+                                        <VerifiedUserIcon 
+                                          sx={{ 
+                                            ml: 0.5, 
+                                            color: 'primary.main',
+                                            fontSize: '0.9rem',
+                                            verticalAlign: 'middle'
+                                          }} 
+                                        />
+                                      )}
                                     </Typography>
-                                    {user.bio && (
-                                      <Typography 
-                                        variant="body2" 
-                                        component="span"
-                                        color="text.secondary"
-                                        sx={{
-                                          mt: 0.5,
-                                          display: 'block',
-                                          WebkitLineClamp: 2,
-                                          WebkitBoxOrient: 'vertical',
-                                          overflow: 'hidden'
-                                        }}
-                                      >
-                                        {user.bio}
+                                  }
+                                  secondary={
+                                    <>
+                                      <Typography variant="body2" component="span" color="text.secondary">
+                                        @{user.username}
                                       </Typography>
-                                    )}
-                                  </>
-                                }
-                                sx={{ my: 0 }}
-                              />
-                              {currentUser && user.id !== currentUser.uid && (
-                                <Box sx={{ display: 'flex', gap: 1 }}>
-                                  <IconButton
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      navigate(`/messages/${user.id}`);
-                                    }}
-                                  >
-                                    <MessageIcon fontSize="small" />
-                                  </IconButton>
-                                  <IconButton
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (!pendingRequests.has(user.id)) {
-                                        handleFollow(user.id);
-                                      }
-                                    }}
-                                    color={following.has(user.id) ? "primary" : pendingRequests.has(user.id) ? "secondary" : "default"}
-                                    disabled={pendingRequests.has(user.id)}
-                                  >
-                                    <PersonAddIcon fontSize="small" />
-                                  </IconButton>
-                                </Box>
-                              )}
-                            </ListItem>
-                            {index < dropdownUsers.length - 1 && <Divider />}
-                          </React.Fragment>
-                        ))}
-                      </List>
-                    </Paper>
-                  </Popper>
+                                      {user.bio && (
+                                        <Typography 
+                                          variant="body2" 
+                                          component="span"
+                                          color="text.secondary"
+                                          sx={{
+                                            mt: 0.5,
+                                            display: 'block',
+                                            WebkitLineClamp: 2,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden'
+                                          }}
+                                        >
+                                          {user.bio}
+                                        </Typography>
+                                      )}
+                                    </>
+                                  }
+                                  sx={{ my: 0 }}
+                                />
+                                {currentUser && user.id !== currentUser.uid && (
+                                  <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <IconButton
+                                      size="small"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/messages/${user.id}`);
+                                      }}
+                                    >
+                                      <MessageIcon fontSize="small" />
+                                    </IconButton>
+                                    <IconButton
+                                      size="small"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!pendingRequests.has(user.id)) {
+                                          handleFollow(user.id);
+                                        }
+                                      }}
+                                      color={following.has(user.id) ? "primary" : pendingRequests.has(user.id) ? "secondary" : "default"}
+                                      disabled={pendingRequests.has(user.id)}
+                                    >
+                                      <PersonAddIcon fontSize="small" />
+                                    </IconButton>
+                                  </Box>
+                                )}
+                              </ListItem>
+                              {index < dropdownUsers.length - 1 && <Divider />}
+                            </React.Fragment>
+                          ))}
+                        </List>
+                      </Paper>
+                    </Popper>
+                  </Box>
                 </Box>
-              </Box>
-            </ClickAwayListener>
+              </ClickAwayListener>
+            )}
           </Box>
+
+          {/* Peeks Stories Section */}
+          {!isSearchView && (
+            <Peeks />
+          )}
 
           {/* Main Tabs - Rooms vs People vs Top Hosts vs Popular Rooms */}
           {!isSearchView && (
@@ -1474,7 +1532,7 @@ const Discover: React.FC = () => {
               variant={isMobile ? "scrollable" : "standard"}
               scrollButtons={isMobile ? "auto" : false}
               sx={{
-                mb: 2,
+                mb: 0.5,
                 '& .MuiTabs-indicator': {
                   height: 3
                 }
@@ -1496,7 +1554,7 @@ const Discover: React.FC = () => {
                scrollButtons="auto"
                aria-label="room categories"
                sx={{
-                 mb: 3, // Margin below tabs
+                 mb: 1, // Further reduced margin below tabs
                  borderBottom: 1,
                  borderColor: 'divider'
                }}
@@ -1516,7 +1574,7 @@ const Discover: React.FC = () => {
       <Container 
         maxWidth={false} 
         sx={{ 
-          pt: 3,
+          pt: 1,
           pb: 4, 
           px: isMobile ? 2 : 3,
           maxWidth: '1440px'

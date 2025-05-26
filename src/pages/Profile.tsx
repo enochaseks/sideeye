@@ -30,7 +30,8 @@ import {
   List,
   ListItem,
   Tabs,
-  Tab
+  Tab,
+  LinearProgress
 } from '@mui/material';
 import { 
   Edit as EditIcon,
@@ -46,7 +47,10 @@ import {
   Report as ReportIcon,
   VerifiedUser as VerifiedUserIcon,
   Home as HomeIcon,
-  CardGiftcard as CardGiftcardIcon
+  CardGiftcard as CardGiftcardIcon,
+  Close as CloseIcon,
+  ArrowBackIos as ArrowBackIcon,
+  ArrowForwardIos as ArrowForwardIcon
 } from '@mui/icons-material';
 import { auth, storage } from '../services/firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion, arrayRemove, addDoc, onSnapshot, orderBy, serverTimestamp, setDoc, deleteDoc, writeBatch, Timestamp } from 'firebase/firestore';
@@ -61,6 +65,20 @@ import GiftsSent from '../components/GiftsSent';
 
 interface ProfileProps {
   userId?: string;
+}
+
+interface Story {
+  id: string;
+  userId: string;
+  username: string;
+  userAvatar: string;
+  content: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
+  createdAt: Timestamp;
+  expiresAt: Timestamp;
+  views: string[];
+  isViewed?: boolean;
 }
 
 // Simple component to display when a profile is deactivated
@@ -123,7 +141,196 @@ const Profile: React.FC = () => {
   // Tab state
   const [activeTab, setActiveTab] = useState<'sideRooms' | 'giftsSent'>('sideRooms');
 
+  // Story-related state
+  const [userStories, setUserStories] = useState<Story[]>([]);
+  const [hasActiveStories, setHasActiveStories] = useState(false);
+  const [showStoryViewer, setShowStoryViewer] = useState(false);
+  const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
+  const [storyProgress, setStoryProgress] = useState(0);
+  const [showViewers, setShowViewers] = useState(false);
+  const [storyViewers, setStoryViewers] = useState<Array<{id: string, username: string, avatar: string}>>([]);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const progressInterval = useRef<NodeJS.Timeout | null>(null);
+  const storyViewerTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [isStoryViewerOpening, setIsStoryViewerOpening] = useState(false);
+
   const userId = targetUserId || currentUser?.uid || '';
+
+  // Function to fetch user stories
+  const fetchUserStories = useCallback(async () => {
+    if (!db || !targetUserId) return;
+
+    try {
+      // Fetch stories from the last 24 hours for this specific user
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+      const storiesQuery = query(
+        collection(db, 'stories'),
+        where('userId', '==', targetUserId),
+        where('expiresAt', '>', Timestamp.fromDate(twentyFourHoursAgo)),
+        orderBy('expiresAt'),
+        orderBy('createdAt', 'desc')
+      );
+
+      const storiesSnapshot = await getDocs(storiesQuery);
+      const stories: Story[] = [];
+
+      for (const storyDoc of storiesSnapshot.docs) {
+        const storyData = storyDoc.data();
+        
+        // Get user data
+        const userDocRef = doc(db, 'users', storyData.userId);
+        const userDocSnap = await getDoc(userDocRef);
+        const userData = userDocSnap.data();
+
+        stories.push({
+          id: storyDoc.id,
+          userId: storyData.userId,
+          username: userData?.username || userData?.name || 'Unknown User',
+          userAvatar: userData?.profilePic || userData?.photoURL || '',
+          content: storyData.content || '',
+          mediaUrl: storyData.mediaUrl,
+          mediaType: storyData.mediaType,
+          createdAt: storyData.createdAt,
+          expiresAt: storyData.expiresAt,
+          views: storyData.views || [],
+          isViewed: storyData.views?.includes(currentUser?.uid || '') || false
+        });
+      }
+
+      setUserStories(stories);
+      setHasActiveStories(stories.length > 0);
+    } catch (error) {
+      console.error('Error fetching user stories:', error);
+    }
+  }, [db, targetUserId, currentUser?.uid]);
+
+  // Mark story as viewed
+  const markStoryAsViewed = async (storyId: string) => {
+    if (!currentUser || !db) return;
+
+    try {
+      const storyRef = doc(db, 'stories', storyId);
+      await updateDoc(storyRef, {
+        views: arrayUnion(currentUser.uid)
+      });
+    } catch (error) {
+      console.error('Error marking story as viewed:', error);
+    }
+  };
+
+  // Delete story
+  const deleteStory = async (storyId: string) => {
+    if (!currentUser || !db) return;
+
+    try {
+      await deleteDoc(doc(db, 'stories', storyId));
+      setShowViewers(false);
+      setShowStoryViewer(false);
+      setShowDeleteConfirm(false);
+      toast.success('Story deleted successfully!');
+      
+      // Refresh stories
+      setTimeout(async () => {
+        await fetchUserStories();
+      }, 500);
+    } catch (error) {
+      console.error('Error deleting story:', error);
+      toast.error('Failed to delete story');
+    }
+  };
+
+  // Get story viewers
+  const getStoryViewers = async (storyId: string) => {
+    if (!currentUser || !db) return;
+
+    try {
+      const storyRef = doc(db, 'stories', storyId);
+      const storyDoc = await getDoc(storyRef);
+      
+      if (storyDoc.exists()) {
+        const storyData = storyDoc.data();
+        const viewerIds = storyData.views || [];
+        
+        const viewers = [];
+        for (const viewerId of viewerIds) {
+          const userRef = doc(db, 'users', viewerId);
+          const userDoc = await getDoc(userRef);
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            viewers.push({
+              id: viewerId,
+              username: userData.username || userData.name || 'Unknown User',
+              avatar: userData.profilePic || userData.photoURL || ''
+            });
+          }
+        }
+        
+        setStoryViewers(viewers);
+        setShowViewers(true);
+      }
+    } catch (error) {
+      console.error('Error getting story viewers:', error);
+      toast.error('Failed to load viewers');
+    }
+  };
+
+  // Handle story viewing
+  const openStoryViewer = (event?: React.MouseEvent) => {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    
+    if (userStories.length === 0 || isStoryViewerOpening) return;
+    
+    setIsStoryViewerOpening(true);
+    
+    // Prevent multiple rapid clicks/taps
+    if (storyViewerTimeout.current) {
+      clearTimeout(storyViewerTimeout.current);
+    }
+    
+    // Debounce the story viewer opening
+    storyViewerTimeout.current = setTimeout(() => {
+      setShowStoryViewer(true);
+      setCurrentStoryIndex(0);
+      setStoryProgress(0);
+      
+      // Mark first story as viewed if not own story
+      if (userStories[0] && userStories[0].userId !== currentUser?.uid) {
+        markStoryAsViewed(userStories[0].id);
+      }
+      
+      // Reset the flag after opening
+      setTimeout(() => {
+        setIsStoryViewerOpening(false);
+      }, 500);
+    }, 100);
+  };
+
+  // Navigate stories
+  const goToNextStory = () => {
+    const nextIndex = currentStoryIndex + 1;
+    if (nextIndex < userStories.length) {
+      setCurrentStoryIndex(nextIndex);
+      setStoryProgress(0);
+      if (userStories[nextIndex].userId !== currentUser?.uid) {
+        markStoryAsViewed(userStories[nextIndex].id);
+      }
+    } else {
+      setShowStoryViewer(false);
+    }
+  };
+
+  const goToPreviousStory = () => {
+    if (currentStoryIndex > 0) {
+      setCurrentStoryIndex(currentStoryIndex - 1);
+      setStoryProgress(0);
+    }
+  };
 
   // Function to check if username exists in Firestore
   const checkUsernameExists = async (username: string): Promise<boolean> => {
@@ -435,7 +642,53 @@ const Profile: React.FC = () => {
 
   useEffect(() => {
     fetchUserData();
-  }, [fetchUserData]);
+    fetchUserStories();
+  }, [fetchUserData, fetchUserStories]);
+
+  // Story progress timer - pauses when viewers dialog is open
+  useEffect(() => {
+    if (showStoryViewer && userStories.length > 0 && !showViewers) {
+      progressInterval.current = setInterval(() => {
+        setStoryProgress(prev => {
+          if (prev >= 100) {
+            // Move to next story
+            const nextIndex = currentStoryIndex + 1;
+            if (nextIndex < userStories.length) {
+              setCurrentStoryIndex(nextIndex);
+              // Mark next story as viewed
+              if (userStories[nextIndex].userId !== currentUser?.uid) {
+                markStoryAsViewed(userStories[nextIndex].id);
+              }
+              return 0;
+            } else {
+              // Close viewer
+              setShowStoryViewer(false);
+              return 0;
+            }
+          }
+          return prev + 2; // 5 seconds per story (100/20 = 5)
+        });
+      }, 100);
+    }
+
+    return () => {
+      if (progressInterval.current) {
+        clearInterval(progressInterval.current);
+      }
+    };
+  }, [showStoryViewer, currentStoryIndex, currentUser, showViewers, userStories]);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (progressInterval.current) {
+        clearInterval(progressInterval.current);
+      }
+      if (storyViewerTimeout.current) {
+        clearTimeout(storyViewerTimeout.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!db || !userId) return;
@@ -994,11 +1247,20 @@ const Profile: React.FC = () => {
               >
                 <Avatar
                   src={profilePic || undefined}
+                  onClick={hasActiveStories ? (e) => openStoryViewer(e) : undefined}
                   sx={{
                     width: 100,
                     height: 100,
-                    border: '3px solid',
-                    borderColor: 'background.paper',
+                    border: hasActiveStories ? '3px solid' : '3px solid',
+                    borderColor: hasActiveStories ? 'primary.main' : 'background.paper',
+                    cursor: hasActiveStories ? 'pointer' : 'default',
+                    transition: 'all 0.2s ease-in-out',
+                    '&:hover': hasActiveStories ? {
+                      transform: 'scale(1.05)',
+                      boxShadow: '0 4px 20px rgba(0, 122, 255, 0.3)'
+                    } : {},
+                    // Prevent double-tap zoom on mobile
+                    touchAction: 'manipulation'
                   }}
                 >
                   {!profilePic && username ? username.charAt(0).toUpperCase() : '?'}
@@ -1584,6 +1846,501 @@ const Profile: React.FC = () => {
         <DialogActions>
           <Button onClick={() => setShowReportDialog(false)}>Cancel</Button>
         </DialogActions>
+      </Dialog>
+
+      {/* Story Viewer Dialog */}
+      <Dialog
+        open={showStoryViewer}
+        onClose={() => setShowStoryViewer(false)}
+        fullScreen
+        PaperProps={{
+          sx: {
+            bgcolor: 'black',
+            color: 'white',
+            margin: 0,
+            maxHeight: '100vh',
+            maxWidth: '100vw'
+          }
+        }}
+        TransitionProps={{
+          timeout: 300
+        }}
+      >
+        {userStories.length > 0 && userStories[currentStoryIndex] && (
+          <Box sx={{ 
+            position: 'relative', 
+            height: '100vh', 
+            width: '100vw',
+            overflow: 'hidden',
+            bgcolor: 'black'
+          }}>
+            {/* Story Content - Full Screen Background */}
+            <Box sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 1
+            }}>
+              {userStories[currentStoryIndex].mediaUrl ? (
+                userStories[currentStoryIndex].mediaType === 'video' ? (
+                  <video
+                    src={userStories[currentStoryIndex].mediaUrl}
+                    autoPlay
+                    muted
+                    loop
+                    playsInline // Important for iOS to prevent fullscreen
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      objectPosition: 'center'
+                    }}
+                  />
+                ) : (
+                  <img
+                    src={userStories[currentStoryIndex].mediaUrl}
+                    alt="Story"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      objectPosition: 'center'
+                    }}
+                  />
+                )
+              ) : (
+                // Text-only story with gradient background
+                <Box sx={{
+                  width: '100%',
+                  height: '100%',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }} />
+              )}
+            </Box>
+
+            {/* Dark overlay for better text readability */}
+            <Box sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0) 20%, rgba(0,0,0,0) 80%, rgba(0,0,0,0.3) 100%)',
+              zIndex: 2
+            }} />
+
+            {/* Progress bars */}
+            <Box sx={{ 
+              position: 'absolute', 
+              top: 20, 
+              left: 16, 
+              right: 16, 
+              zIndex: 10,
+              display: 'flex',
+              gap: 4
+            }}>
+              {userStories.map((_, index) => (
+                <Box
+                  key={index}
+                  sx={{
+                    flex: 1,
+                    height: 3,
+                    bgcolor: 'rgba(255,255,255,0.3)',
+                    borderRadius: 2,
+                    overflow: 'hidden'
+                  }}
+                >
+                  <Box
+                    sx={{
+                      height: '100%',
+                      width: index < currentStoryIndex ? '100%' : 
+                             index === currentStoryIndex ? `${storyProgress}%` : '0%',
+                      bgcolor: 'white',
+                      transition: index === currentStoryIndex ? 'none' : 'width 0.3s ease'
+                    }}
+                  />
+                </Box>
+              ))}
+            </Box>
+
+            {/* Header */}
+            <Box sx={{
+              position: 'absolute',
+              top: 40,
+              left: 16,
+              right: 16,
+              zIndex: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Avatar
+                  src={userStories[currentStoryIndex].userAvatar}
+                  sx={{ 
+                    width: 40, 
+                    height: 40,
+                    border: '2px solid white'
+                  }}
+                >
+                  {userStories[currentStoryIndex].username[0]?.toUpperCase()}
+                </Avatar>
+                <Box>
+                  <Typography variant="subtitle1" sx={{ 
+                    fontWeight: 600,
+                    fontSize: 16,
+                    textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
+                  }}>
+                    {userStories[currentStoryIndex].username}
+                  </Typography>
+                  <Typography variant="caption" sx={{ 
+                    color: 'rgba(255,255,255,0.8)',
+                    fontSize: 12,
+                    textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
+                  }}>
+                    {userStories[currentStoryIndex].createdAt?.toDate().toLocaleTimeString()}
+                  </Typography>
+                </Box>
+              </Box>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {/* Delete button - only show for own stories */}
+                {userStories[currentStoryIndex].userId === currentUser?.uid && (
+                  <IconButton
+                    onClick={() => setShowDeleteConfirm(true)}
+                    sx={{ 
+                      color: 'white',
+                      bgcolor: 'rgba(0,0,0,0.3)',
+                      backdropFilter: 'blur(10px)',
+                      '&:hover': {
+                        bgcolor: 'rgba(255,0,0,0.5)'
+                      }
+                    }}
+                  >
+                    <Typography sx={{ fontSize: 18 }}>🗑️</Typography>
+                  </IconButton>
+                )}
+                <IconButton
+                  onClick={() => setShowStoryViewer(false)}
+                  sx={{ 
+                    color: 'white',
+                    bgcolor: 'rgba(0,0,0,0.3)',
+                    backdropFilter: 'blur(10px)',
+                    '&:hover': {
+                      bgcolor: 'rgba(0,0,0,0.5)'
+                    }
+                  }}
+                >
+                  <CloseIcon />
+                </IconButton>
+              </Box>
+            </Box>
+
+            {/* Story Text Content */}
+            {userStories[currentStoryIndex].content && (
+              <Box sx={{
+                position: 'absolute',
+                bottom: 100,
+                left: 20,
+                right: 20,
+                zIndex: 10,
+                textAlign: 'center'
+              }}>
+                <Typography
+                  variant="h5"
+                  sx={{
+                    fontWeight: 600,
+                    fontSize: { xs: 20, sm: 24 },
+                    textShadow: '2px 2px 8px rgba(0,0,0,0.8)',
+                    lineHeight: 1.3,
+                    wordBreak: 'break-word'
+                  }}
+                >
+                  {userStories[currentStoryIndex].content}
+                </Typography>
+              </Box>
+            )}
+
+            {/* Swipe Up Area - Only for own stories */}
+            {userStories[currentStoryIndex].userId === currentUser?.uid && !showViewers && (
+              <Box
+                onClick={() => getStoryViewers(userStories[currentStoryIndex].id)}
+                sx={{
+                  position: 'absolute',
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  height: 120,
+                  zIndex: 15,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  pb: 3,
+                  background: 'linear-gradient(to top, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 100%)'
+                }}
+              >
+                <Box sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  bgcolor: 'rgba(0,0,0,0.5)',
+                  px: 2,
+                  py: 1,
+                  borderRadius: 3,
+                  backdropFilter: 'blur(10px)'
+                }}>
+                  <Typography sx={{ fontSize: 16 }}>👁️</Typography>
+                  <Typography variant="body2" sx={{ 
+                    color: 'white',
+                    fontWeight: 500
+                  }}>
+                    {userStories[currentStoryIndex].views?.length || 0} views
+                  </Typography>
+                </Box>
+                <Typography variant="caption" sx={{ 
+                  color: 'rgba(255,255,255,0.8)',
+                  mt: 1,
+                  textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
+                }}>
+                  Tap to see who viewed your story
+                </Typography>
+              </Box>
+            )}
+
+            {/* Viewers List - Shows inside the story */}
+            {showViewers && userStories[currentStoryIndex].userId === currentUser?.uid && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  height: '50vh',
+                  bgcolor: 'rgba(0,0,0,0.9)',
+                  backdropFilter: 'blur(20px)',
+                  zIndex: 20,
+                  borderTopLeftRadius: 20,
+                  borderTopRightRadius: 20,
+                  display: 'flex',
+                  flexDirection: 'column'
+                }}
+              >
+                {/* Drag Handle */}
+                <Box sx={{
+                  width: 36,
+                  height: 5,
+                  bgcolor: 'rgba(255,255,255,0.3)',
+                  borderRadius: 3,
+                  mx: 'auto',
+                  mt: 1,
+                  mb: 2
+                }} />
+                
+                {/* Header */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'space-between',
+                  px: 3,
+                  pb: 2
+                }}>
+                  <Typography variant="h6" sx={{ 
+                    color: 'white',
+                    fontWeight: 600
+                  }}>
+                    Viewed by {storyViewers.length}
+                  </Typography>
+                  <IconButton
+                    onClick={() => setShowViewers(false)}
+                    sx={{ color: 'white' }}
+                  >
+                    <CloseIcon />
+                  </IconButton>
+                </Box>
+
+                {/* Viewers List */}
+                <Box sx={{ 
+                  flex: 1, 
+                  overflow: 'auto',
+                  px: 3
+                }}>
+                  {storyViewers.length === 0 ? (
+                    <Box sx={{ 
+                      textAlign: 'center', 
+                      py: 4,
+                      color: 'rgba(255,255,255,0.7)'
+                    }}>
+                      <Typography sx={{ fontSize: 48, mb: 2 }}>👁️</Typography>
+                      <Typography variant="body1" sx={{ color: 'white' }}>
+                        No views yet
+                      </Typography>
+                      <Typography variant="body2">
+                        When people view your story, you'll see them here
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {storyViewers.map((viewer) => (
+                        <Box
+                          key={viewer.id}
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 2,
+                            py: 1
+                          }}
+                        >
+                          <Avatar
+                            src={viewer.avatar}
+                            sx={{ width: 50, height: 50 }}
+                          >
+                            {viewer.username[0]?.toUpperCase()}
+                          </Avatar>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body1" sx={{ 
+                              fontWeight: 500,
+                              color: 'white'
+                            }}>
+                              {viewer.username}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
+              </Box>
+            )}
+
+            {/* Navigation areas */}
+            <Box
+              sx={{
+                position: 'absolute',
+                left: 0,
+                top: 100,
+                bottom: showViewers ? '50vh' : 150,
+                width: '40%',
+                cursor: 'pointer',
+                zIndex: 5,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-start',
+                pl: 2
+              }}
+              onClick={goToPreviousStory}
+            >
+              {currentStoryIndex > 0 && (
+                <ArrowBackIcon sx={{ 
+                  color: 'rgba(255,255,255,0.0)',
+                  fontSize: 40,
+                  transition: 'color 0.2s ease',
+                  '&:hover': {
+                    color: 'rgba(255,255,255,0.7)'
+                  }
+                }} />
+              )}
+            </Box>
+            
+            <Box
+              sx={{
+                position: 'absolute',
+                right: 0,
+                top: 100,
+                bottom: showViewers ? '50vh' : 150,
+                width: '40%',
+                cursor: 'pointer',
+                zIndex: 5,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                pr: 2
+              }}
+              onClick={goToNextStory}
+            >
+              <ArrowForwardIcon sx={{ 
+                color: 'rgba(255,255,255,0.0)',
+                fontSize: 40,
+                transition: 'color 0.2s ease',
+                '&:hover': {
+                  color: 'rgba(255,255,255,0.7)'
+                }
+              }} />
+            </Box>
+          </Box>
+        )}
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            bgcolor: '#1c1c1e',
+            color: 'white'
+          }
+        }}
+      >
+        <Box sx={{ p: 3, textAlign: 'center' }}>
+          <Typography sx={{ fontSize: 48, mb: 2 }}>🗑️</Typography>
+          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+            Delete Story?
+          </Typography>
+          <Typography variant="body2" sx={{ 
+            color: 'rgba(255,255,255,0.7)', 
+            mb: 3,
+            lineHeight: 1.5
+          }}>
+            This story will be permanently deleted and removed from your profile.
+          </Typography>
+          
+          <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+            <Button
+              onClick={() => setShowDeleteConfirm(false)}
+              variant="outlined"
+              sx={{
+                color: 'white',
+                borderColor: 'rgba(255,255,255,0.3)',
+                px: 3,
+                py: 1,
+                borderRadius: 2,
+                '&:hover': {
+                  borderColor: 'rgba(255,255,255,0.5)',
+                  bgcolor: 'rgba(255,255,255,0.05)'
+                }
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (userStories[currentStoryIndex]) {
+                  deleteStory(userStories[currentStoryIndex].id);
+                }
+              }}
+              variant="contained"
+              sx={{
+                bgcolor: '#ff3b30',
+                color: 'white',
+                px: 3,
+                py: 1,
+                borderRadius: 2,
+                '&:hover': {
+                  bgcolor: '#d70015'
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </Box>
+        </Box>
       </Dialog>
     </Container>
   );
