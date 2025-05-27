@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   AppBar,
   Toolbar,
@@ -32,13 +32,12 @@ import { db } from '../services/firebase';
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const { currentUser, logout } = useAuth();
   const { unreadCount } = useNotifications();
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [isLightbulbLit, setIsLightbulbLit] = useState(false);
-
-
 
   useEffect(() => {
     if (!currentUser?.uid) return;

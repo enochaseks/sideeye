@@ -711,6 +711,19 @@ const SideRoomComponent: React.FC = () => {
     // --- State for Camera --- (NEW)
     const [isCameraEnabled, setIsCameraEnabled] = useState(false);
     
+    // --- State for Camera Requests ---
+    const [cameraRequests, setCameraRequests] = useState<{
+        userId: string;
+        username: string;
+        avatar?: string;
+        timestamp: number;
+    }[]>([]);
+    const [showCameraRequestsDialog, setShowCameraRequestsDialog] = useState(false);
+    const [hasPendingCameraRequest, setHasPendingCameraRequest] = useState(false);
+    
+    // State to track users with approved camera permissions
+    const [approvedCameraUsers, setApprovedCameraUsers] = useState<Set<string>>(new Set());
+    
     // --- State for YouTube Player ---
     const [youtubePlayer, setYoutubePlayer] = useState<YT.Player | null>(null);
     const youtubePlayerPlaceholderId = 'youtube-player-placeholder';
@@ -793,9 +806,133 @@ const SideRoomComponent: React.FC = () => {
         };
     }, [currentUser?.uid, lastKnownBalance, db]);
 
-    // Camera toggle function for main component
+    // Camera request function for participants
+    const requestCameraPermission = useCallback(async () => {
+        if (!currentUser || !roomId || hasPendingCameraRequest) {
+            return;
+        }
+        
+        // Get user's profile data for the request
+        try {
+            const userProfileRef = doc(db, 'users', currentUser.uid);
+            const userProfileSnap = await getDoc(userProfileRef);
+            
+            let username = currentUser.email?.split('@')[0] || 'Unknown User';
+            let avatar = currentUser.photoURL || '';
+            
+            if (userProfileSnap.exists()) {
+                const profileData = userProfileSnap.data() as UserProfile;
+                username = profileData.username || username;
+                avatar = profileData.profilePic || avatar;
+            }
+            
+            const requestData = {
+                userId: currentUser.uid,
+                username,
+                avatar,
+                timestamp: Date.now()
+            };
+            
+            // Store camera request directly in Firestore for immediate visibility
+            const requestRef = doc(db, 'sideRooms', roomId, 'cameraRequests', currentUser.uid);
+            await setDoc(requestRef, requestData);
+            
+            setHasPendingCameraRequest(true);
+            toast.success("Camera request sent to host");
+            
+            // Also try socket if available as backup
+            if (socket) {
+            socket.emit('camera-request', {
+                roomId,
+                userId: currentUser.uid,
+                username,
+                avatar
+            });
+            }
+        } catch (error) {
+            console.error("Error sending camera request:", error);
+            toast.error("Failed to send camera request");
+        }
+    }, [socket, currentUser, roomId, hasPendingCameraRequest, db]);
+
+    // Handle camera request approval/denial (for room owners)
+    const handleCameraRequestDecision = useCallback(async (userId: string, username: string, approved: boolean) => {
+        if (!roomId) return;
+        
+        console.log(`📹 [CAMERA DECISION] Processing decision for ${username} (${userId}): ${approved ? 'APPROVED' : 'DENIED'}`);
+        
+        try {
+            // Remove request from Firestore first
+            const requestRef = doc(db, 'sideRooms', roomId, 'cameraRequests', userId);
+            await deleteDoc(requestRef);
+            console.log(`📹 [CAMERA DECISION] Removed request from Firestore`);
+            
+            if (approved) {
+                // Write approval to Firestore with detailed logging
+                const approvalRef = doc(db, 'sideRooms', roomId, 'cameraApprovals', userId);
+                const approvalData = {
+                    approved: true,
+                    timestamp: Date.now(),
+                    approvedBy: currentUser?.uid,
+                    username: username
+                };
+                
+                console.log(`📹 [CAMERA DECISION] Writing approval to Firestore:`, approvalData);
+                await setDoc(approvalRef, approvalData);
+                console.log(`📹 [CAMERA DECISION] ✅ Successfully wrote approval for ${username} (${userId})`);
+                
+                // Immediately update local state to ensure UI updates
+                setApprovedCameraUsers(prev => {
+                    const newSet = new Set(prev);
+                    newSet.add(userId);
+                    console.log(`📹 [CAMERA DECISION] Updated local approved users:`, Array.from(newSet));
+                    return newSet;
+                });
+                
+                toast.success(`✅ Camera approved for ${username}`);
+            } else {
+                // Remove any existing approval if denied
+                const approvalRef = doc(db, 'sideRooms', roomId, 'cameraApprovals', userId);
+                await deleteDoc(approvalRef).catch(() => {}); // Ignore errors if doesn't exist
+                console.log(`📹 [CAMERA DECISION] ❌ Denied camera for ${username} (${userId})`);
+                
+                // Update local state to remove user
+                setApprovedCameraUsers(prev => {
+                    const newSet = new Set(prev);
+                    newSet.delete(userId);
+                    console.log(`📹 [CAMERA DECISION] Updated local approved users after denial:`, Array.from(newSet));
+                    return newSet;
+                });
+                
+                toast.success(`❌ Camera denied for ${username}`);
+            }
+        } catch (error) {
+            console.error('📹 [CAMERA DECISION] Error processing decision:', error);
+            toast.error('Failed to process request');
+        }
+    }, [roomId, db, currentUser?.uid]);
+
+    // Helper function to check if a user should have their video displayed
+    const shouldShowUserVideo = useCallback((userId: string) => {
+        // Always show the current user's own video if they have camera enabled
+        if (userId === currentUser?.uid) {
+            return true;
+        }
+        
+        // For room owner: always show their video
+        if (userId === room?.ownerId) {
+            return true;
+        }
+        
+        // For other participants: show if they have camera permission (keep it stable)
+        const hasPermission = approvedCameraUsers.has(userId);
+        console.log(`🎥 shouldShowUserVideo for ${userId}: ${hasPermission}`);
+        return hasPermission;
+    }, [currentUser?.uid, room?.ownerId, approvedCameraUsers]);
+
+    // Camera toggle function for main component (room owners only)
     const toggleCamera = useCallback(() => {
-        if (activeStreamCallInstance) {
+        if (activeStreamCallInstance && isRoomOwner) {
             // Log current state
             console.log("Camera state before toggle:", activeStreamCallInstance.camera.state);
             
@@ -856,6 +993,18 @@ const SideRoomComponent: React.FC = () => {
         setHasDeclinedServerChat(false);
     }, [roomId]);
     
+    // Reset camera request state when leaving room
+    useEffect(() => {
+        return () => {
+            setHasPendingCameraRequest(false);
+            setCameraRequests([]);
+        };
+    }, [roomId]);
+
+
+
+
+    
     // --- Effect to sync camera state with Stream SDK
     useEffect(() => {
         if (activeStreamCallInstance) {
@@ -866,7 +1015,15 @@ const SideRoomComponent: React.FC = () => {
             // Set up an interval to check camera state
             const cameraCheckInterval = setInterval(() => {
                 const currentState = activeStreamCallInstance.camera.state.status === 'enabled';
-                setIsCameraEnabled(currentState);
+                
+                // Only update if camera state actually changed to prevent flickering
+                setIsCameraEnabled(prev => {
+                    if (prev !== currentState) {
+                        console.log(`🎥 Camera state changed: ${prev} → ${currentState}`);
+                        return currentState;
+                    }
+                    return prev;
+                });
             }, 1000);
             
             return () => {
@@ -908,6 +1065,12 @@ const SideRoomComponent: React.FC = () => {
         socketInstance.on('connect', () => {
             console.log('[SideRoomComponent] Socket connected:', socketInstance.id);
             setSocket(socketInstance); // Set the socket state upon successful connection
+            
+            // If we already have room and user info, join the room immediately
+            if (roomId && currentUser?.uid) {
+                console.log('[SideRoomComponent] Auto-joining room on socket connect:', roomId);
+                socketInstance.emit('join-room', roomId, currentUser.uid);
+            }
         });
 
         socketInstance.on('disconnect', (reason) => {
@@ -935,6 +1098,14 @@ const SideRoomComponent: React.FC = () => {
         };
         // Run only once on component mount
     }, []); // Empty dependency array ensures this runs only once
+
+    // Effect to join room when socket, room, and user are all available
+    useEffect(() => {
+        if (socket && roomId && currentUser?.uid) {
+            console.log('[SideRoomComponent] Joining room via socket:', roomId);
+            socket.emit('join-room', roomId, currentUser.uid);
+        }
+    }, [socket, roomId, currentUser?.uid]);
 
     // --- Effect for Style Dialog Initialization ---
     useEffect(() => {
@@ -1045,6 +1216,99 @@ const SideRoomComponent: React.FC = () => {
 
     const isViewer = true;
     const hasRoomAccess = !!room && (isRoomOwner || isViewer || isGuest);
+
+    // Listen for camera requests from Firestore (for room owners)
+    useEffect(() => {
+        if (!roomId || !isRoomOwner || !db) return;
+
+        const cameraRequestsRef = collection(db, 'sideRooms', roomId, 'cameraRequests');
+        const unsubscribe = onSnapshot(cameraRequestsRef, (snapshot) => {
+            const requests = snapshot.docs.map(doc => ({
+                userId: doc.id,
+                ...doc.data()
+            })) as {
+                userId: string;
+                username: string;
+                avatar?: string;
+                timestamp: number;
+            }[];
+            
+            setCameraRequests(requests);
+        });
+
+        return () => unsubscribe();
+    }, [roomId, isRoomOwner, db]);
+
+    // Listen for approved camera users (for hosts to track who has permission)
+    useEffect(() => {
+        if (!roomId || !db) return;
+
+        console.log('📹 [CAMERA PERMISSIONS] Setting up listener for room:', roomId);
+        
+        const approvalsRef = collection(db, 'sideRooms', roomId, 'cameraApprovals');
+        const unsubscribe = onSnapshot(approvalsRef, (snapshot) => {
+            const approvedUserIds = new Set(snapshot.docs.map(doc => doc.id));
+            
+            console.log('📹 [CAMERA PERMISSIONS] Firestore update received:');
+            console.log('📹 [CAMERA PERMISSIONS] - Snapshot size:', snapshot.size);
+            console.log('📹 [CAMERA PERMISSIONS] - Document IDs:', snapshot.docs.map(doc => doc.id));
+            console.log('📹 [CAMERA PERMISSIONS] - Previous approved users:', Array.from(approvedCameraUsers));
+            console.log('📹 [CAMERA PERMISSIONS] - New approved users:', Array.from(approvedUserIds));
+            
+            setApprovedCameraUsers(approvedUserIds);
+            
+            // Force a re-render by updating a dummy state if needed
+            if (approvedUserIds.size !== approvedCameraUsers.size) {
+                console.log('📹 [CAMERA PERMISSIONS] Camera permissions changed, forcing layout update');
+            }
+        }, (error) => {
+            console.error('📹 [CAMERA PERMISSIONS] Error listening to camera approvals:', error);
+        });
+
+        return () => {
+            console.log('📹 [CAMERA PERMISSIONS] Cleaning up listener for room:', roomId);
+            unsubscribe();
+        };
+    }, [roomId, db]);
+
+    // Listen for camera approvals for participants
+    useEffect(() => {
+        if (!roomId || !currentUser?.uid || isRoomOwner || !db) return;
+
+        // Listen for approval
+        const approvalRef = doc(db, 'sideRooms', roomId, 'cameraApprovals', currentUser.uid);
+        const unsubscribeApproval = onSnapshot(approvalRef, async (doc) => {
+            if (doc.exists() && doc.data()?.approved && activeStreamCallInstance) {
+                console.log('🎥 CAMERA APPROVED! TURNING ON NOW!');
+                setHasPendingCameraRequest(false);
+                
+                try {
+                    await activeStreamCallInstance.camera.enable();
+                    setIsCameraEnabled(true);
+                    toast.success("🎥 CAMERA ON!");
+                    
+                    // DON'T clean up approval doc - keep it for host to see permission
+                    console.log('🎥 Keeping approval document for host visibility');
+                } catch (error) {
+                    console.error('Camera error:', error);
+                    toast.error("Camera failed");
+                }
+            }
+        });
+
+        // Listen for request removal (denied)
+        const requestRef = doc(db, 'sideRooms', roomId, 'cameraRequests', currentUser.uid);
+        const unsubscribeRequest = onSnapshot(requestRef, (doc) => {
+            if (!doc.exists()) {
+                setHasPendingCameraRequest(false);
+            }
+        });
+
+        return () => {
+            unsubscribeApproval();
+            unsubscribeRequest();
+        };
+    }, [roomId, currentUser?.uid, isRoomOwner, db, activeStreamCallInstance]);
     const onlineParticipants = useMemo(() => {
         console.log('[onlineParticipants Memo] Raw presence state:', presence);
         const uniqueParticipants = new Map<string, PresenceData>();
@@ -1567,6 +1831,19 @@ const SideRoomComponent: React.FC = () => {
                 console.log(`[Stream Call] Successfully joined/created call: ${call.cid}`);
                 setActiveStreamCallInstance(call);
                 
+                // AUTO-ENABLE CAMERA FOR HOST WHEN GOING LIVE
+                if (isRoomOwner) {
+                    console.log('[Stream Call] Host going live - auto-enabling camera');
+                    try {
+                        await call.camera.enable();
+                        setIsCameraEnabled(true);
+                        toast.success("🎥 You're now live with camera!");
+                    } catch (cameraError) {
+                        console.error('[Stream Call] Failed to auto-enable host camera:', cameraError);
+                        toast.error("Camera failed to start - check permissions");
+                    }
+                }
+                
                 // Update room's isLive status if the current user is the room owner
                 if (isRoomOwner && roomId && db) {
                     console.log('[Stream Call] Current user is room owner, updating isLive status to true');
@@ -1592,7 +1869,7 @@ const SideRoomComponent: React.FC = () => {
             setAttemptToJoinCall(false); 
         };
 
-    }, [attemptToJoinCall, streamClientForProvider, roomId, currentUser?.uid, activeStreamCallInstance]);
+    }, [attemptToJoinCall, streamClientForProvider, roomId, currentUser?.uid, activeStreamCallInstance, isRoomOwner]);
 
 
     // --- Function to notify followers when going live ---
@@ -2233,6 +2510,39 @@ const SideRoomComponent: React.FC = () => {
             setInviteSearchResults([]);
             setShowInviteDialog(false); // Close dialog on success
         };
+        
+        // Camera request handlers
+        const handleCameraRequest = (data: { userId: string; username: string; avatar?: string; roomId: string }) => {
+            console.log('[Camera Request] Received camera request:', data);
+            console.log('[Camera Request] Current room ID:', roomId);
+            console.log('[Camera Request] Is room owner:', isRoomOwner);
+            
+            if (data.roomId === roomId && isRoomOwner) {
+                console.log('[Camera Request] Processing camera request from:', data.username);
+                setCameraRequests(prev => {
+                    // Check if request already exists
+                    const exists = prev.some(req => req.userId === data.userId);
+                    if (exists) {
+                        console.log('[Camera Request] Request already exists, ignoring');
+                        return prev;
+                    }
+                    
+                    const newRequest = {
+                        userId: data.userId,
+                        username: data.username,
+                        avatar: data.avatar,
+                        timestamp: Date.now()
+                    };
+                    console.log('[Camera Request] Adding new request:', newRequest);
+                    return [...prev, newRequest];
+                });
+                toast.success(`${data.username} requested camera permission`);
+            } else {
+                console.log('[Camera Request] Ignoring request - not for this room or not room owner');
+            }
+        };
+        
+
         const handleInviteFailed = (data: { reason: string; username?: string }) => {
             toast.error(data.username ? `${data.username}: ${data.reason}` : data.reason);
             setIsInvitingUser(false);
@@ -2344,6 +2654,7 @@ const SideRoomComponent: React.FC = () => {
         socket.on('force-ban', handleBeenBanned); // Listen for the server's force-ban directive
         socket.on('force-mute', handleBeenForceMuted); // Listen for force-mute from room owner
         socket.on('force-unmute', handleBeenForceUnmuted); // Listen for force-unmute from room owner
+        socket.on('camera-request', handleCameraRequest); // Listen for camera requests
 
         return () => {
             socket.off('invite-success', handleInviteSuccess);
@@ -2354,8 +2665,9 @@ const SideRoomComponent: React.FC = () => {
             socket.off('force-ban', handleBeenBanned); // Clean up ban listener
             socket.off('force-mute', handleBeenForceMuted); // Clean up force-mute listener
             socket.off('force-unmute', handleBeenForceUnmuted); // Clean up force-unmute listener
+            socket.off('camera-request', handleCameraRequest); // Clean up camera request listener
         };
-    }, [socket, roomId, navigate, activeStreamCallInstance, currentUser?.uid]); // Depend on socket, roomId, navigate, call instance, and currentUser
+    }, [socket, roomId, navigate, activeStreamCallInstance, currentUser?.uid, isRoomOwner]); // Added isRoomOwner to dependencies
 
     // --- Debounced search function for inviting users --- (Ensure this uses the socket state)
     const debouncedSearchForInvite = useCallback(
@@ -2726,16 +3038,94 @@ const SideRoomComponent: React.FC = () => {
                         </Tooltip>
                     )}
                     
-                    {/* Camera toggle button for video calls */}
+                    {/* Camera controls */}
                     {activeStreamCallInstance && (
-                        <Tooltip title={isCameraEnabled ? "Turn Camera Off" : "Turn Camera On"}>
-                            <IconButton 
-                                onClick={toggleCamera}
-                                sx={{ color: isCameraEnabled ? room?.style?.accentColor || theme.palette.primary.main : 'inherit' }}
-                            >
-                                {isCameraEnabled ? <VideocamIcon /> : <VideocamOffIcon />}
-                            </IconButton>
-                        </Tooltip>
+                        <>
+                            {isRoomOwner ? (
+                                /* Room owner: Camera toggle + Camera requests management */
+                                <>
+                                    <Tooltip title={isCameraEnabled ? "Turn Camera Off" : "Turn Camera On"}>
+                                        <IconButton 
+                                            onClick={toggleCamera}
+                                            sx={{ color: isCameraEnabled ? room?.style?.accentColor || theme.palette.primary.main : 'inherit' }}
+                                        >
+                                            {isCameraEnabled ? <VideocamIcon /> : <VideocamOffIcon />}
+                                        </IconButton>
+                                    </Tooltip>
+                                    
+                                    {/* Camera requests button - always visible to room owners */}
+                                    <Tooltip title={
+                                        cameraRequests.length > 0 
+                                            ? `${cameraRequests.length} camera request(s) - Click to manage` 
+                                            : "Manage camera requests"
+                                    }>
+                                            <IconButton 
+                                                onClick={() => setShowCameraRequestsDialog(true)}
+                                            sx={{ 
+                                                color: cameraRequests.length > 0 
+                                                    ? theme.palette.warning.main 
+                                                    : room?.style?.accentColor || 'inherit',
+                                                animation: cameraRequests.length > 0 ? 'pulse 2s infinite' : 'none',
+                                                '@keyframes pulse': {
+                                                    '0%': { opacity: 1 },
+                                                    '50%': { opacity: 0.5 },
+                                                    '100%': { opacity: 1 }
+                                                }
+                                            }}
+                                            >
+                                            {cameraRequests.length > 0 ? (
+                                                <Badge badgeContent={cameraRequests.length} color="error">
+                                                    <PersonAddIcon />
+                                                </Badge>
+                                            ) : (
+                                                <PersonAddIcon />
+                                            )}
+                                            </IconButton>
+                                        </Tooltip>
+                                </>
+                            ) : (
+                                /* Participants: Request camera permission or camera toggle if approved */
+                                !isCameraEnabled ? (
+                                    <Tooltip title={hasPendingCameraRequest ? "Camera request pending..." : "Request camera permission"}>
+                                        <span>
+                                            <IconButton 
+                                                onClick={requestCameraPermission}
+                                                disabled={hasPendingCameraRequest}
+                                                sx={{ color: hasPendingCameraRequest ? theme.palette.warning.main : room?.style?.accentColor || 'inherit' }}
+                                            >
+                                                {hasPendingCameraRequest ? (
+                                                    <Badge variant="dot" color="warning">
+                                                        <VideocamIcon />
+                                                    </Badge>
+                                                ) : (
+                                                    <VideocamOffIcon />
+                                                )}
+                                            </IconButton>
+                                        </span>
+                                    </Tooltip>
+                                ) : (
+                                    <Tooltip title="Turn Camera Off">
+                                        <IconButton 
+                                            onClick={() => {
+                                                if (activeStreamCallInstance) {
+                                                    activeStreamCallInstance.camera.disable()
+                                                        .then(() => {
+                                                            setIsCameraEnabled(false);
+                                                            toast.success("Camera disabled");
+                                                        })
+                                                        .catch(err => {
+                                                            console.error("Error disabling camera:", err);
+                                                        });
+                                                }
+                                            }}
+                                            sx={{ color: room?.style?.accentColor || theme.palette.primary.main }}
+                                        >
+                                            <VideocamIcon />
+                                        </IconButton>
+                                    </Tooltip>
+                                )
+                            )}
+                        </>
                     )}
                     {isRoomOwner && (
                         <>
@@ -4173,6 +4563,13 @@ const SideRoomComponent: React.FC = () => {
                                      onForceBan={handleForceBan}
                                      theme={theme}
                                      navigate={navigate}
+                                     // Camera request props
+                                     requestCameraPermission={requestCameraPermission}
+                                     hasPendingCameraRequest={hasPendingCameraRequest}
+                                     toggleCameraCallback={toggleCamera}
+                                     // Camera permission check
+                                     shouldShowUserVideo={shouldShowUserVideo}
+                                     approvedCameraUsers={approvedCameraUsers}
                                  />
                              </StreamCall>
                          </StreamVideo>
@@ -4762,6 +5159,76 @@ const SideRoomComponent: React.FC = () => {
                     </DialogContent>
                 </Dialog>
 
+                {/* Camera Requests Dialog */}
+                <Dialog
+                    open={showCameraRequestsDialog}
+                    onClose={() => setShowCameraRequestsDialog(false)}
+                    maxWidth="sm"
+                    fullWidth
+                >
+                    <DialogTitle>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Typography variant="h6">Camera Requests</Typography>
+                            <IconButton onClick={() => setShowCameraRequestsDialog(false)}>
+                                <CloseIcon />
+                            </IconButton>
+                        </Box>
+                    </DialogTitle>
+                    <DialogContent>
+                        {cameraRequests.length === 0 ? (
+                            <Box sx={{ textAlign: 'center', py: 3 }}>
+                                <Typography variant="body1" color="text.secondary">
+                                    No pending camera requests
+                                </Typography>
+                            </Box>
+                        ) : (
+                            <List>
+                                {cameraRequests.map((request) => (
+                                    <ListItem
+                                        key={request.userId}
+                                        sx={{ 
+                                            border: '1px solid',
+                                            borderColor: 'divider',
+                                            borderRadius: 1,
+                                            mb: 1
+                                        }}
+                                    >
+                                        <ListItemAvatar>
+                                            <Avatar src={request.avatar} alt={request.username}>
+                                                {request.username.charAt(0).toUpperCase()}
+                                            </Avatar>
+                                        </ListItemAvatar>
+                                        <ListItemText
+                                            primary={request.username}
+                                            secondary={`Requested ${new Date(request.timestamp).toLocaleTimeString()}`}
+                                        />
+                                        <Box sx={{ display: 'flex', gap: 1 }}>
+                                            <Button
+                                                variant="contained"
+                                                color="success"
+                                                size="small"
+                                                onClick={() => handleCameraRequestDecision(request.userId, request.username, true)}
+                                                startIcon={<VideocamIcon />}
+                                            >
+                                                Approve
+                                            </Button>
+                                            <Button
+                                                variant="outlined"
+                                                color="error"
+                                                size="small"
+                                                onClick={() => handleCameraRequestDecision(request.userId, request.username, false)}
+                                                startIcon={<VideocamOffIcon />}
+                                            >
+                                                Deny
+                                            </Button>
+                                        </Box>
+                                    </ListItem>
+                                ))}
+                            </List>
+                        )}
+                    </DialogContent>
+                </Dialog>
+
                 {/* Owner Not Live Dialog */}
                 <Dialog
                     open={showOwnerNotLiveDialog}
@@ -4845,8 +5312,13 @@ const InsideStreamCallContent: React.FC<{
     onForceRemove: (targetUserId: string, targetUsername?: string, reason?: string) => void, 
     onForceBan: Function, 
     theme: any,
-    navigate: Function
-}> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme, navigate }) => {
+    navigate: Function,
+    requestCameraPermission: () => void,
+    hasPendingCameraRequest: boolean,
+    toggleCameraCallback: () => void,
+    shouldShowUserVideo: (userId: string) => boolean,
+    approvedCameraUsers: Set<string>
+}> = ({ room, isRoomOwner, isGuest, handleOpenShareVideoDialog, handleClearSharedVideo, currentVideoUrl, renderVideoPlayer, onForceMuteToggle, onForceRemove, onForceBan, theme, navigate, requestCameraPermission, hasPendingCameraRequest, toggleCameraCallback, shouldShowUserVideo, approvedCameraUsers }) => {
     // Create a ref for the screen share video element
     const screenShareVideoRef = useRef<HTMLVideoElement>(null);
     const call = useCall(); 
@@ -5174,35 +5646,7 @@ const InsideStreamCallContent: React.FC<{
         setIsPipVisible(true);
     };
 
-    // Toggle camera function that can be reused
-    const toggleCamera = () => {
-        if (call) {
-            // Force enable camera first to ensure permissions are requested properly
-            if (call.camera.state.status !== 'enabled') {
-                // First get direct access to camera to ensure permissions
-                navigator.mediaDevices.getUserMedia({ video: true })
-                    .then(stream => {
-                        // Stop this stream as we just needed to check permissions
-                        stream.getTracks().forEach(track => track.stop());
-                        
-                        // Now enable in Stream SDK
-                        return call.camera.enable();
-                    })
-                    .then(() => {
-                        // Force PiP to show for better visibility
-                        setIsPipVisible(true);
-                    })
-                    .catch(err => {
-                        console.error("Error enabling camera:", err);
-                        toast.error("Could not enable camera. Please check permissions.");
-                    });
-            } else {
-                call.camera.disable().catch(err => {
-                    console.error("Error disabling camera:", err);
-                });
-            }
-        }
-    };
+
 
     // Auto scroll to bottom when new messages arrive
     useEffect(() => {
@@ -5371,7 +5815,7 @@ const handleLeaveCall = () => {
                     </Box>
                 )}
 
-                {/* TikTok-like video display for all participants */}
+                {/* Dynamic video layout based on participant count */}
                 {!screenSharingParticipant && (
                     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                         <Typography variant="h6" align="center" sx={{ 
@@ -5383,19 +5827,14 @@ const handleLeaveCall = () => {
                             Live Video
                         </Typography>
                         
-                        {/* Main side-by-side video display */}
-                        <Box sx={{ 
-                            width: '100%',
-                            display: 'flex',
-                            flexDirection: 'row',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            gap: 2,
-                            flexWrap: { xs: 'wrap', sm: 'nowrap' },
-                            mb: 2
-                        }}>
-                            {isCameraEnabled ? (
-                            /* Your video - only shown when camera is enabled */
+                        {(() => {
+                            const otherParticipants = participants.filter(p => p.userId !== currentUser?.uid);
+                            // Don't filter by camera permission here - we'll do that later based on context
+                            const hasOtherParticipants = otherParticipants.length > 0;
+                            
+                            // HOST SOLO MODE: Large 1080x720 camera
+                            if (isRoomOwner && isCameraEnabled && !hasOtherParticipants) {
+                                return (
                             <Box sx={{ 
                                 border: '3px solid',
                                 borderColor: theme.palette.primary.main,
@@ -5404,12 +5843,12 @@ const handleLeaveCall = () => {
                                 position: 'relative',
                                 display: 'flex',
                                 flexDirection: 'column',
-                                height: { xs: '40vh', sm: '60vh' },
-                                maxHeight: '400px',
-                                width: { xs: '90%', sm: '45%' },
-                                maxWidth: '350px',
+                                        width: { xs: '95%', sm: '80%', md: '70%' },
+                                        maxWidth: '1080px',
+                                        aspectRatio: '16/9', // 1080x720 ratio
                                 overflow: 'hidden',
-                                boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
+                                        boxShadow: '0 15px 30px rgba(0,0,0,0.5)',
+                                        mb: 2,
                                 '& .str-video__participant-view': {
                                     width: '100%',
                                     height: '100%',
@@ -5421,31 +5860,139 @@ const handleLeaveCall = () => {
                                     }
                                 }
                             }}>
-                                {/* Close (X) button */}
+                                        {localParticipant && (
+                                            <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                        )}
+                                        
+                                        {/* Host overlay */}
+                                        <Box sx={{
+                                            position: 'absolute',
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                            padding: '60px 24px 24px 24px',
+                                            background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                                            color: 'white',
+                                            zIndex: 2
+                                        }}>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    <Avatar sx={{ width: 50, height: 50, mr: 2 }}>
+                                                        {currentUser?.displayName?.[0] || 'H'}
+                                                    </Avatar>
+                                                    <Box>
+                                                        <Typography variant="h6" fontWeight="bold">
+                                                            {currentUser?.displayName || 'Host'} (Host)
+                                                        </Typography>
+                                                        <Typography variant="body2">
+                                                            {room?.name || 'Live Room'}
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                                
+                                                {/* Large control buttons */}
+                                                <Box sx={{ display: 'flex', gap: 2 }}>
+                                                    <Tooltip title={localUserIsMute ? "Unmute" : "Mute"}>
+                                                        <IconButton 
+                                                            onClick={() => call?.microphone.toggle()}
+                                                            sx={{
+                                                                backgroundColor: 'rgba(0,0,0,0.6)',
+                                                                color: 'white',
+                                                                width: 56,
+                                                                height: 56,
+                                                                '&:hover': {
+                                                                    backgroundColor: 'rgba(0,0,0,0.8)'
+                                                                }
+                                                            }}
+                                                        >
+                                                            {localUserIsMute ? <MicOff fontSize="large" /> : <Mic fontSize="large" />}
+                                                        </IconButton>
+                                                    </Tooltip>
+                                                    <Tooltip title="Turn Camera Off">
                                 <IconButton
-                                    onClick={toggleCamera}
+                                    onClick={toggleCameraCallback}
                                     sx={{
-                                        position: 'absolute',
-                                        top: 8,
-                                        right: 8,
                                         backgroundColor: 'rgba(0,0,0,0.6)',
                                         color: 'white',
-                                        width: 32,
-                                        height: 32,
-                                        zIndex: 10,
+                                                                width: 56,
+                                                                height: 56,
                                         '&:hover': {
                                             backgroundColor: 'rgba(255,0,0,0.8)'
                                         }
                                     }}
                                 >
-                                    <CloseIcon fontSize="small" />
+                                                            <VideocamOffIcon fontSize="large" />
                                 </IconButton>
+                                                    </Tooltip>
+                                                </Box>
+                                            </Box>
+                                        </Box>
+                                    </Box>
+                                );
+                            }
+                            
+                            // Check if we have participants with camera enabled
+                            const participantsWithCamera = otherParticipants.filter(p => shouldShowUserVideo(p.userId));
+                            const currentUserHasCamera = isCameraEnabled;
+                            
+                            // IMPROVED: Check for camera permissions using Firestore data directly
+                            const otherUsersWithCameraPermission = otherParticipants.filter(p => {
+                                // Check if user has camera permission via shouldShowUserVideo OR approvedCameraUsers
+                                const hasPermissionViaFunction = shouldShowUserVideo(p.userId);
+                                const hasPermissionViaFirestore = approvedCameraUsers.has(p.userId);
+                                const isRoomOwner = p.userId === room.ownerId;
                                 
+                                console.log(`[Video Layout] User ${p.userId}: hasPermissionViaFunction=${hasPermissionViaFunction}, hasPermissionViaFirestore=${hasPermissionViaFirestore}, isRoomOwner=${isRoomOwner}`);
+                                
+                                return hasPermissionViaFunction || hasPermissionViaFirestore || isRoomOwner;
+                            });
+                            
+                            console.log(`[Video Layout] Current user has camera: ${currentUserHasCamera}, Other users with permission: ${otherUsersWithCameraPermission.length}, Approved camera users: ${Array.from(approvedCameraUsers)}`);
+                            
+                            // SIDE-BY-SIDE MODE: When current user has camera AND there are other users with camera permission
+                            // SIMPLE FIX: Also check if there are any approved camera users at all
+                            const hasApprovedUsers = approvedCameraUsers.size > 0;
+                            if (currentUserHasCamera && (otherUsersWithCameraPermission.length > 0 || hasApprovedUsers)) {
+                                return (
+                                    <Box sx={{ 
+                                        width: '100%',
+                                        display: 'flex',
+                                        flexDirection: 'row',
+                                        justifyContent: 'center',
+                                        alignItems: 'flex-start',
+                                        gap: 2,
+                                        flexWrap: { xs: 'wrap', sm: 'nowrap' },
+                                        mb: 2
+                                    }}>
+                                        {/* Current user's video */}
+                                        {currentUserHasCamera && (
+                                            <Box sx={{ 
+                                                border: '3px solid',
+                                                borderColor: isRoomOwner ? theme.palette.primary.main : 'divider',
+                                                borderRadius: '16px',
+                                                backgroundColor: '#000',
+                                                position: 'relative',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                width: { xs: '95%', sm: '45%' },
+                                                aspectRatio: '16/9',
+                                                overflow: 'hidden',
+                                                boxShadow: '0 15px 30px rgba(0,0,0,0.5)',
+                                                '& .str-video__participant-view': {
+                                                    width: '100%',
+                                                    height: '100%',
+                                                    '& video': {
+                                                        width: '100%',
+                                                        height: '100%',
+                                                        objectFit: 'cover',
+                                                        background: '#000'
+                                                    }
+                                                }
+                                            }}>
                                 {localParticipant && (
                                     <ParticipantView participant={localParticipant} trackType="videoTrack" />
                                 )}
                                 
-                                {/* TikTok-style gradient overlay at bottom */}
                                 <Box sx={{
                                     position: 'absolute',
                                     bottom: 0,
@@ -5457,85 +6004,131 @@ const handleLeaveCall = () => {
                                     zIndex: 2
                                 }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                        <Avatar sx={{ width: 40, height: 40, mr: 1 }}>
+                                                        <Avatar sx={{ width: 32, height: 32, mr: 1 }}>
                                             {currentUser?.displayName?.[0] || 'U'}
                                         </Avatar>
                                         <Box>
                                             <Typography variant="subtitle2" fontWeight="bold">
-                                                {currentUser?.displayName || 'You'}
-                                            </Typography>
-                                            <Typography variant="caption">
-                                                {room?.name || 'Live Room'}
+                                                                {currentUser?.displayName || 'You'} {isRoomOwner && '(Host)'}
                                             </Typography>
                                         </Box>
                                     </Box>
                                 </Box>
-                                
-                                {/* Control buttons */}
+                                            </Box>
+                                        )}
+
+                                        {/* Other participant's video */}
+                                        {(otherUsersWithCameraPermission.length > 0 || hasApprovedUsers) && (() => {
+                                            // SIMPLE FIX: Show any participant with camera permission or approval
+                                            const participantToShow = participantsWithCamera[0] || 
+                                                                    otherUsersWithCameraPermission[0] || 
+                                                                    otherParticipants.find(p => approvedCameraUsers.has(p.userId));
+                                            
+                                            if (!participantToShow) return null;
+                                            
+                                            const hasActiveVideo = participantsWithCamera.some(p => p.userId === participantToShow.userId);
+                                            
+                                            return (
                                 <Box sx={{
-                                    position: 'absolute',
-                                    right: 12,
-                                    bottom: 70,
+                                                    border: '3px solid',
+                                                    borderColor: participantToShow.userId === room.ownerId ? theme.palette.primary.main : 'divider',
+                                                    borderRadius: '16px',
+                                                    backgroundColor: '#000',
+                                                    position: 'relative',
                                     display: 'flex',
                                     flexDirection: 'column',
-                                    alignItems: 'center',
-                                    gap: 2
-                                }}>                                      
-                                     <Tooltip title={localUserIsMute ? "Unmute" : "Mute"}>
-                                         <IconButton 
-                                             onClick={() => call?.microphone.toggle()}
-                                             sx={{
-                                                 backgroundColor: 'rgba(0,0,0,0.6)',
-                                                 color: 'white',
-                                                 width: 44,
-                                                 height: 44,
-                                                 '&:hover': {
-                                                     backgroundColor: 'rgba(0,0,0,0.8)'
-                                                 }
-                                             }}
-                                         >
-                                             {localUserIsMute ? <MicOff /> : <Mic />}
-                                         </IconButton>
-                                     </Tooltip>
-                                </Box>
-                            </Box>
-                            ) : (
+                                                    width: { xs: '95%', sm: '45%' },
+                                                    aspectRatio: '16/9',
+                                                    overflow: 'hidden',
+                                                    boxShadow: '0 15px 30px rgba(0,0,0,0.5)',
+                                                    '& .str-video__participant-view': {
+                                                        width: '100%',
+                                                        height: '100%',
+                                                        '& video': {
+                                                            width: '100%',
+                                                            height: '100%',
+                                                            objectFit: 'cover',
+                                                            background: '#000'
+                                                        }
+                                                    }
+                                                }}>
+                                                    {hasActiveVideo ? (
+                                                        <ParticipantView 
+                                                            participant={participantToShow} 
+                                                            trackType="videoTrack" 
+                                                        />
+                                                    ) : (
+                                                        // Show placeholder when camera permission granted but not yet enabled
                                 <Box sx={{
+                                                            width: '100%',
+                                                            height: '100%',
                                     display: 'flex',
-                                    flexDirection: 'column',
-                                    justifyContent: 'center',
                                     alignItems: 'center',
-                                    width: { xs: '90%', sm: '45%' },
-                                    maxWidth: '350px',
-                                }}>
-                                    <Button 
-                                        variant="contained" 
-                                        color="primary" 
-                                        onClick={toggleCamera}
-                                        startIcon={<VideocamIcon />}
-                                    >
-                                        Enable Camera
-                                    </Button>
+                                                            justifyContent: 'center',
+                                                            backgroundColor: '#1a1a1a'
+                                                        }}>
+                                                            <Box sx={{ textAlign: 'center', color: 'white' }}>
+                                                                <Avatar 
+                                                                    src={firestoreUserData[participantToShow.userId]?.avatar} 
+                                                                    sx={{ width: 80, height: 80, mx: 'auto', mb: 2 }}
+                                                                >
+                                                                    {participantToShow?.name?.[0] || 'U'}
+                                                                </Avatar>
+                                                                <Typography variant="body2">
+                                                                    Camera permission granted
+                                                                </Typography>
+                                                                <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                                                                    Waiting for camera to turn on...
+                                                </Typography>
+                                            </Box>
                                 </Box>
                             )}
 
-                            {/* Other participant's video (side by side) - prioritizing the host */}
-                            {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 0 && (
-                                isPipVisible ? (
+                                                    <Box sx={{
+                                                        position: 'absolute',
+                                                        bottom: 0,
+                                                        left: 0,
+                                                        right: 0,
+                                                        padding: '40px 16px 16px 16px',
+                                                        background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                                                        color: 'white',
+                                                        zIndex: 2
+                                                    }}>
+                                                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                            <Avatar src={firestoreUserData[participantToShow.userId]?.avatar} sx={{ width: 32, height: 32, mr: 1 }} />
+                                                            <Box>
+                                                                <Typography variant="subtitle2" fontWeight="bold">
+                                                                    {participantToShow?.name || 'User'}
+                                                                    {participantToShow.userId === room.ownerId && " (Host)"}
+                                                                </Typography>
+                                                            </Box>
+                                                        </Box>
+                                                    </Box>
+                                                </Box>
+                                            );
+                                        })()}
+                                    </Box>
+                                );
+                            }
+                            
+                            // HOST SOLO MODE: Large 1080x720 camera for host only
+                            // SIMPLE FIX: Only show solo mode if NO approved users exist
+                            if (isRoomOwner && currentUserHasCamera && otherUsersWithCameraPermission.length === 0 && !hasApprovedUsers) {
+                                return (
                                     <Box sx={{ 
                                         border: '3px solid',
-                                        borderColor: 'divider',
+                                        borderColor: theme.palette.primary.main,
                                         borderRadius: '16px',
                                         backgroundColor: '#000',
                                         position: 'relative',
                                         display: 'flex',
                                         flexDirection: 'column',
-                                        height: { xs: '40vh', sm: '60vh' },
-                                        maxHeight: '400px',
-                                        width: { xs: '90%', sm: '45%' },
-                                        maxWidth: '350px',
+                                        width: { xs: '95%', sm: '80%', md: '70%' },
+                                        maxWidth: '1080px',
+                                        aspectRatio: '16/9',
                                         overflow: 'hidden',
-                                        boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
+                                        boxShadow: '0 15px 30px rgba(0,0,0,0.5)',
+                                        mb: 2,
                                         '& .str-video__participant-view': {
                                             width: '100%',
                                             height: '100%',
@@ -5547,129 +6140,214 @@ const handleLeaveCall = () => {
                                             }
                                         }
                                     }}>
-                                        {(() => {
-                                            // Prioritize showing the host if present
-                                            const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
-                                            const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
-                                            const participantToShow = hostParticipant || otherParticipant;
-                                            
-                                            return participantToShow ? (
-                                                <ParticipantView 
-                                                    participant={participantToShow} 
-                                                    trackType="videoTrack" 
-                                                />
-                                            ) : null;
-                                        })()}
-
-                                        {/* Close (X) button for other participant */}
-                                        <IconButton
-                                            onClick={() => {
-                                                // Hide the remote participant's view
-                                                setIsPipVisible(false);
-                                                toast.success("Video view closed");
-                                            }}
-                                            sx={{
-                                                position: 'absolute',
-                                                top: 8,
-                                                right: 8,
-                                                backgroundColor: 'rgba(0,0,0,0.6)',
-                                                color: 'white',
-                                                width: 32,
-                                                height: 32,
-                                                zIndex: 10,
-                                                '&:hover': {
-                                                    backgroundColor: 'rgba(255,0,0,0.8)'
-                                                }
-                                            }}
-                                        >
-                                            <CloseIcon fontSize="small" />
-                                        </IconButton>
-
-                                        {/* Name overlay for other participant */}
+                                        {localParticipant && (
+                                            <ParticipantView participant={localParticipant} trackType="videoTrack" />
+                                        )}
+                                        
                                         <Box sx={{
                                             position: 'absolute',
                                             bottom: 0,
                                             left: 0,
                                             right: 0,
-                                            padding: '40px 16px 16px 16px',
+                                            padding: '60px 24px 24px 24px',
                                             background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
                                             color: 'white',
                                             zIndex: 2
                                         }}>
-                                                                                      {(() => {
-                                            // Use the same logic to get the prioritized participant
-                                            const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
-                                            const otherParticipant = participants.filter(p => p.userId !== currentUser?.uid)[0];
-                                            const participantToShow = hostParticipant || otherParticipant;
-                                            
-                                            return participantToShow && (
+                                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                                    <Avatar src={firestoreUserData[participantToShow.userId]?.avatar} sx={{ width: 40, height: 40, mr: 1 }} />
+                                                    <Avatar sx={{ width: 50, height: 50, mr: 2 }}>
+                                                        {currentUser?.displayName?.[0] || 'H'}
+                                                    </Avatar>
                                                     <Box>
-                                                        <Typography variant="subtitle2" fontWeight="bold">
-                                                            {participantToShow?.name || 'User'}
-                                                            {participantToShow.userId === room.ownerId && " (Host)"}
+                                                        <Typography variant="h6" fontWeight="bold">
+                                                            {currentUser?.displayName || 'Host'} (Host)
+                                                        </Typography>
+                                                        <Typography variant="body2">
+                                                            {room?.name || 'Live Room'}
                                                         </Typography>
                                                     </Box>
                                                 </Box>
-                                            );
-                                        })()}
+                                                
+                                                <Box sx={{ display: 'flex', gap: 2 }}>
+                                                    <Tooltip title={localUserIsMute ? "Unmute" : "Mute"}>
+                                        <IconButton
+                                                            onClick={() => call?.microphone.toggle()}
+                                                            sx={{
+                                                                backgroundColor: 'rgba(0,0,0,0.6)',
+                                                                color: 'white',
+                                                                width: 56,
+                                                                height: 56,
+                                                                '&:hover': {
+                                                                    backgroundColor: 'rgba(0,0,0,0.8)'
+                                                                }
+                                                            }}
+                                                        >
+                                                            {localUserIsMute ? <MicOff fontSize="large" /> : <Mic fontSize="large" />}
+                                                        </IconButton>
+                                                    </Tooltip>
+                                                    <Tooltip title="Turn Camera Off">
+                                                        <IconButton 
+                                                            onClick={toggleCameraCallback}
+                                            sx={{
+                                                backgroundColor: 'rgba(0,0,0,0.6)',
+                                                color: 'white',
+                                                                width: 56,
+                                                                height: 56,
+                                                '&:hover': {
+                                                    backgroundColor: 'rgba(255,0,0,0.8)'
+                                                }
+                                            }}
+                                        >
+                                                            <VideocamOffIcon fontSize="large" />
+                                        </IconButton>
+                                                    </Tooltip>
+                                                </Box>
+                                            </Box>
                                         </Box>
                                     </Box>
-                                ) : (
-                                    <Box sx={{
+                                );
+                            }
+                            
+                            // PARTICIPANT SOLO MODE: Show host video if available
+                            if (!isRoomOwner && otherUsersWithCameraPermission.length > 0 && !currentUserHasCamera) {
+                                const hostParticipant = participantsWithCamera.find(p => p.userId === room.ownerId) || 
+                                                       otherUsersWithCameraPermission.find(p => p.userId === room.ownerId);
+                                const participantToShow = hostParticipant || participantsWithCamera[0] || otherUsersWithCameraPermission[0];
+                                const hasActiveVideo = participantsWithCamera.some(p => p.userId === participantToShow.userId);
+                                
+                                return (
+                                    <Box sx={{ 
+                                        border: '3px solid',
+                                        borderColor: participantToShow.userId === room.ownerId ? theme.palette.primary.main : 'divider',
+                                        borderRadius: '16px',
+                                        backgroundColor: '#000',
+                                        position: 'relative',
                                         display: 'flex',
                                         flexDirection: 'column',
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                        width: { xs: '90%', sm: '45%' },
-                                        maxWidth: '350px',
+                                        width: { xs: '95%', sm: '80%', md: '70%' },
+                                        maxWidth: '1080px',
+                                        aspectRatio: '16/9',
+                                        overflow: 'hidden',
+                                        boxShadow: '0 15px 30px rgba(0,0,0,0.5)',
+                                        mb: 2,
+                                        '& .str-video__participant-view': {
+                                            width: '100%',
+                                            height: '100%',
+                                            '& video': {
+                                                width: '100%',
+                                                height: '100%',
+                                                objectFit: 'cover',
+                                                background: '#000'
+                                            }
+                                        }
                                     }}>
-                                        <Button 
-                                            variant="outlined" 
-                                            color="primary" 
-                                            onClick={() => setIsPipVisible(true)}
-                                            startIcon={<VideocamIcon />}
-                                        >
-                                            Show Partner Video
-                                        </Button>
-                                    </Box>
-                                )
-                            )}
-                        </Box>
+                                        {hasActiveVideo ? (
+                                            <ParticipantView 
+                                                participant={participantToShow} 
+                                                trackType="videoTrack" 
+                                            />
+                                        ) : (
+                                            // Show placeholder when camera permission granted but not yet enabled
+                                            <Box sx={{
+                                                width: '100%',
+                                                height: '100%',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                backgroundColor: '#1a1a1a'
+                                            }}>
+                                                <Box sx={{ textAlign: 'center', color: 'white' }}>
+                                                    <Avatar 
+                                                        src={firestoreUserData[participantToShow.userId]?.avatar} 
+                                                        sx={{ width: 120, height: 120, mx: 'auto', mb: 3 }}
+                                                    >
+                                                        {participantToShow?.name?.[0] || 'U'}
+                                                    </Avatar>
+                                                    <Typography variant="h6" sx={{ mb: 1 }}>
+                                                        Camera permission granted
+                                                    </Typography>
+                                                    <Typography variant="body2" sx={{ opacity: 0.7 }}>
+                                                        Waiting for camera to turn on...
+                                                    </Typography>
+                                                </Box>
+                                            </Box>
+                                        )}
 
-                        {/* Show additional participants if more than one other participant */}
-                        {participants && participants.filter(p => p.userId !== currentUser?.uid).length > 1 && (
+                                        <Box sx={{
+                                            position: 'absolute',
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                            padding: '60px 24px 24px 24px',
+                                            background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                                            color: 'white',
+                                            zIndex: 2
+                                        }}>
+                                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                <Avatar src={firestoreUserData[participantToShow.userId]?.avatar} sx={{ width: 50, height: 50, mr: 2 }} />
+                                                    <Box>
+                                                    <Typography variant="h6" fontWeight="bold">
+                                                            {participantToShow?.name || 'User'}
+                                                            {participantToShow.userId === room.ownerId && " (Host)"}
+                                                        </Typography>
+                                                    <Typography variant="body2">
+                                                        {room?.name || 'Live Room'}
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                        </Box>
+                                    </Box>
+                                );
+                            }
+                            
+                            // NO VIDEO: Just show message
+                            return (
+                                    <Box sx={{
+                                    width: '100%',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                    mb: 2
+                                }}>
+                                    <Typography variant="h6" align="center" sx={{ 
+                                        color: room?.style?.textColor || theme.palette.text.primary,
+                                        mb: 2
+                                    }}>
+                                        {isRoomOwner ? "Turn on your camera to go live!" : "Waiting for host to enable camera..."}
+                                    </Typography>
+                                    </Box>
+                            );
+                        })()}
+
+                        {/* COLLAGE: Additional participants in a grid */}
+                        {participants && participants.filter(p => p.userId !== currentUser?.uid && shouldShowUserVideo(p.userId)).length > 1 && (
                             <Box sx={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                justifyContent: 'center',
-                                gap: 1,
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                                gap: 1.5,
                                 mt: 2,
                                 width: '100%',
-                                maxWidth: '600px'
+                                maxWidth: '800px',
+                                px: 2
                             }}>
                                 {participants
                                    .filter(p => p.userId !== currentUser?.uid)
-                                   // Get the host participant to exclude from this list if shown in main view
-                                   .filter(p => {
-                                       const hostParticipant = participants.find(p => p.userId === room.ownerId && p.userId !== currentUser?.uid);
-                                       // If this is the host AND the host is shown in the main view (not this one), skip
-                                       return !(p.userId === room.ownerId && hostParticipant === participants.filter(p => p.userId !== currentUser?.uid)[0]);
-                                   })
+                                   .filter(p => shouldShowUserVideo(p.userId)) // Only show participants with camera permission
+                                   .slice(1) // Skip the first participant (shown in main view)
                                    .filter(p => !hiddenParticipantIds.includes(p.userId))
                                    .map((participant) => (
                                     <Box 
                                         key={participant.userId}
                                         sx={{
-                                            width: '100px',
-                                            height: '150px',
-                                            borderRadius: '10px',
+                                            aspectRatio: '3/4',
+                                            borderRadius: '12px',
                                             overflow: 'hidden',
                                             position: 'relative',
                                             border: '2px solid',
-                                            borderColor: 'divider',
+                                            borderColor: participant.userId === room.ownerId ? theme.palette.primary.main : 'divider',
                                             backgroundColor: '#000',
+                                            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
                                             '& .str-video__participant-view': {
                                                 width: '100%',
                                                 height: '100%',
@@ -5682,36 +6360,25 @@ const handleLeaveCall = () => {
                                         }}
                                     >
                                         <ParticipantView participant={participant} trackType="videoTrack" />
-                                        {/* Close (X) button for additional participants */}
+                                        
                                         <IconButton
                                             onClick={() => {
-                                                // Toggle the visibility of this participant in a state
                                                 const hiddenIds = [...(hiddenParticipantIds || [])];
-                                                if (hiddenIds.includes(participant.userId)) {
-                                                    // Remove from hidden list
-                                                    const index = hiddenIds.indexOf(participant.userId);
-                                                    if (index > -1) {
-                                                        hiddenIds.splice(index, 1);
-                                                    }
-                                                } else {
-                                                    // Add to hidden list
                                                     hiddenIds.push(participant.userId);
-                                                }
                                                 setHiddenParticipantIds(hiddenIds);
-                                                toast.success("Video view toggled");
+                                                toast.success("Video hidden");
                                             }}
                                             sx={{
                                                 position: 'absolute',
-                                                top: 2,
-                                                right: 2,
+                                                top: 4,
+                                                right: 4,
                                                 backgroundColor: 'rgba(0,0,0,0.6)',
                                                 color: 'white',
-                                                width: 20,
-                                                height: 20,
+                                                width: 24,
+                                                height: 24,
                                                 zIndex: 10,
-                                                padding: '2px',
                                                 '& .MuiSvgIcon-root': {
-                                                    fontSize: '14px'
+                                                    fontSize: '16px'
                                                 },
                                                 '&:hover': {
                                                     backgroundColor: 'rgba(255,0,0,0.8)'
@@ -5720,21 +6387,27 @@ const handleLeaveCall = () => {
                                         >
                                             <CloseIcon />
                                         </IconButton>
+                                        
                                         <Box sx={{
                                             position: 'absolute',
                                             bottom: 0,
                                             left: 0,
                                             right: 0,
-                                            padding: '2px 4px',
-                                            background: 'rgba(0,0,0,0.7)',
-                                            color: 'white',
-                                            fontSize: '10px',
-                                            textAlign: 'center',
+                                            padding: '8px 6px 4px 6px',
+                                            background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                                            color: 'white'
+                                        }}>
+                                            <Typography variant="caption" sx={{
+                                                fontSize: '11px',
+                                                fontWeight: 'bold',
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
-                                            whiteSpace: 'nowrap'
+                                                whiteSpace: 'nowrap',
+                                                display: 'block'
                                         }}>
                                             {participant.name || `User ${participant.userId.substring(0, 5)}`}
+                                                {participant.userId === room.ownerId && ' (Host)'}
+                                            </Typography>
                                         </Box>
                                     </Box>
                                 ))}
@@ -6173,7 +6846,9 @@ const handleLeaveCall = () => {
                 display: 'flex',
                 justifyContent: 'center',
                 alignItems: 'center', 
-                backgroundColor: room?.style?.headerColor || theme.palette.background.paper
+                backgroundColor: room?.style?.headerColor || theme.palette.background.paper,
+                gap: 2,
+                flexWrap: 'wrap'
             }}>
                  <Button
                     variant="outlined"
@@ -6195,7 +6870,6 @@ const handleLeaveCall = () => {
                             onClick={() => call?.microphone.toggle()} 
                             color={localUserIsMute ? "default" : "primary"} 
                             sx={{ 
-                                ml: 2,
                                 color: !localUserIsMute ? (room?.style?.accentColor || 'primary.main') : 'default'
                             }} 
                             disabled={!call} 
@@ -6205,14 +6879,13 @@ const handleLeaveCall = () => {
                     </Tooltip>
                 )}
 
-                {/* THIS IS THE MAIN CAMERA TOGGLE BUTTON */}
-                {isRoomOwner && (
+                {/* Camera controls for different user types */}
+                {isRoomOwner ? (
                     <Tooltip title={isCameraEnabled ? "Turn Camera Off" : "Turn Camera On"}>
                         <IconButton
-                            onClick={toggleCamera}
+                            onClick={toggleCameraCallback}
                             color={isCameraEnabled ? "primary" : "default"}
                             sx={{
-                                ml: 1,
                                 color: isCameraEnabled ? (room?.style?.accentColor || 'primary.main') : 'default'
                             }}
                             disabled={!call}
@@ -6220,40 +6893,67 @@ const handleLeaveCall = () => {
                             {isCameraEnabled ? <VideocamIcon /> : <VideocamOffIcon />}
                         </IconButton>
                     </Tooltip>
-                )}
-
-                {/* Separate button to toggle PiP visibility */}
-                {isRoomOwner && (
-                    <Tooltip title={isPipVisible ? "Hide Camera Window" : "Show Camera Window"}>
-                        <IconButton
-                            onClick={() => setIsPipVisible(!isPipVisible)}
-                            color={isPipVisible ? "primary" : "default"}
-                            sx={{ 
-                                ml: 1,
-                                color: isPipVisible ? (room?.style?.accentColor || 'primary.main') : 'default'
+                ) : (
+                    /* Participants: Request camera permission button */
+                    !isCameraEnabled ? (
+                        <Button
+                            variant={hasPendingCameraRequest ? "outlined" : "contained"}
+                            color={hasPendingCameraRequest ? "warning" : "primary"}
+                                    onClick={requestCameraPermission}
+                                    disabled={hasPendingCameraRequest}
+                            startIcon={<VideocamIcon />}
+                                    sx={{
+                                borderRadius: '20px',
+                                textTransform: 'none',
+                                fontFamily: room?.style?.font || 'inherit',
+                                backgroundColor: hasPendingCameraRequest ? 'transparent' : (room?.style?.accentColor || 'primary.main'),
+                                '&:hover': {
+                                    backgroundColor: hasPendingCameraRequest ? 'rgba(255, 152, 0, 0.04)' : undefined
+                                }
                             }}
-                            disabled={!call || !isCameraEnabled} 
                         >
-                            <PictureInPictureAltIcon />
-                        </IconButton>
-                    </Tooltip>
+                            {hasPendingCameraRequest ? "Request Pending..." : "Request Camera Permission"}
+                        </Button>
+                    ) : (
+                        <Button
+                            variant="outlined"
+                            color="error"
+                                onClick={() => {
+                                    if (call) {
+                                        call.camera.disable()
+                                            .then(() => {
+                                                toast.success("Camera disabled");
+                                            })
+                                            .catch(err => {
+                                                console.error("Error disabling camera:", err);
+                                            });
+                                    }
+                                }}
+                            startIcon={<VideocamOffIcon />}
+                                sx={{
+                                borderRadius: '20px',
+                                textTransform: 'none',
+                                fontFamily: room?.style?.font || 'inherit'
+                                }}
+                                disabled={!call}
+                            >
+                            Turn Camera Off
+                        </Button>
+                    )
                 )}
 
                 {/* Share Video Link - Only visible to room owners */}
                 {isRoomOwner && (
                     <Tooltip title="Share Video Link">
-                        <span> 
                         <IconButton 
                             onClick={() => handleOpenShareVideoDialog()} 
                             color="secondary" 
                             sx={{ 
-                                ml: 2,
                                 color: room?.style?.accentColor || theme.palette.secondary.main
                             }} 
                         >
                             <LinkIcon />
                         </IconButton>
-                        </span>
                     </Tooltip>
                 )}
             </Box>

@@ -86,6 +86,10 @@ const BottomNav: React.FC<BottomNavProps> = ({ isDrawerOpen, setIsDrawerOpen, on
     setIsDrawerOpen(false);
   };
 
+  if (!currentUser || ['/login', '/register'].includes(location.pathname)) {
+    return null;
+  }
+
   // Define navigation items - NOTE: Removed Sade AI for mobile
   const navigationItems = [
     {

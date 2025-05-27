@@ -74,6 +74,7 @@ import { formatTimestamp } from '../utils/dateUtils';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 import Popper from '@mui/material/Popper';
 import Peeks from '../components/Peeks';
+import Slider from 'react-slick';
 
 interface UserProfile {
   id: string;
@@ -172,6 +173,9 @@ const Discover: React.FC = () => {
   const [selectedPopularRoomCategory, setSelectedPopularRoomCategory] = useState<string>('All');
   const [isSearchingPopularRooms, setIsSearchingPopularRooms] = useState(false);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [isSwipeViewActive, setIsSwipeViewActive] = useState(false);
+  const [currentRoomIndex, setCurrentRoomIndex] = useState(0);
+  const timerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const categories = [
     'ASMR',
@@ -1294,7 +1298,18 @@ const Discover: React.FC = () => {
   return (
     <Box sx={{ 
       position: 'relative',
-      backgroundColor: theme.palette.background.default
+      backgroundColor: theme.palette.background.default,
+      '& @keyframes pulse': {
+        '0%': {
+          opacity: 1,
+        },
+        '50%': {
+          opacity: 0.7,
+        },
+        '100%': {
+          opacity: 1,
+        }
+      }
     }}>
       {/* Header and Search Section */}
       <Box sx={{
@@ -1545,8 +1560,8 @@ const Discover: React.FC = () => {
             </Tabs>
           )}
 
-          {/* Category Tabs - Only show for Rooms tab */}
-          {!isSearchView && activeTab === 0 && (
+          {/* Category Tabs - Only show for Rooms tab when not in swipe view */}
+          {!isSearchView && activeTab === 0 && !isSwipeViewActive && (
              <Tabs
                value={selectedCategory}
                onChange={handleCategoryChange}
@@ -1554,7 +1569,7 @@ const Discover: React.FC = () => {
                scrollButtons="auto"
                aria-label="room categories"
                sx={{
-                 mb: 1, // Further reduced margin below tabs
+                 mb: 1,
                  borderBottom: 1,
                  borderColor: 'divider'
                }}
@@ -1570,14 +1585,27 @@ const Discover: React.FC = () => {
         </Container>
       </Box>
 
-      {/* Search Results or Content Grid */}
+      {/* Search Results or Content Grid/Swipe View */}
       <Container 
         maxWidth={false} 
         sx={{ 
           pt: 1,
           pb: 4, 
           px: isMobile ? 2 : 3,
-          maxWidth: '1440px'
+          maxWidth: '1440px',
+          // Adjust styling for swipe view to take full height and center content
+          ...(activeTab === 0 && isSwipeViewActive && !isSearchView && {
+             px: 0, // Remove horizontal padding for full width
+             py: 0, // Remove vertical padding
+             flexGrow: 1, // Allow container to grow
+             display: 'flex',
+             flexDirection: 'column', // Stack children vertically
+             justifyContent: 'center', // Center content vertically
+             alignItems: 'center', // Center content horizontally
+             overflow: 'hidden', // Hide overflow
+             // Min height to take available space below header/tabs and above bottom nav
+             minHeight: 'calc(100vh - 64px - 48px - 56px)', // Example: viewport height - navbar - main tabs - bottom nav (adjust heights as needed)
+          })
         }}
       >
         {isSearchView ? (
@@ -1715,20 +1743,38 @@ const Discover: React.FC = () => {
                         <Box sx={{ position: 'relative' }}>
                           <CardMedia
                             component="img"
-                            height={isMobile ? "220" : "280"}
+                            height={isMobile ? "160" : "200"}
                             image={room.thumbnailUrl || room.creatorAvatar || 'https://placehold.co/600x400/333/666?text=Room'}
                             alt={room.name}
                             sx={{ 
                               objectFit: 'cover',
-                              width: '100%'
+                              width: '100%',
+                              borderRadius: '8px 8px 0 0',
+                              filter: 'brightness(0.95) contrast(1.05)',
+                              transition: 'all 0.3s ease',
+                              '&:hover': {
+                                filter: 'brightness(1.05) contrast(1.1)',
+                                transform: 'scale(1.02)'
+                              }
                             }}
                           />
+                          {/* Subtle gradient overlay for better text readability */}
+                          <Box sx={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            background: 'linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.2) 100%)',
+                            borderRadius: '8px 8px 0 0'
+                          }} />
                           <Box sx={{ 
                             position: 'absolute',
-                            top: 12,
-                            right: 12,
+                            top: 8,
+                            right: 8,
                             display: 'flex',
-                            gap: 1
+                            gap: 0.5,
+                            zIndex: 2
                           }}>
                             {room.isPopular && (
                               <Chip
@@ -1738,9 +1784,16 @@ const Discover: React.FC = () => {
                                 icon={<WhatshotIcon />}
                                 sx={{ 
                                   fontWeight: 'bold',
-                                  fontSize: isMobile ? '0.75rem' : '0.875rem',
-                                  height: 'auto',
-                                  padding: '6px 12px'
+                                  fontSize: '0.7rem',
+                                  height: 24,
+                                  '& .MuiChip-label': {
+                                    px: 1
+                                  },
+                                  '& .MuiChip-icon': {
+                                    fontSize: '0.8rem'
+                                  },
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                                  backdropFilter: 'blur(4px)'
                                 }}
                               />
                             )}
@@ -1751,9 +1804,14 @@ const Discover: React.FC = () => {
                                 size="small"
                                 sx={{ 
                                   fontWeight: 'bold',
-                                  fontSize: isMobile ? '0.75rem' : '0.875rem',
-                                  height: 'auto',
-                                  padding: '6px 12px'
+                                  fontSize: '0.7rem',
+                                  height: 24,
+                                  '& .MuiChip-label': {
+                                    px: 1
+                                  },
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                                  backdropFilter: 'blur(4px)',
+                                  animation: 'pulse 2s infinite'
                                 }}
                               />
                             )}
@@ -1860,15 +1918,213 @@ const Discover: React.FC = () => {
             )}
           </Box>
         ) : (
-          // Show either Rooms (activeTab === 0), People (activeTab === 1), Top Hosts (activeTab === 2), or Popular Rooms (activeTab === 3)
+          // Show either Rooms (activeTab === 0) with swipe, People (activeTab === 1), Top Hosts (activeTab === 2), or Popular Rooms (activeTab === 3)
           activeTab === 0 ? (
-            // Rooms tab content
-            <Grid container spacing={3}>
+            // Rooms tab content - Conditional rendering for Swipe View or Grid
+            isSwipeViewActive && !isSearchView ? ( // Ensure swipe view is active and not in search view
+              // Swipe View for Rooms
+              <Box sx={{
+                width: '100%',
+                height: 'calc(100vh - 64px - 80px - 48px - 56px)', // Replaced placeholder
+                overflow: 'hidden', 
+              }}>
+                {loading ? (
+                  <Box display="flex" justifyContent="center" alignItems="center" height="100%">
+                    <CircularProgress />
+                  </Box>
+                ) : rooms.length > 0 ? (
+                  <Slider
+                    dots={true}
+                    infinite={rooms.length > 1}
+                    speed={500}
+                    slidesToShow={1}
+                    slidesToScroll={1}
+                    vertical={true}
+                    verticalSwiping={true}
+                    arrows={false}
+                    initialSlide={currentRoomIndex}
+                    beforeChange={(current, next) => {
+                      if (timerRef.current) {
+                        clearInterval(timerRef.current);
+                        timerRef.current = null;
+                      }
+                      setShowJoinRoomChatDialog(false);
+                      setServerChatRoom(null);
+                    }}
+                    afterChange={current => {
+                      setCurrentRoomIndex(current);
+                    }}
+                    // Removed style prop from Slider
+                  >
+                    {rooms
+                        .filter(room => selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory)))
+                        .map((room, index) => (
+                          <Box
+                            key={room.id}
+                            sx={{
+                              height: '100%',
+                              width: '100%',
+                              position: 'relative',
+                              overflow: 'hidden',
+                              display: 'flex !important',
+                              flexDirection: 'column',
+                              justifyContent: 'flex-end',
+                              alignItems: 'flex-start',
+                              backgroundImage: `url(${room.thumbnailUrl || room.creatorAvatar || `https://placehold.co/600x800/${theme.palette.mode === 'dark' ? '333' : 'ccc'}/${theme.palette.mode === 'dark' ? '666' : '999'}?text=${encodeURIComponent(room.name)}`})`,
+                              backgroundSize: 'cover',
+                              backgroundPosition: 'center',
+                              cursor: 'pointer',
+                              color: '#fff',
+                              '&:focus': { outline: 'none' },
+                            }}
+                            onClick={() => handleRoomClick(room.id)}
+                            tabIndex={-1}
+                          >
+                            <Box
+                              sx={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.3) 40%, rgba(0,0,0,0) 100%)',
+                                zIndex: 1,
+                              }}
+                            />
+                            <Box
+                              sx={{
+                                position: 'relative', 
+                                zIndex: 2,
+                                p: theme.spacing(isMobile ? 2 : 2.5),
+                                width: '100%',
+                              }}
+                            >
+                              <Typography
+                                variant={isMobile ? "h6" : "h5"}
+                                component="h2"
+                                sx={{
+                                  fontWeight: 'bold',
+                                  mb: 0.5,
+                                  textShadow: '2px 2px 4px rgba(0,0,0,0.7)',
+                                }}
+                              >
+                                {room.name}
+                              </Typography>
+                              <Typography
+                                variant="subtitle1"
+                                sx={{
+                                  fontWeight: 500,
+                                  mb: 1,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  textShadow: '1px 1px 3px rgba(0,0,0,0.6)',
+                                }}
+                              >
+                                <Avatar
+                                  src={room.creatorAvatar}
+                                  alt={room.creatorName}
+                                  sx={{ width: 24, height: 24, mr: 1, border: '1px solid rgba(255,255,255,0.5)' }}
+                                />
+                                @{room.creatorName || 'Anonymous'}
+                              </Typography>
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  mb: 1.5,
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: isMobile ? 2 : 3,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  lineHeight: 1.4,
+                                  textShadow: '1px 1px 3px rgba(0,0,0,0.5)',
+                                  opacity: 0.9,
+                                }}
+                              >
+                                {room.description}
+                              </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                                 {room.tags?.slice(0, 2).map(tag => (
+                                    <Chip
+                                       key={tag}
+                                       label={tag}
+                                       size="small"
+                                       sx={{
+                                          backgroundColor: 'rgba(255,255,255,0.15)',
+                                          backdropFilter: 'blur(4px)',
+                                          color: '#fff',
+                                          fontSize: '0.7rem',
+                                          height: 20,
+                                          textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
+                                          border: '1px solid rgba(255,255,255,0.2)'
+                                       }}
+                                    />
+                                 ))}
+                              </Box>
+                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                 <EyeIcon sx={{ fontSize: '1rem', opacity: 0.8 }} />
+                                 <Typography variant="caption" sx={{ opacity: 0.8, fontSize: '0.8rem', fontWeight: 500, textShadow: '1px 1px 2px rgba(0,0,0,0.5)' }}>
+                                     {room.activeUsers || 0} listening
+                                 </Typography>
+                               </Box>
+                            </Box>
+                            <Box
+                              sx={{
+                                position: 'absolute',
+                                top: theme.spacing(isMobile ? 1.5 : 2),
+                                right: theme.spacing(isMobile ? 1.5 : 2),
+                                zIndex: 2,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 1,
+                              }}
+                            >
+                              {room.isPopular && (
+                                <Chip
+                                  label="Popular"
+                                  size="small"
+                                  icon={<WhatshotIcon sx={{ color: '#fff', fontSize: '1rem', mr: -0.5, ml: 0.5 }} />}
+                                  sx={{
+                                    backgroundColor: 'rgba(0,0,0,0.5)',
+                                    backdropFilter: 'blur(5px)',
+                                    color: '#fff',
+                                    fontWeight: 'bold',
+                                    textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
+                                    border: '1px solid rgba(255,255,255,0.2)',
+                                    height: 24, 
+                                    pl: room.isPopular ? '2px' : 'default',
+                                  }}
+                                />
+                              )}
+                              {room.isLive && (
+                                <Chip
+                                  label="LIVE"
+                                  size="small"
+                                  sx={{
+                                    backgroundColor: theme.palette.error.main,
+                                    color: '#fff',
+                                    fontWeight: 'bold',
+                                    textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
+                                    animation: 'pulse 1.5s infinite ease-in-out',
+                                    height: 24,
+                                  }}
+                                />
+                              )}
+                            </Box>
+                          </Box>
+                        ))}
+                  </Slider>
+                ) : (
+                  <Box display="flex" justifyContent="center" alignItems="center" height="100%">
+                    <Typography variant="h6" color="text.secondary">
+                      No rooms found for this category.
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            ) : ( // Grid view for rooms (when not swipe view or when in search view)
+              <Grid container spacing={3}>
               {rooms
-                .filter(room => {
-                  const shouldInclude = selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory));
-                  return shouldInclude;
-                })
+                  .filter(room => selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory)))
                 .map((room) => (
                 <Grid item xs={12} sm={6} md={4} key={room.id}>
                   <Card 
@@ -1890,20 +2146,38 @@ const Discover: React.FC = () => {
                     <Box sx={{ position: 'relative' }}>
                       <CardMedia
                         component="img"
-                        height={isMobile ? "220" : "280"}
+                        height={isMobile ? "160" : "200"}
                         image={room.thumbnailUrl || room.creatorAvatar || 'https://placehold.co/600x400/333/666?text=Room'}
                         alt={room.name}
                         sx={{ 
                           objectFit: 'cover',
-                          width: '100%'
+                          width: '100%',
+                          borderRadius: '8px 8px 0 0',
+                          filter: 'brightness(0.95) contrast(1.05)',
+                          transition: 'all 0.3s ease',
+                          '&:hover': {
+                            filter: 'brightness(1.05) contrast(1.1)',
+                            transform: 'scale(1.02)'
+                          }
                         }}
                       />
+                      {/* Subtle gradient overlay for better text readability */}
+                      <Box sx={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.2) 100%)',
+                        borderRadius: '8px 8px 0 0'
+                      }} />
                       <Box sx={{ 
                         position: 'absolute',
-                        top: 12,
-                        right: 12,
+                        top: 8,
+                        right: 8,
                         display: 'flex',
-                        gap: 1
+                        gap: 0.5,
+                        zIndex: 2
                       }}>
                         {room.isPopular && (
                           <Chip
@@ -1913,9 +2187,16 @@ const Discover: React.FC = () => {
                             icon={<WhatshotIcon />}
                             sx={{ 
                               fontWeight: 'bold',
-                              fontSize: isMobile ? '0.75rem' : '0.875rem',
-                              height: 'auto',
-                              padding: '6px 12px'
+                              fontSize: '0.7rem',
+                              height: 24,
+                              '& .MuiChip-label': {
+                                px: 1
+                              },
+                              '& .MuiChip-icon': {
+                                fontSize: '0.8rem'
+                              },
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                              backdropFilter: 'blur(4px)'
                             }}
                           />
                         )}
@@ -1926,9 +2207,14 @@ const Discover: React.FC = () => {
                             size="small"
                             sx={{ 
                               fontWeight: 'bold',
-                              fontSize: isMobile ? '0.75rem' : '0.875rem',
-                              height: 'auto',
-                              padding: '6px 12px'
+                              fontSize: '0.7rem',
+                              height: 24,
+                              '& .MuiChip-label': {
+                                px: 1
+                              },
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                              backdropFilter: 'blur(4px)',
+                              animation: 'pulse 2s infinite'
                             }}
                           />
                         )}
@@ -2020,7 +2306,8 @@ const Discover: React.FC = () => {
                 </Grid>
               ))}
             </Grid>
-          ) : activeTab === 1 ? (
+            )
+            ) : activeTab === 1 ? (
             // People tab content
             <Box sx={{ mt: 2 }}>
               {loading ? (
@@ -2415,20 +2702,38 @@ const Discover: React.FC = () => {
                         <Box sx={{ position: 'relative' }}>
                           <CardMedia
                             component="img"
-                            height={isMobile ? "220" : "280"}
+                            height={isMobile ? "160" : "200"}
                             image={room.thumbnailUrl || room.creatorAvatar || 'https://placehold.co/600x400/333/666?text=Room'}
                             alt={room.name}
                             sx={{ 
                               objectFit: 'cover',
-                              width: '100%'
+                              width: '100%',
+                              borderRadius: '8px 8px 0 0',
+                              filter: 'brightness(0.95) contrast(1.05)',
+                              transition: 'all 0.3s ease',
+                              '&:hover': {
+                                filter: 'brightness(1.05) contrast(1.1)',
+                                transform: 'scale(1.02)'
+                              }
                             }}
                           />
+                          {/* Subtle gradient overlay for better text readability */}
+                          <Box sx={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            background: 'linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.2) 100%)',
+                            borderRadius: '8px 8px 0 0'
+                          }} />
                           <Box sx={{ 
                             position: 'absolute',
-                            top: 12,
-                            right: 12,
+                            top: 8,
+                            right: 8,
                             display: 'flex',
-                            gap: 1
+                            gap: 0.5,
+                            zIndex: 2
                           }}>
                             <Chip
                               label="Popular"
@@ -2437,9 +2742,16 @@ const Discover: React.FC = () => {
                               icon={<WhatshotIcon />}
                               sx={{ 
                                 fontWeight: 'bold',
-                                fontSize: isMobile ? '0.75rem' : '0.875rem',
-                                height: 'auto',
-                                padding: '6px 12px'
+                                fontSize: '0.7rem',
+                                height: 24,
+                                '& .MuiChip-label': {
+                                  px: 1
+                                },
+                                '& .MuiChip-icon': {
+                                  fontSize: '0.8rem'
+                                },
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                                backdropFilter: 'blur(4px)'
                               }}
                             />
                             {room.isLive && (
@@ -2449,9 +2761,14 @@ const Discover: React.FC = () => {
                                 size="small"
                                 sx={{ 
                                   fontWeight: 'bold',
-                                  fontSize: isMobile ? '0.75rem' : '0.875rem',
-                                  height: 'auto',
-                                  padding: '6px 12px'
+                                  fontSize: '0.7rem',
+                                  height: 24,
+                                  '& .MuiChip-label': {
+                                    px: 1
+                                  },
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                                  backdropFilter: 'blur(4px)',
+                                  animation: 'pulse 2s infinite'
                                 }}
                               />
                             )}
@@ -2563,7 +2880,7 @@ const Discover: React.FC = () => {
       {/* Join Server Chat Room Dialog */}
       <Dialog
         open={showJoinRoomChatDialog}
-        onClose={handleDeclineServerChat}
+        onClose={handleDeclineServerChat} // Allow closing dialog to decline
         aria-labelledby="join-room-chat-dialog-title"
       >
         <DialogTitle id="join-room-chat-dialog-title">Join Room Chat?</DialogTitle>
