@@ -43,7 +43,9 @@ import {
   VerifiedUser as VerifiedUserIcon,
   EmojiEvents as TrophyIcon,
   VisibilityOutlined as EyeIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  ViewStream as GridViewIcon,
+  ViewDay as SwipeViewIcon
 } from '@mui/icons-material';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
@@ -75,6 +77,20 @@ import ClickAwayListener from '@mui/material/ClickAwayListener';
 import Popper from '@mui/material/Popper';
 import Peeks from '../components/Peeks';
 import Slider from 'react-slick';
+import { motion, AnimatePresence, PanInfo } from 'framer-motion';
+import { 
+  StreamVideo, 
+  StreamCall, 
+  useStreamVideoClient, 
+  ParticipantsAudio,
+  Call,
+  StreamVideoClient,
+  StreamVideoClientOptions,
+  ParticipantsAudioProps,
+  useCallStateHooks
+} from '@stream-io/video-react-sdk';
+import { User } from 'firebase/auth';
+import debounce from 'lodash/debounce';
 
 interface UserProfile {
   id: string;
@@ -175,7 +191,19 @@ const Discover: React.FC = () => {
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [isSwipeViewActive, setIsSwipeViewActive] = useState(false);
   const [currentRoomIndex, setCurrentRoomIndex] = useState(0);
+  const [showListenPrompt, setShowListenPrompt] = useState(false);
+  const [listeningRoom, setListeningRoom] = useState<Room | null>(null);
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
+  const [streamToken, setStreamToken] = useState<string | null>(null);
+  const [activeStreamCallInstance, setActiveStreamCallInstance] = useState<Call | null>(null);
+  const [isJoiningCall, setIsJoiningCall] = useState(false);
+  // Add state for Stream client
+  const [streamClient, setStreamClient] = useState<StreamVideoClient | null>(null);
+  // Add connection state tracking
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionAttempts, setConnectionAttempts] = useState(0);
+  const MAX_RECONNECT_ATTEMPTS = 3;
+  const RECONNECT_DELAY = 2000; // 2 seconds
 
   const categories = [
     'ASMR',
@@ -187,6 +215,8 @@ const Discover: React.FC = () => {
     'Social',
     'Other'
   ];
+
+  const LISTEN_PROMPT_DELAY = 60000; // 1 minute in milliseconds
 
   const fetchDefaultUsers = async () => {
     try {
@@ -329,7 +359,22 @@ const Discover: React.FC = () => {
           return (b.activeUsers || 0) - (a.activeUsers || 0);
         });
 
+      // Group rooms by category
+      const roomsByCategory = categories.reduce((acc, category) => {
+        acc[category] = validRooms.filter(room => room.tags?.includes(category));
+        return acc;
+      }, {} as { [key: string]: Room[] });
+
+      // Add "All" category
+      roomsByCategory['All'] = validRooms;
+
       setRooms(validRooms);
+      
+      // Log category counts for debugging
+      Object.entries(roomsByCategory).forEach(([category, rooms]) => {
+        console.log(`Category ${category}: ${rooms.length} rooms`);
+      });
+
     } catch (error) {
       console.error('Error fetching rooms:', error);
     } finally {
@@ -1287,6 +1332,206 @@ const Discover: React.FC = () => {
     setFilteredPopularRooms(filtered);
   };
 
+  const handleViewToggle = () => {
+    setIsSwipeViewActive(!isSwipeViewActive);
+    // Reset room index when toggling view
+    setCurrentRoomIndex(0);
+    // Clear any existing timer
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  // Add cleanup effect
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  // Add room timer effect
+  useEffect(() => {
+    if (isSwipeViewActive && rooms.length > 0) {
+      // Start timer for current room
+      timerRef.current = setTimeout(() => {
+        setShowListenPrompt(true);
+        setListeningRoom(rooms[currentRoomIndex]);
+      }, LISTEN_PROMPT_DELAY);
+    }
+    
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, [currentRoomIndex, isSwipeViewActive, rooms]);
+
+  // Add after the fetchRooms function
+  useEffect(() => {
+    console.log('Current rooms:', rooms);
+    console.log('Current index:', currentRoomIndex);
+    console.log('Is swipe view active:', isSwipeViewActive);
+  }, [rooms, currentRoomIndex, isSwipeViewActive]);
+
+  // Update Stream client initialization
+  useEffect(() => {
+    if (!currentUser || !process.env.REACT_APP_STREAM_API_KEY) return;
+
+    const initStreamClient = async (user: User) => {
+      try {
+        if (isConnecting) {
+          console.log('Already attempting to initialize Stream client...');
+          return;
+        }
+
+        setIsConnecting(true);
+
+        // Get stream token from the backend
+        const backendUrl = 'https://sideeye-backend-production.up.railway.app';
+        const tokenResponse = await fetch(`${backendUrl}/api/stream-token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId: user.uid,
+            displayName: user.displayName || 'Anonymous',
+            photoURL: user.photoURL || ''
+          })
+        });
+        
+        if (!tokenResponse.ok) {
+          const errorData = await tokenResponse.json().catch(() => ({}));
+          console.error('Stream token fetch failed:', {
+            status: tokenResponse.status,
+            statusText: tokenResponse.statusText,
+            error: errorData
+          });
+          throw new Error(`Failed to get stream token: ${tokenResponse.statusText}`);
+        }
+        
+        const { token } = await tokenResponse.json();
+        if (!token) {
+          throw new Error('Stream token not found in response');
+        }
+        
+        setStreamToken(token);
+        
+        if (!process.env.REACT_APP_STREAM_API_KEY) {
+          throw new Error('Stream API key is not defined');
+        }
+        
+        // Initialize Stream client with proper typing
+        const options: StreamVideoClientOptions = {
+          apiKey: process.env.REACT_APP_STREAM_API_KEY,
+          token,
+          user: {
+            id: user.uid,
+            name: user.displayName || 'Anonymous',
+            image: user.photoURL || ''
+          }
+        };
+        
+        if (streamClient) {
+          await streamClient.disconnectUser();
+        }
+        
+        const streamClientInstance = new StreamVideoClient(options);
+        setStreamClient(streamClientInstance);
+        setConnectionAttempts(0);
+      } catch (error) {
+        console.error('Error initializing Stream client:', error);
+        toast.error('Failed to initialize audio service. Please try again later.');
+        setConnectionAttempts(prev => prev + 1);
+      } finally {
+        setIsConnecting(false);
+      }
+    };
+
+    initStreamClient(currentUser);
+
+    // Cleanup
+    return () => {
+      if (streamClient) {
+        streamClient.disconnectUser();
+        setStreamClient(null);
+      }
+      setConnectionAttempts(0);
+    };
+  }, [currentUser]);
+
+  // Update joinAudioStream function
+  const joinAudioStream = async (roomId: string) => {
+    if (!currentUser || !streamClient) {
+      toast.error('Audio service not initialized');
+      return;
+    }
+
+    if (isConnecting) {
+      console.log('Already attempting to connect...');
+      return;
+    }
+
+    if (connectionAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      toast.error('Too many connection attempts. Please try again later.');
+      setConnectionAttempts(0);
+      return;
+    }
+
+    setIsConnecting(true);
+    setIsJoiningCall(true);
+
+    try {
+      // Join the call with proper error handling
+      const call = streamClient.call('default', roomId);
+      await call.join({ create: false, ring: false });
+      
+      setActiveStreamCallInstance(call);
+      setConnectionAttempts(0);
+      toast.success('Connected to room audio');
+    } catch (error: any) {
+      console.error('Error joining audio stream:', error);
+      
+      if (error?.code === 9 || error?.StatusCode === 429) {
+        toast.error('Too many connection attempts. Please wait a moment before trying again.');
+        setConnectionAttempts(prev => prev + 1);
+      } else {
+        toast.error('Failed to join audio stream');
+      }
+    } finally {
+      setIsConnecting(false);
+      setIsJoiningCall(false);
+    }
+  };
+
+  // Create a debounced version of joinAudioStream
+  const debouncedJoinAudioStream = debounce(joinAudioStream, 1000, {
+    leading: true,
+    trailing: false
+  });
+
+  // Add cleanup for debounced function
+  useEffect(() => {
+    return () => {
+      debouncedJoinAudioStream.cancel();
+    };
+  }, []);
+
+  // Add function to leave audio stream
+  const leaveAudioStream = async () => {
+    if (activeStreamCallInstance) {
+      try {
+        await activeStreamCallInstance.leave();
+      } catch (error) {
+        console.error('Error leaving audio stream:', error);
+      }
+      setActiveStreamCallInstance(null);
+    }
+  };
+
   if (loading && !isSearchView) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
@@ -1582,6 +1827,24 @@ const Discover: React.FC = () => {
           )}
           {/* End of Category Tabs section */}
 
+          {!isSearchView && activeTab === 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mr: 2 }}>
+              <IconButton
+                onClick={handleViewToggle}
+                color="primary"
+                sx={{
+                  bgcolor: 'background.paper',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  '&:hover': {
+                    bgcolor: 'action.hover'
+                  }
+                }}
+              >
+                {isSwipeViewActive ? <GridViewIcon /> : <SwipeViewIcon />}
+              </IconButton>
+            </Box>
+          )}
         </Container>
       </Box>
 
@@ -1922,201 +2185,307 @@ const Discover: React.FC = () => {
           activeTab === 0 ? (
             // Rooms tab content - Conditional rendering for Swipe View or Grid
             isSwipeViewActive && !isSearchView ? ( // Ensure swipe view is active and not in search view
-              // Swipe View for Rooms
               <Box sx={{
+                height: 'calc(100vh - 200px)',
                 width: '100%',
-                height: 'calc(100vh - 64px - 80px - 48px - 56px)', // Replaced placeholder
-                overflow: 'hidden', 
+                position: 'relative',
+                overflow: 'hidden'
               }}>
+                {/* Add category tabs for swipe view */}
+                <Tabs
+                  value={selectedCategory}
+                  onChange={handleCategoryChange}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  aria-label="room categories"
+                  sx={{
+                    mb: 1,
+                    px: 2,
+                    '& .MuiTabs-scroller': {
+                      height: '40px'
+                    },
+                    '& .MuiTab-root': {
+                      color: 'white',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                      minHeight: '40px',
+                      zIndex: 3
+                    },
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    zIndex: 3,
+                    bgcolor: 'rgba(0,0,0,0.3)',
+                    backdropFilter: 'blur(10px)'
+                  }}
+                >
+                  <Tab label="All" value="All" />
+                  {categories.map((category) => (
+                    <Tab key={category} label={category} value={category} />
+                  ))}
+                </Tabs>
+
                 {loading ? (
                   <Box display="flex" justifyContent="center" alignItems="center" height="100%">
                     <CircularProgress />
                   </Box>
                 ) : rooms.length > 0 ? (
-                  <Slider
-                    dots={true}
-                    infinite={rooms.length > 1}
-                    speed={500}
-                    slidesToShow={1}
-                    slidesToScroll={1}
-                    vertical={true}
-                    verticalSwiping={true}
-                    arrows={false}
-                    initialSlide={currentRoomIndex}
-                    beforeChange={(current, next) => {
-                      if (timerRef.current) {
-                        clearInterval(timerRef.current);
-                        timerRef.current = null;
-                      }
-                      setShowJoinRoomChatDialog(false);
-                      setServerChatRoom(null);
-                    }}
-                    afterChange={current => {
-                      setCurrentRoomIndex(current);
-                    }}
-                    // Removed style prop from Slider
-                  >
-                    {rooms
-                        .filter(room => selectedCategory === 'All' || (room.tags && room.tags.includes(selectedCategory)))
-                        .map((room, index) => (
+                  <Box sx={{ height: '100%', width: '100%', position: 'relative' }}>
+                    <motion.div
+                      key={currentRoomIndex}
+                      initial={{ opacity: 0, y: "100%" }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: "-100%" }}
+                      transition={{ duration: 0.3 }}
+                      style={{
+                        height: '100%',
+                        width: '100%',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        touchAction: 'pan-y'
+                      }}
+                      drag="y"
+                      dragConstraints={{ top: 0, bottom: 0 }}
+                      dragElastic={1}
+                      onDragEnd={(_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+                        const filteredRooms = rooms.filter(room => 
+                          selectedCategory === 'All' || room.tags?.includes(selectedCategory)
+                        );
+                        if (info.offset.y < -50 && currentRoomIndex < filteredRooms.length - 1) {
+                          setCurrentRoomIndex(prev => prev + 1);
+                        } else if (info.offset.y > 50 && currentRoomIndex > 0) {
+                          setCurrentRoomIndex(prev => prev - 1);
+                        }
+                      }}
+                    >
+                      {(() => {
+                        const filteredRooms = rooms.filter(room => 
+                          selectedCategory === 'All' || room.tags?.includes(selectedCategory)
+                        );
+                        
+                        if (filteredRooms.length === 0) {
+                          return (
+                            <Box 
+                              sx={{ 
+                                height: '100%', 
+                                width: '100%', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                flexDirection: 'column',
+                                gap: 2,
+                                bgcolor: 'background.paper',
+                                color: 'text.primary'
+                              }}
+                            >
+                              <Typography variant="h6">
+                                No rooms in {selectedCategory} category
+                              </Typography>
+                              <Button 
+                                variant="outlined" 
+                                onClick={() => setSelectedCategory('All')}
+                              >
+                                View All Rooms
+                              </Button>
+                            </Box>
+                          );
+                        }
+
+                        const currentRoom = filteredRooms[currentRoomIndex];
+                        return (
                           <Box
-                            key={room.id}
                             sx={{
                               height: '100%',
                               width: '100%',
                               position: 'relative',
-                              overflow: 'hidden',
-                              display: 'flex !important',
-                              flexDirection: 'column',
-                              justifyContent: 'flex-end',
-                              alignItems: 'flex-start',
-                              backgroundImage: `url(${room.thumbnailUrl || room.creatorAvatar || `https://placehold.co/600x800/${theme.palette.mode === 'dark' ? '333' : 'ccc'}/${theme.palette.mode === 'dark' ? '666' : '999'}?text=${encodeURIComponent(room.name)}`})`,
-                              backgroundSize: 'cover',
-                              backgroundPosition: 'center',
+                              backgroundColor: 'rgba(0,0,0,0.9)',
                               cursor: 'pointer',
-                              color: '#fff',
-                              '&:focus': { outline: 'none' },
                             }}
-                            onClick={() => handleRoomClick(room.id)}
-                            tabIndex={-1}
+                            onClick={() => handleRoomClick(currentRoom.id)}
                           >
+                            {currentRoom?.thumbnailUrl ? (
                             <Box
                               sx={{
+                                  height: '100%',
+                                  width: '100%',
+                                  position: 'absolute',
+                                  top: 0,
+                                  left: 0,
+                                  backgroundImage: `url(${currentRoom.thumbnailUrl})`,
+                                  backgroundSize: 'cover',
+                                  backgroundPosition: 'center',
+                                  '&::before': {
+                                    content: '""',
                                 position: 'absolute',
                                 top: 0,
                                 left: 0,
                                 right: 0,
                                 bottom: 0,
-                                background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.3) 40%, rgba(0,0,0,0) 100%)',
-                                zIndex: 1,
+                                    background: 'linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0) 20%, rgba(0,0,0,0) 50%, rgba(0,0,0,0.7) 100%)',
+                                    pointerEvents: 'none'
+                                  }
                               }}
                             />
+                            ) : (
                             <Box
                               sx={{
-                                position: 'relative', 
-                                zIndex: 2,
-                                p: theme.spacing(isMobile ? 2 : 2.5),
+                                  height: '100%',
                                 width: '100%',
-                              }}
-                            >
-                              <Typography
-                                variant={isMobile ? "h6" : "h5"}
-                                component="h2"
-                                sx={{
-                                  fontWeight: 'bold',
-                                  mb: 0.5,
-                                  textShadow: '2px 2px 4px rgba(0,0,0,0.7)',
-                                }}
-                              >
-                                {room.name}
-                              </Typography>
-                              <Typography
-                                variant="subtitle1"
-                                sx={{
-                                  fontWeight: 500,
-                                  mb: 1,
                                   display: 'flex',
                                   alignItems: 'center',
-                                  textShadow: '1px 1px 3px rgba(0,0,0,0.6)',
+                                  justifyContent: 'center',
+                                  position: 'absolute',
+                                  top: 0,
+                                  left: 0,
+                                  background: 'linear-gradient(45deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.6) 100%)',
                                 }}
                               >
                                 <Avatar
-                                  src={room.creatorAvatar}
-                                  alt={room.creatorName}
-                                  sx={{ width: 24, height: 24, mr: 1, border: '1px solid rgba(255,255,255,0.5)' }}
-                                />
-                                @{room.creatorName || 'Anonymous'}
-                              </Typography>
-                              <Typography
-                                variant="body2"
+                                  src={currentRoom?.creatorAvatar}
                                 sx={{
-                                  mb: 1.5,
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: isMobile ? 2 : 3,
-                                  WebkitBoxOrient: 'vertical',
-                                  overflow: 'hidden',
-                                  lineHeight: 1.4,
-                                  textShadow: '1px 1px 3px rgba(0,0,0,0.5)',
-                                  opacity: 0.9,
+                                    width: '200px',
+                                    height: '200px',
+                                    fontSize: '100px',
+                                    bgcolor: 'primary.main'
+                                  }}
+                                >
+                                  {currentRoom?.name?.[0]?.toUpperCase()}
+                                </Avatar>
+                              </Box>
+                            )}
+
+                            {/* Live Status Indicator */}
+                            {currentRoom?.isLive && (
+                              <Box
+                                sx={{
+                                  position: 'absolute',
+                                  top: 16,
+                                  left: 16,
+                                  zIndex: 3,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 1
                                 }}
                               >
-                                {room.description}
+                                <Box
+                                  sx={{
+                                    width: 8,
+                                    height: 8,
+                                    borderRadius: '50%',
+                                    bgcolor: 'error.main',
+                                    animation: 'pulse 2s infinite'
+                                  }}
+                                />
+                              <Typography
+                                sx={{
+                                    color: 'white',
+                                    textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  LIVE
                               </Typography>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                                 {room.tags?.slice(0, 2).map(tag => (
-                                    <Chip
-                                       key={tag}
-                                       label={tag}
-                                       size="small"
-                                       sx={{
-                                          backgroundColor: 'rgba(255,255,255,0.15)',
-                                          backdropFilter: 'blur(4px)',
-                                          color: '#fff',
-                                          fontSize: '0.7rem',
-                                          height: 20,
-                                          textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
-                                          border: '1px solid rgba(255,255,255,0.2)'
-                                       }}
-                                    />
-                                 ))}
                               </Box>
-                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                 <EyeIcon sx={{ fontSize: '1rem', opacity: 0.8 }} />
-                                 <Typography variant="caption" sx={{ opacity: 0.8, fontSize: '0.8rem', fontWeight: 500, textShadow: '1px 1px 2px rgba(0,0,0,0.5)' }}>
-                                     {room.activeUsers || 0} listening
-                                 </Typography>
-                               </Box>
-                            </Box>
+                            )}
+
+                            {/* Room Info */}
                             <Box
                               sx={{
                                 position: 'absolute',
-                                top: theme.spacing(isMobile ? 1.5 : 2),
-                                right: theme.spacing(isMobile ? 1.5 : 2),
+                                bottom: 0,
+                                left: 0,
+                                right: 0,
+                                p: 3,
+                                color: 'white',
+                                textShadow: '0 2px 4px rgba(0,0,0,0.5)',
                                 zIndex: 2,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 1,
+                                background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%)',
+                                backdropFilter: 'blur(10px)'
                               }}
                             >
-                              {room.isPopular && (
+                              <Typography variant="h5" sx={{ mb: 1, fontWeight: 'bold' }}>
+                                {currentRoom?.name}
+                              </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                <Avatar
+                                  src={currentRoom?.creatorAvatar}
+                                  sx={{ width: 32, height: 32, mr: 1 }}
+                                />
+                                <Typography variant="subtitle1">
+                                  @{currentRoom?.creatorName}
+                                </Typography>
+                              </Box>
+                              <Typography variant="body1" sx={{ mb: 2, opacity: 0.9 }}>
+                                {currentRoom?.description}
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Chip
-                                  label="Popular"
-                                  size="small"
-                                  icon={<WhatshotIcon sx={{ color: '#fff', fontSize: '1rem', mr: -0.5, ml: 0.5 }} />}
+                                  icon={<EyeIcon sx={{ color: 'white' }} />}
+                                  label={`${currentRoom?.activeUsers || 0} listening`}
                                   sx={{
-                                    backgroundColor: 'rgba(0,0,0,0.5)',
-                                    backdropFilter: 'blur(5px)',
-                                    color: '#fff',
-                                    fontWeight: 'bold',
-                                    textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
-                                    border: '1px solid rgba(255,255,255,0.2)',
-                                    height: 24, 
-                                    pl: room.isPopular ? '2px' : 'default',
+                                    bgcolor: 'rgba(255,255,255,0.2)',
+                                    color: 'white',
+                                    backdropFilter: 'blur(4px)'
                                   }}
                                 />
-                              )}
-                              {room.isLive && (
+                                {currentRoom?.isLive && (
                                 <Chip
                                   label="LIVE"
-                                  size="small"
+                                    color="error"
                                   sx={{
-                                    backgroundColor: theme.palette.error.main,
-                                    color: '#fff',
-                                    fontWeight: 'bold',
-                                    textShadow: '1px 1px 2px rgba(0,0,0,0.3)',
-                                    animation: 'pulse 1.5s infinite ease-in-out',
-                                    height: 24,
+                                      animation: 'pulse 2s infinite'
+                                    }}
+                                  />
+                                )}
+                                {activeStreamCallInstance && (
+                                  <Chip
+                                    label="Connected"
+                                    color="success"
+                                    sx={{
+                                      bgcolor: 'rgba(76,175,80,0.3)',
+                                      backdropFilter: 'blur(4px)'
                                   }}
                                 />
                               )}
                             </Box>
                           </Box>
+                          </Box>
+                        );
+                      })()}
+                    </motion.div>
+
+                    {/* Room navigation indicators */}
+                    <Box sx={{
+                      position: 'absolute',
+                      right: 16,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 1,
+                      zIndex: 2
+                    }}>
+                      {rooms
+                        .filter(room => selectedCategory === 'All' || room.tags?.includes(selectedCategory))
+                        .map((_, index) => (
+                          <Box
+                            key={index}
+                            sx={{
+                              width: 4,
+                              height: 16,
+                              borderRadius: 2,
+                              bgcolor: index === currentRoomIndex ? 'primary.main' : 'rgba(255,255,255,0.5)',
+                              transition: 'all 0.3s ease'
+                            }}
+                          />
                         ))}
-                  </Slider>
+                    </Box>
+                  </Box>
                 ) : (
                   <Box display="flex" justifyContent="center" alignItems="center" height="100%">
                     <Typography variant="h6" color="text.secondary">
-                      No rooms found for this category.
+                      No rooms found
                     </Typography>
                   </Box>
                 )}
@@ -2894,8 +3263,77 @@ const Discover: React.FC = () => {
           <Button onClick={handleJoinServerChat} variant="contained" color="primary">Join</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Listening Prompt Dialog */}
+      <Dialog
+        open={showListenPrompt}
+        onClose={() => setShowListenPrompt(false)}
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+            maxWidth: 'sm',
+            width: '90%'
+          }
+        }}
+      >
+        <DialogTitle>Keep Listening?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Would you like to join {listeningRoom?.name} or continue listening from the stream?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setShowListenPrompt(false);
+            leaveAudioStream();
+          }}>
+            Stop Listening
+          </Button>
+          <Button 
+            onClick={() => {
+              setShowListenPrompt(false);
+              if (listeningRoom) {
+                handleRoomClick(listeningRoom.id);
+              }
+            }}
+            variant="contained" 
+            color="primary"
+          >
+            Join Room
+          </Button>
+          <Button
+            onClick={() => {
+              setShowListenPrompt(false);
+              if (listeningRoom) {
+                joinAudioStream(listeningRoom.id);
+              }
+            }}
+            variant="outlined"
+            color="primary"
+            disabled={isJoiningCall}
+          >
+            {isJoiningCall ? "Connecting..." : "Keep Listening"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Stream audio component */}
+      {activeStreamCallInstance && streamClient && (
+        <StreamVideo client={streamClient}>
+          <StreamCall call={activeStreamCallInstance}>
+            <CallContent />
+          </StreamCall>
+        </StreamVideo>
+      )}
     </Box>
   );
+};
+
+// Add CallContent component
+const CallContent = () => {
+  const { useParticipants } = useCallStateHooks();
+  const participants = useParticipants();
+  return <ParticipantsAudio participants={participants} />;
 };
 
 export default Discover; 

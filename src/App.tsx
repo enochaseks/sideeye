@@ -273,16 +273,34 @@ const AppContent: React.FC = () => {
       <Box sx={{ 
         display: 'flex', 
         flexGrow: 1,
-        pt: { xs: 2, sm: 3 },
+        pt: { 
+          xs: 1, // Reduced top padding on mobile
+          sm: 2,
+          md: 3 
+        },
+        px: { // Add horizontal padding
+          xs: 1, // Smaller padding on mobile
+          sm: 2,
+          md: 3
+        },
         ml: { 
           xs: 0, 
           sm: isDrawerOpen ? '60px' : '60px' 
         },
-        transition: theme.transitions.create('margin', {
+        transition: theme.transitions.create(['margin', 'padding'], {
           easing: theme.transitions.easing.sharp,
           duration: theme.transitions.duration.enteringScreen,
         }),
-        pb: { xs: '56px', sm: 0 },
+        pb: { 
+          xs: '72px', // Increased bottom padding on mobile to account for bottom nav
+          sm: 2,
+          md: 3 
+        },
+        width: {
+          xs: '100%', // Full width on mobile
+          sm: 'auto'
+        },
+        overflow: 'hidden', // Prevent horizontal scrolling
       }}>
         <Box component="main" sx={{ flexGrow: 1, width: '100%', position: 'relative' }}>
           {/* Floating Sade AI button for mobile */}
