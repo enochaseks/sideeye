@@ -1064,9 +1064,9 @@ const Settings: React.FC = () => {
                   <strong>Examples:</strong>
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ pl: 4 }}>
-                  • 11 gifts received = 0.88 SC = 88 LC<br/>
-                  • Each gift = 0.08 SC = 8 LC<br/>
-                  • 1,000 gifts = 80 SC = 8,000 LC
+                  • 5 gifts received = 1000 SC = 100000 LC<br/>
+                  • Each gift = 0.01 SC = 1 LC<br/>
+                  • 11 gifts = 1450 SC = 145000 LC
                 </Typography>
                 <Typography variant="caption" color="primary.main" sx={{ pl: 2, fontWeight: 500 }}>
                   💡 Think of it like pounds and pence - your earnings have real fractional value!
